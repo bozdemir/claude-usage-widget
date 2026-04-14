@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.playwright-mcp/
+docs/superpowers/
+config.json
+_gi_fix/
