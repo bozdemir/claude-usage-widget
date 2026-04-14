@@ -5,12 +5,27 @@ import os
 import signal
 import sys
 
-# Force XWayland for reliable borderless windows on Wayland compositors.
-os.environ.setdefault("GDK_BACKEND", "x11")
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(_BASE_DIR, "config.json")
+if not os.path.isfile(CONFIG_PATH):
+    CONFIG_PATH = os.path.join(_BASE_DIR, "config.json.example")
 
-# Ensure gi-cairo is available (needed for transparent OSD overlay).
-# python3-gi-cairo must be installed; print a clear message if missing.
-def _check_gi_cairo():
+
+def _main_macos():
+    """macOS entry point: uses AppKit/rumps."""
+    from claude_usage.config import load_config
+    from claude_usage.widget_macos import ClaudeUsageTray
+
+    config = load_config(CONFIG_PATH)
+    app = ClaudeUsageTray(config)
+    app.run()
+
+
+def _main_linux():
+    """Linux entry point: uses GTK3/AppIndicator."""
+    # Force XWayland for reliable borderless windows on Wayland compositors.
+    os.environ.setdefault("GDK_BACKEND", "x11")
+
     try:
         import gi
         gi.require_foreign("cairo")
@@ -25,28 +40,27 @@ def _check_gi_cairo():
         )
         sys.exit(1)
 
-_check_gi_cairo()
+    import gi
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import Gtk
+    from claude_usage.config import load_config
+    from claude_usage.widget import ClaudeUsageTray
 
-import gi
-
-gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk
-
-from claude_usage.config import load_config
-from claude_usage.widget import ClaudeUsageTray
-
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(_BASE_DIR, "config.json")
-if not os.path.isfile(CONFIG_PATH):
-    CONFIG_PATH = os.path.join(_BASE_DIR, "config.json.example")
+    config = load_config(CONFIG_PATH)
+    _tray = ClaudeUsageTray(config)
+    Gtk.main()
 
 
 def main():
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
-    config = load_config(CONFIG_PATH)
-    tray = ClaudeUsageTray(config)
-    Gtk.main()
+    if sys.platform == "darwin":
+        _main_macos()
+    elif sys.platform.startswith("linux"):
+        _main_linux()
+    else:
+        print(f"ERROR: Unsupported platform: {sys.platform}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
