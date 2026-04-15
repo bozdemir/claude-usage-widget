@@ -304,7 +304,7 @@ class UsagePopup:
         self._win.setTitle_("Claude Usage")
         if _DARK_APPEARANCE:
             self._win.setAppearance_(_DARK_APPEARANCE)
-        self._win.setMinSize_(NSMakePoint(POPUP_W, 300))
+        self._win.setMinSize_((POPUP_W, 300))
 
         self._delegate = _PopupDelegate.alloc().init()
         self._win.setDelegate_(self._delegate)
@@ -391,12 +391,15 @@ class ClaudeUsageTray(rumps.App):
 
     @rumps.timer(1)
     def _check_queue(self, _):
-        """Drain the update queue on the main thread."""
-        try:
-            stats = self._update_queue.get_nowait()
-            self._apply_stats(stats)
-        except queue.Empty:
-            pass
+        """Drain all pending results from the update queue on the main thread."""
+        latest = None
+        while True:
+            try:
+                latest = self._update_queue.get_nowait()
+            except queue.Empty:
+                break
+        if latest is not None:
+            self._apply_stats(latest)
 
     @rumps.timer(30)  # secondary auto-refresh fallback
     def _auto_refresh(self, _):

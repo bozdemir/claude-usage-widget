@@ -119,6 +119,9 @@ cp config.json.example config.json
 | `osd_scale` | `1.0` | Initial OSD scale factor (0.6 - 2.0) |
 | `daily_message_limit` | `200` | Used for local message tracking in the popup |
 | `weekly_message_limit` | `1000` | Used for local message tracking in the popup |
+| `daily_token_limit` | `5000000` | Daily token limit for local tracking |
+| `weekly_token_limit` | `25000000` | Weekly token limit for local tracking |
+| `claude_dir` | `~/.claude` | Path to Claude Code data directory |
 
 ## How It Works
 

@@ -139,6 +139,9 @@ class OSDView(NSView):
     def acceptsFirstMouse_(self, event):
         return True
 
+    def acceptsFirstResponder(self):
+        return True
+
     # ------------------------------------------------------------------ drawing
 
     @objc.python_method
@@ -314,6 +317,7 @@ class UsageOverlay:
         self._win.setIgnoresMouseEvents_(False)
         self._win.setHasShadow_(False)
         self._win.setAcceptsMouseMovedEvents_(True)
+        self._win.setReleasedWhenClosed_(False)
 
         self._view = OSDView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
         self._view._scale = scale

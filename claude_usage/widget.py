@@ -31,6 +31,10 @@ SEPARATOR_COLOR = "#2a2a38"
 
 
 def _rounded_rect(cr, x, y, w, h, r):
+    r = min(r, w / 2, h / 2)
+    if r < 0.5:
+        cr.rectangle(x, y, w, h)
+        return
     cr.new_sub_path()
     cr.arc(x + w - r, y + r, r, -math.pi / 2, 0)
     cr.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
@@ -219,7 +223,7 @@ class UsagePopup(Gtk.Window):
         bar.connect("draw", draw_bar)
         row.pack_start(bar, True, True, 0)
 
-        pct_lbl = Gtk.Label(label=f"{int(fraction * 100)}% used")
+        pct_lbl = Gtk.Label(label=f"{min(int(fraction * 100), 100)}% used")
         pct_lbl.get_style_context().add_class("pct-label")
         pct_lbl.set_size_request(72, -1)
         pct_lbl.set_halign(Gtk.Align.END)
@@ -261,7 +265,7 @@ class UsagePopup(Gtk.Window):
 
         if stats.active_sessions:
             for sess in stats.active_sessions:
-                started = datetime.fromtimestamp(sess["startedAt"] / 1000)
+                started = datetime.fromtimestamp(sess.get("startedAt", 0) / 1000)
                 duration = datetime.now() - started
                 cwd = sess.get("cwd", "?").replace(os.path.expanduser("~"), "~")
 

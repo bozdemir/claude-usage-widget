@@ -39,7 +39,7 @@ def _main_linux():
         loaded = False
         ver = f"{sys.version_info.major}{sys.version_info.minor}"
         for snap_so in sorted(_glob.glob(
-            f"/snap/gnome-46-*/*/usr/lib/python3/dist-packages/gi/_gi_cairo.cpython-{ver}*.so"
+            f"/snap/gnome-*/*/usr/lib/python3/dist-packages/gi/_gi_cairo.cpython-{ver}*.so"
         ), reverse=True):
             try:
                 spec = importlib.util.spec_from_file_location("gi._gi_cairo", snap_so)

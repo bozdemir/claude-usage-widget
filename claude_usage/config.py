@@ -16,7 +16,11 @@ DEFAULT_CONFIG = {
 def load_config(path: str) -> dict:
     cfg = dict(DEFAULT_CONFIG)
     if os.path.isfile(path):
-        with open(path) as f:
-            user_cfg = json.load(f)
-        cfg.update(user_cfg)
+        try:
+            with open(path) as f:
+                user_cfg = json.load(f)
+            cfg.update(user_cfg)
+        except (json.JSONDecodeError, OSError) as e:
+            import sys
+            print(f"WARNING: Failed to load config {path}: {e}", file=sys.stderr)
     return cfg

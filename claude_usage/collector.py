@@ -2,6 +2,7 @@
 
 import glob
 import json
+import math
 import os
 import sys
 from dataclasses import dataclass, field
@@ -40,7 +41,7 @@ def parse_history(path: str) -> UsageStats:
 
     now = datetime.now()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    week_start = today_start - timedelta(days=6)  # rolling 7-day window
+    week_start = today_start - timedelta(days=6)
 
     today_session_ids = set()
     week_session_ids = set()
@@ -56,14 +57,15 @@ def parse_history(path: str) -> UsageStats:
                 continue
 
             ts_ms = entry.get("timestamp", 0)
+            if ts_ms <= 0:
+                continue
             dt = datetime.fromtimestamp(ts_ms / 1000)
             sid = entry.get("sessionId", "")
 
             if dt >= today_start:
                 stats.today_messages += 1
                 today_session_ids.add(sid)
-                hour = dt.hour
-                stats.today_hourly[hour] = stats.today_hourly.get(hour, 0) + 1
+                stats.today_hourly[dt.hour] = stats.today_hourly.get(dt.hour, 0) + 1
 
             if dt >= week_start:
                 stats.week_messages += 1
@@ -74,6 +76,70 @@ def parse_history(path: str) -> UsageStats:
     return stats
 
 
+def _collect_tokens_single_pass(claude_dir: str, today_prefix: str, week_prefixes: list[str]) -> dict:
+    """Scan conversation JSONL files once, collecting tokens for both today and week."""
+    result = {
+        "today_output": 0, "week_output": 0,
+        "today_by_model": {},
+    }
+    projects_dir = os.path.join(claude_dir, "projects")
+    if not os.path.isdir(projects_dir):
+        return result
+
+    projects_dir = os.path.realpath(projects_dir)
+
+    for jsonl_path in glob.glob(os.path.join(projects_dir, "*", "*.jsonl")):
+        parts = jsonl_path.split(os.sep)
+        if "subagents" in parts:
+            continue
+        _parse_tokens_file(jsonl_path, today_prefix, week_prefixes, result)
+
+    return result
+
+
+def _parse_tokens_file(path: str, today_prefix: str, week_prefixes: list[str], result: dict):
+    """Extract token usage from a single conversation JSONL file."""
+    try:
+        f = open(path)
+    except OSError:
+        return
+
+    with f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if entry.get("type") != "assistant":
+                continue
+
+            timestamp = entry.get("timestamp", "")
+            is_today = timestamp.startswith(today_prefix)
+            is_week = is_today or any(timestamp.startswith(p) for p in week_prefixes)
+            if not is_week:
+                continue
+
+            msg = entry.get("message", {})
+            if not isinstance(msg, dict):
+                continue
+
+            usage = msg.get("usage", {})
+            output_tokens = usage.get("output_tokens", 0)
+            model = msg.get("model", "unknown")
+
+            if is_week:
+                result["week_output"] += output_tokens
+
+            if is_today:
+                result["today_output"] += output_tokens
+                result["today_by_model"][model] = result["today_by_model"].get(model, 0) + output_tokens
+
+
+# Keep old function name for test compatibility
 def collect_tokens_from_conversations(claude_dir: str, date_prefixes: list[str]) -> dict:
     """Scan conversation JSONL files for token usage on given dates."""
     result = {"total_output": 0, "total_input": 0, "by_model": {}}
@@ -81,11 +147,9 @@ def collect_tokens_from_conversations(claude_dir: str, date_prefixes: list[str])
     if not os.path.isdir(projects_dir):
         return result
 
-    # Resolve to real path to prevent symlink traversal
     projects_dir = os.path.realpath(projects_dir)
 
     for jsonl_path in glob.glob(os.path.join(projects_dir, "*", "*.jsonl")):
-        # Skip subagent conversation files
         parts = jsonl_path.split(os.sep)
         if "subagents" in parts:
             continue
@@ -156,7 +220,6 @@ def get_active_sessions(claude_dir: str) -> list[dict]:
             os.kill(pid, 0)
             active.append(sess)
         except PermissionError:
-            # Process exists but owned by another user — still active
             active.append(sess)
         except ProcessLookupError:
             pass
@@ -175,14 +238,14 @@ def _load_credentials(claude_dir: str) -> str | None:
                 creds = json.load(f)
             return creds["claudeAiOauth"]["accessToken"]
         except (json.JSONDecodeError, KeyError, OSError):
-            return None
+            pass  # Fall through to Keychain on macOS
 
-    # 2. Try macOS Keychain (credentials stored by Claude Code for macOS)
+    # 2. Try macOS Keychain
     if sys.platform == "darwin":
         try:
             import subprocess
             result = subprocess.run(
-                ["security", "find-generic-password",
+                ["/usr/bin/security", "find-generic-password",
                  "-s", "Claude Code-credentials", "-w"],
                 capture_output=True, text=True, timeout=5,
             )
@@ -203,7 +266,7 @@ def fetch_rate_limits(claude_dir: str) -> dict:
     """
     token = _load_credentials(claude_dir)
     if not token:
-        return {"error": "No credentials found"}
+        return {"error": "No credentials found — run 'claude' to log in"}
 
     body = json.dumps({
         "model": "claude-haiku-4-5-20251001",
@@ -229,15 +292,14 @@ def fetch_rate_limits(claude_dir: str) -> dict:
         if e.code == 401:
             return {"error": "Credentials expired — re-authenticate with 'claude'"}
         if e.code == 429:
-            # Rate limited — try to read headers from error response
             headers = {k.lower(): v for k, v in e.headers.items()}
             prefix = "anthropic-ratelimit-unified-"
             if any(k.startswith(prefix) for k in headers):
                 return _parse_rate_limit_headers(headers)
-            return {"error": "Rate limited"}
+            return {"error": "Rate limited — try again later"}
         return {"error": f"API error {e.code}"}
     except (URLError, OSError, TimeoutError):
-        return {"error": "API request failed"}
+        return {"error": "API request failed — check network"}
 
     return _parse_rate_limit_headers(headers)
 
@@ -250,25 +312,27 @@ def _parse_rate_limit_headers(headers: dict) -> dict:
 
     def _safe_float(suffix, default=0.0):
         try:
-            return float(headers.get(prefix + suffix, default))
+            val = float(headers.get(prefix + suffix, default))
+            if math.isnan(val) or math.isinf(val):
+                return default
+            return max(0.0, min(val, 1.0))
         except (ValueError, TypeError):
             return default
 
     def _safe_int(suffix, default=0):
         try:
-            val = int(headers.get(prefix + suffix, default))
-            # Sanity check: reset timestamps should be in seconds, not milliseconds.
-            # A value > year 2100 in seconds (4102444800) likely means milliseconds.
+            val = int(float(headers.get(prefix + suffix, default)))
+            # Sanity: timestamps > year 2100 in seconds likely means milliseconds
             if suffix.endswith("-reset") and val > 4_102_444_800:
                 val = val // 1000
-            return val
+            return max(0, val)
         except (ValueError, TypeError):
             return default
 
     return {
-        "session_utilization": min(_safe_float("5h-utilization"), 1.0),
+        "session_utilization": _safe_float("5h-utilization"),
         "session_reset": _safe_int("5h-reset"),
-        "weekly_utilization": min(_safe_float("7d-utilization"), 1.0),
+        "weekly_utilization": _safe_float("7d-utilization"),
         "weekly_reset": _safe_int("7d-reset"),
         "overage_status": headers.get(prefix + "overage-status", ""),
         "fallback_status": headers.get(prefix + "fallback", ""),
@@ -282,19 +346,16 @@ def collect_all(config: dict) -> UsageStats:
 
     stats = parse_history(history_path)
 
+    # Single-pass token collection for both today and week
     now = datetime.now()
     today_str = now.strftime("%Y-%m-%d")
     week_start = now - timedelta(days=6)
     week_dates = [(week_start + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
 
-    today_tokens = collect_tokens_from_conversations(claude_dir, [today_str])
-    stats.today_tokens = today_tokens["total_output"]
-    stats.today_model_tokens = {
-        model: data["output"] for model, data in today_tokens["by_model"].items()
-    }
-
-    week_tokens = collect_tokens_from_conversations(claude_dir, week_dates)
-    stats.week_tokens = week_tokens["total_output"]
+    tokens = _collect_tokens_single_pass(claude_dir, today_str, week_dates)
+    stats.today_tokens = tokens["today_output"]
+    stats.week_tokens = tokens["week_output"]
+    stats.today_model_tokens = tokens["today_by_model"]
 
     stats.active_sessions = get_active_sessions(claude_dir)
 

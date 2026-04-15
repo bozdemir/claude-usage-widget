@@ -112,13 +112,15 @@ class UsageOverlay:
         # Must allow resizing for scroll-to-scale and minimize/restore
         self._win.set_resizable(True)
         self._win.set_size_request(1, 1)
-        self._win.set_default_size(BASE_WIDTH, BASE_HEIGHT)
+        init_w = int(BASE_WIDTH * self._scale)
+        init_h = int(BASE_HEIGHT * self._scale)
+        self._win.set_default_size(init_w, init_h)
 
         # Position top-right
         display = Gdk.Display.get_default()
         monitor = display.get_primary_monitor() or display.get_monitor(0)
         geo = monitor.get_geometry()
-        self._win.move(geo.x + geo.width - BASE_WIDTH - OSD_MARGIN, geo.y + OSD_MARGIN)
+        self._win.move(geo.x + geo.width - init_w - OSD_MARGIN, geo.y + OSD_MARGIN)
 
         self._win.set_events(
             Gdk.EventMask.BUTTON_PRESS_MASK
@@ -187,7 +189,8 @@ class UsageOverlay:
             self._win.queue_draw()
 
     def _on_button_release(self, widget, event):
-        self._drag_start = None
+        if event.button == 1:
+            self._drag_start = None
 
     def _on_motion(self, widget, event):
         if self._drag_start:
