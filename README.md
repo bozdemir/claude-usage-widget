@@ -1,65 +1,77 @@
 # Claude Usage Widget
 
-A desktop widget that displays your Claude Code usage limits in real-time. Shows session and weekly utilization percentages fetched directly from the Anthropic API, with an always-on-top OSD overlay and a system tray icon.
+A desktop widget that displays your Claude Code usage limits in real-time. Shows session and weekly utilization percentages fetched directly from the Anthropic API, with an always-on-top OSD overlay and a system tray / menu bar icon.
 
-![OSD Overlay](https://img.shields.io/badge/desktop-OSD_overlay-blue)
-![System Tray](https://img.shields.io/badge/system-tray_icon-green)
-![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue)
+![Python](https://img.shields.io/badge/python-3.10+-green)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
 ## Features
 
 - **Real API data** — Fetches actual rate limit utilization from `anthropic-ratelimit-unified-*` response headers
 - **OSD overlay** — Transparent, borderless widget in the corner of your screen showing session and weekly usage bars with reset countdowns
-- **System tray** — Quick-glance usage info and a detailed popup window
+- **System tray / Menu bar** — Quick-glance usage info and a detailed popup window
+- **Cross-platform** — Native GTK3 on Linux, native AppKit/rumps on macOS
 - **Auto-refresh** — Updates every 30 seconds (configurable)
 - **Resizable** — Scroll wheel to scale the OSD up/down
-- **Opacity control** — Adjustable OSD transparency via tray menu
+- **Opacity control** — Adjustable OSD transparency via tray/menu bar
 - **Draggable** — Left-click and drag to reposition the OSD
 - **Minimizable** — Right-click OSD to collapse to a thin progress bar
 - **Active sessions** — Shows running Claude Code sessions with project paths and durations
 
 ## Requirements
 
-- Linux with X11 or XWayland (KDE Plasma, GNOME, etc.)
 - Python 3.10+
-- GTK 3
-- System packages:
-  - `gir1.2-ayatanaappindicator3-0.1` (system tray)
-  - `python3-gi` (GTK bindings)
-  - `python3-gi-cairo` (cairo integration for transparent OSD)
-  - `python3-cairo` (pycairo)
 - Claude Code CLI installed and authenticated (OAuth)
+
+### Linux
+
+- GTK 3, python3-gi, python3-gi-cairo, python3-cairo
+- `gir1.2-ayatanaappindicator3-0.1` (system tray)
+
+### macOS
+
+- `rumps` and `pyobjc-framework-Cocoa` (installed automatically via `requirements-macos.txt`)
 
 ## Installation
 
-### 1. Install system dependencies
+### Linux
 
 ```bash
-# Ubuntu/Debian
+# 1. Install system dependencies (Ubuntu/Debian)
 sudo apt install python3-gi python3-gi-cairo python3-cairo gir1.2-ayatanaappindicator3-0.1
 
 # Fedora
-sudo dnf install python3-gobject python3-cairo gtk3
+sudo dnf install python3-gobject python3-gobject-cairo python3-cairo gtk3
 
 # Arch
 sudo pacman -S python-gobject python-cairo gtk3 libappindicator-gtk3
-```
 
-### 2. Clone and run
-
-```bash
+# 2. Clone and run
 git clone https://github.com/bozdemir/claude-usage-widget.git
 cd claude-usage-widget
 python3 main.py &
-```
 
-### 3. Autostart on login (optional)
-
-```bash
+# 3. Autostart on login (optional)
 ./install.sh
 ```
 
-This copies a `.desktop` file to `~/.config/autostart/` so the widget starts automatically on login.
+### macOS
+
+```bash
+# 1. Clone
+git clone https://github.com/bozdemir/claude-usage-widget.git
+cd claude-usage-widget
+
+# 2. Install Python dependencies
+pip3 install -r requirements-macos.txt
+
+# 3. Run
+python3 main.py
+
+# 4. Autostart on login (optional) — installs a Launch Agent
+./install-macos.sh
+```
 
 ## Usage
 
@@ -71,10 +83,10 @@ This copies a `.desktop` file to `~/.config/autostart/` so the widget starts aut
 | **Left-click drag** | Move the OSD |
 | **Right-click** | Minimize / Restore |
 
-### System Tray Menu
+### System Tray / Menu Bar
 
 - **Session / Weekly** — Current usage percentages
-- **Details...** — Opens detailed popup with usage bars, model breakdown, active sessions
+- **Details...** — Opens detailed popup with usage bars and active sessions
 - **Refresh** — Force immediate data refresh
 - **OSD Overlay** — Toggle the OSD on/off
 - **OSD Opacity** — Set OSD transparency (100% / 75% / 50% / 25%)
@@ -83,6 +95,10 @@ This copies a `.desktop` file to `~/.config/autostart/` so the widget starts aut
 ## Configuration
 
 Copy `config.json.example` to `config.json` and edit:
+
+```bash
+cp config.json.example config.json
+```
 
 ```json
 {
@@ -106,7 +122,7 @@ Copy `config.json.example` to `config.json` and edit:
 
 ## How It Works
 
-The widget reads your Claude Code OAuth credentials from `~/.claude/.credentials.json` and makes a minimal API call (1 token to `claude-haiku`) to read the rate limit response headers:
+The widget reads your Claude Code OAuth credentials from `~/.claude/.credentials.json` (Linux) or the macOS Keychain and makes a minimal API call (1 token to `claude-haiku`) to read the rate limit response headers:
 
 ```
 anthropic-ratelimit-unified-5h-utilization: 0.58
@@ -119,21 +135,25 @@ These are the same values shown on the [claude.ai usage page](https://claude.ai/
 
 ## Troubleshooting
 
-### OSD not visible
+### Linux: OSD not visible
 - Make sure XWayland is available (the widget forces `GDK_BACKEND=x11` for reliable borderless windows)
 - Check if the process is running: `ps aux | grep main.py`
 
-### No system tray icon
+### Linux: No system tray icon
 - Install `gir1.2-ayatanaappindicator3-0.1`
 - On GNOME, you may need the [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/)
 
-### Cairo errors (`Couldn't find foreign struct converter`)
-- Install `python3-gi-cairo`
-- The widget includes a fallback that loads the module from GNOME snap packages if the system package is missing
+### Linux: Cairo errors (`Couldn't find foreign struct converter`)
+- Install `python3-gi-cairo`: `sudo apt install python3-gi-cairo`
+
+### macOS: No menu bar icon
+- Make sure `rumps` is installed: `pip3 install rumps`
+- If using a virtualenv, ensure `pyobjc-framework-Cocoa` is also installed
 
 ### API authentication fails
 - Make sure Claude Code CLI is installed and you're logged in (`claude` command works)
-- OAuth token is read from `~/.claude/.credentials.json`
+- Linux: OAuth token is read from `~/.claude/.credentials.json`
+- macOS: OAuth token is read from Keychain (fallback to `~/.claude/.credentials.json`)
 
 ## License
 
