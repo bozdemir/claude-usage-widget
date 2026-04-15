@@ -1,16 +1,21 @@
 # claude_usage/overlay.py
 """OSD overlay — always-on-top transparent widget in top-right corner."""
 
+from __future__ import annotations
+
 import math
 from datetime import datetime
+from typing import Optional, Tuple
+
+import cairo as _cairo
 import gi
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, Gdk  # noqa: E402
 
-from claude_usage.collector import UsageStats
+from claude_usage.collector import UsageStats  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -43,8 +48,8 @@ WARN_RGBA = (0.92, 0.70, 0.05, 0.95)       # Warning fill (60–85 % usage)
 CRIT_RGBA = (0.94, 0.27, 0.27, 0.95)       # Critical fill (≥ 85 % usage)
 
 
-def _bar_color(pct: float):
-    """Return the correct RGBA bar colour for a given utilisation fraction (0.0–1.0)."""
+def _bar_color(pct: float) -> Tuple[float, float, float, float]:
+    """Return the correct RGBA bar colour for a given utilisation fraction (0.0-1.0)."""
     if pct < 0.6:
         return BAR_BLUE_RGBA
     if pct < 0.85:
@@ -52,7 +57,14 @@ def _bar_color(pct: float):
     return CRIT_RGBA
 
 
-def _rounded_rect(cr, x, y, w, h, r):
+def _rounded_rect(
+    cr: _cairo.Context,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    r: float,
+) -> None:
     """Trace a rounded-rectangle path onto Cairo context *cr*.
 
     Cairo coordinate system: origin (0, 0) is the top-left of the drawing
@@ -67,17 +79,17 @@ def _rounded_rect(cr, x, y, w, h, r):
     # Clamp radius to avoid artifacts on tiny dimensions
     r = min(r, w / 2, h / 2)
     if r < 0.5:
-        # Radius too small to matter — fall back to a plain rectangle
+        # Radius too small to matter -- fall back to a plain rectangle
         cr.rectangle(x, y, w, h)
         return
     cr.new_sub_path()
-    # Top-right arc: centre (x+w-r, y+r), from -π/2 (top) clockwise to 0 (right)
+    # Top-right arc: centre (x+w-r, y+r), from -pi/2 (top) clockwise to 0 (right)
     cr.arc(x + w - r, y + r, r, -math.pi / 2, 0)
-    # Bottom-right arc: centre (x+w-r, y+h-r), from 0 clockwise to π/2 (bottom)
+    # Bottom-right arc: centre (x+w-r, y+h-r), from 0 clockwise to pi/2 (bottom)
     cr.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
-    # Bottom-left arc: centre (x+r, y+h-r), from π/2 clockwise to π (left)
+    # Bottom-left arc: centre (x+r, y+h-r), from pi/2 clockwise to pi (left)
     cr.arc(x + r, y + h - r, r, math.pi / 2, math.pi)
-    # Top-left arc: centre (x+r, y+r), from π clockwise to 3π/2 (top again)
+    # Top-left arc: centre (x+r, y+r), from pi clockwise to 3*pi/2 (top again)
     cr.arc(x + r, y + r, r, math.pi, 3 * math.pi / 2)
     cr.close_path()
 
@@ -130,7 +142,7 @@ class UsageOverlay:
     the full panel.
     """
 
-    def __init__(self, config: dict = None):
+    def __init__(self, config: Optional[dict[str, object]] = None) -> None:
         """Initialise the overlay window and connect GTK signals.
 
         Parameters
@@ -140,15 +152,17 @@ class UsageOverlay:
             keys are ``osd_scale`` (float, default 1.0) and ``osd_opacity``
             (float, default 0.75).
         """
-        # Current utilisation fractions (0.0–1.0) updated by update()
-        self.session_pct = 0.0
-        self.weekly_pct = 0.0
-        # Unix timestamps for when each limit resets (0 = unknown)
-        self.session_reset = 0
-        self.weekly_reset = 0
+        cfg: dict[str, object] = config or {}
 
-        # Minimized flag — toggled by right-click; True renders the thin bar
-        self._minimized = False
+        # Current utilisation fractions (0.0-1.0) updated by update()
+        self.session_pct: float = 0.0
+        self.weekly_pct: float = 0.0
+        # Unix timestamps for when each limit resets (0 = unknown)
+        self.session_reset: int = 0
+        self.weekly_reset: int = 0
+
+        # Minimized flag -- toggled by right-click; True renders the thin bar
+        self._minimized: bool = False
 
         # Drag state: both fields are set together on button-press and cleared
         # on button-release.  _drag_start is the pointer position at the moment
@@ -158,17 +172,17 @@ class UsageOverlay:
         # added to _drag_win_start to produce the new window position, giving
         # smooth, flicker-free dragging without touching GTK's built-in
         # begin_move_drag() which requires a window manager.
-        self._drag_start = None       # (x_root, y_root) at drag start
-        self._drag_win_start = None   # (win_x, win_y) at drag start
+        self._drag_start: Optional[Tuple[float, float]] = None
+        self._drag_win_start: Optional[Tuple[int, int]] = None
 
-        # Scale factor — multiplied by every base dimension before drawing.
+        # Scale factor -- multiplied by every base dimension before drawing.
         # Changing it resizes both the Cairo content and the GTK window.
-        self._scale = (config or {}).get("osd_scale", 1.0)
+        self._scale: float = float(cfg.get("osd_scale", 1.0))
 
         # Background alpha; the RGB channels of BG_RGBA are kept fixed while
         # this value replaces the alpha component so the user can dim the overlay
         # without affecting text/bar colours (which have their own alphas).
-        self._opacity = (config or {}).get("osd_opacity", 0.75)
+        self._opacity: float = float(cfg.get("osd_opacity", 0.75))
 
         # --- GTK window setup ---
         self._win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
@@ -225,15 +239,15 @@ class UsageOverlay:
         self._win.connect("motion-notify-event", self._on_motion)
         self._win.connect("scroll-event", self._on_scroll)
 
-    def show_all(self):
+    def show_all(self) -> None:
         """Make the overlay window and all its children visible."""
         self._win.show_all()
 
-    def hide(self):
+    def hide(self) -> None:
         """Hide the overlay window without destroying it."""
         self._win.hide()
 
-    def set_opacity(self, value: float):
+    def set_opacity(self, value: float) -> None:
         """Set the background opacity, clamped to [0.15, 1.0].
 
         Only affects the background fill; text and bar colours retain their
@@ -242,13 +256,13 @@ class UsageOverlay:
         self._opacity = max(0.15, min(1.0, value))
         self._win.queue_draw()
 
-    def _current_size(self):
+    def _current_size(self) -> Tuple[int, int]:
         """Return the (width, height) the window should have at the current scale."""
         w = int(BASE_WIDTH * self._scale)
         h = int(BASE_HEIGHT * self._scale)
         return w, h
 
-    def _apply_size(self):
+    def _apply_size(self) -> None:
         """Resize the GTK window to match the current scale and minimized state.
 
         When minimized, the height is fixed at MINIMIZED_HEIGHT regardless of
@@ -264,28 +278,28 @@ class UsageOverlay:
             w, h = self._current_size()
             self._win.resize(w, h)
 
-    def _on_scroll(self, widget, event):
+    def _on_scroll(self, widget: Gtk.Widget, event: Gdk.EventScroll) -> None:
         """Handle scroll-wheel events to zoom the overlay in or out.
 
         Scroll up increases _scale; scroll down decreases it.  Both discrete
         (button-style) and smooth (touchpad) scroll events are handled.
         After clamping the new scale to [SCALE_MIN, SCALE_MAX], _apply_size()
         resizes the window and queue_draw() triggers a redraw at the new scale.
-        Scrolling while minimized is intentionally ignored — the thin bar has
+        Scrolling while minimized is intentionally ignored -- the thin bar has
         no meaningful content to resize.
         """
         if self._minimized:
             return
 
         # Normalise to direction: +1 = grow, -1 = shrink, 0 = no change
-        direction = 0
+        direction: int = 0
         if event.direction == Gdk.ScrollDirection.UP:
             direction = 1
         elif event.direction == Gdk.ScrollDirection.DOWN:
             direction = -1
         elif event.direction == Gdk.ScrollDirection.SMOOTH:
             # Smooth scroll delivers fractional deltas; dy > 0 means downward
-            _, dx, dy = event.get_scroll_deltas()
+            _ok, _dx, dy = event.get_scroll_deltas()
             if abs(dy) > 0.01:
                 direction = -1 if dy > 0 else 1
         if direction == 0:
@@ -295,7 +309,9 @@ class UsageOverlay:
         self._apply_size()
         self._win.queue_draw()
 
-    def _on_button_press(self, widget, event):
+    def _on_button_press(
+        self, widget: Gtk.Widget, event: Gdk.EventButton
+    ) -> None:
         """Handle mouse button presses for drag initiation and minimize toggle.
 
         Button 1 (left): records the pointer's root-coordinate position and
@@ -316,13 +332,17 @@ class UsageOverlay:
             self._apply_size()
             self._win.queue_draw()
 
-    def _on_button_release(self, widget, event):
+    def _on_button_release(
+        self, widget: Gtk.Widget, event: Gdk.EventButton
+    ) -> None:
         """Clear drag state when the left button is released."""
         if event.button == 1:
-            # Clearing _drag_start is enough; _on_motion checks it before moving
             self._drag_start = None
+            self._drag_win_start = None
 
-    def _on_motion(self, widget, event):
+    def _on_motion(
+        self, widget: Gtk.Widget, event: Gdk.EventMotion
+    ) -> None:
         """Move the window while the left button is held down (drag-to-move).
 
         The drag implementation uses absolute root (screen) coordinates rather
@@ -331,7 +351,7 @@ class UsageOverlay:
         position is always ``_drag_win_start + delta``, never an incremental
         step, so the overlay tracks the pointer precisely even at low frame rates.
         """
-        if self._drag_start:
+        if self._drag_start is not None and self._drag_win_start is not None:
             # delta from the press origin in screen coordinates
             dx = event.x_root - self._drag_start[0]
             dy = event.y_root - self._drag_start[1]
@@ -340,8 +360,8 @@ class UsageOverlay:
                 int(self._drag_win_start[1] + dy),
             )
 
-    def _on_draw(self, widget, cr):
-        """Cairo draw handler — renders the entire overlay surface.
+    def _on_draw(self, widget: Gtk.Widget, cr: _cairo.Context) -> None:
+        """Cairo draw handler -- renders the entire overlay surface.
 
         Cairo coordinate system recap
         ------------------------------
@@ -365,13 +385,11 @@ class UsageOverlay:
         current font size.  To right-align text at position ``right_x``, the
         move_to x coordinate is ``right_x - ext.width``.
         """
-        import cairo as _cairo
-
         # Dimensions of the allocated drawing area in device pixels
-        w = widget.get_allocated_width()
-        h = widget.get_allocated_height()
+        w: int = widget.get_allocated_width()
+        h: int = widget.get_allocated_height()
         # Convenience alias used throughout to scale base constants
-        s = self._scale
+        s: float = self._scale
 
         # --- Step 1: clear to fully transparent ---
         # OPERATOR_SOURCE writes the source colour directly, ignoring whatever
@@ -384,16 +402,17 @@ class UsageOverlay:
         # Switch back to normal alpha compositing for everything that follows
         cr.set_operator(_cairo.OPERATOR_OVER)
 
-        # --- Step 2: minimized state — render only a thin session bar ---
+        # --- Step 2: minimized state -- render only a thin session bar ---
         if self._minimized:
             # Draw the track (empty portion) across the full window width
             _rounded_rect(cr, 0, 0, w, h, 3)
             cr.set_source_rgba(*BAR_TRACK_RGBA)
             cr.fill()
-            if self.session_pct > 0:
+            session_clamped: float = max(0.0, min(self.session_pct, 1.0))
+            if session_clamped > 0:
                 # Fill width is proportional to session_pct, with a 4 px minimum
                 # so the bar is always visible even at near-zero usage
-                fill_w = max(w * min(self.session_pct, 1.0), 4)
+                fill_w: float = max(w * session_clamped, 4)
                 _rounded_rect(cr, 0, 0, fill_w, h, 3)
                 cr.set_source_rgba(*_bar_color(self.session_pct))
                 cr.fill()
@@ -401,24 +420,24 @@ class UsageOverlay:
 
         # --- Step 3: full panel ---
 
-        # Background pill — opacity comes from _opacity so the user can dim
+        # Background pill -- opacity comes from _opacity so the user can dim
         # the background without washing out the text or bar colours
-        bg = BG_RGBA[:3] + (self._opacity,)
+        bg: Tuple[float, float, float, float] = BG_RGBA[:3] + (self._opacity,)
         cr.set_source_rgba(*bg)
         _rounded_rect(cr, 0, 0, w, h, OSD_RADIUS * s)
         cr.fill()
 
         # Pre-compute all scaled layout values once to avoid repeating * s
-        pad_x = 14 * s      # Horizontal padding inside the background pill
-        pad_y = 10 * s      # Vertical padding at the top
-        bar_h = OSD_BAR_HEIGHT * s
-        bar_r = OSD_BAR_RADIUS * s
-        bar_w = w - 2 * pad_x   # Bar spans the full inner width
-        font_label = 10 * s     # Row label / percentage font size
-        font_small = 7.5 * s    # Reset-time annotation font size
-        font_title = 8 * s      # "CLAUDE" header font size
+        pad_x: float = 14 * s      # Horizontal padding inside the background pill
+        pad_y: float = 10 * s      # Vertical padding at the top
+        bar_h: float = OSD_BAR_HEIGHT * s
+        bar_r: float = OSD_BAR_RADIUS * s
+        bar_w: float = w - 2 * pad_x  # Bar spans the full inner width
+        font_label: float = 10 * s    # Row label / percentage font size
+        font_small: float = 7.5 * s   # Reset-time annotation font size
+        font_title: float = 8 * s     # "CLAUDE" header font size
 
-        # Title — dimmed monospace label at the very top
+        # Title -- dimmed monospace label at the very top
         cr.select_font_face("monospace", _cairo.FONT_SLANT_NORMAL, _cairo.FONT_WEIGHT_NORMAL)
         cr.set_source_rgba(*DIM_RGBA)
         cr.set_font_size(font_title)
@@ -428,60 +447,61 @@ class UsageOverlay:
 
         # --- Session row ---
         # y is the baseline for the row's label and percentage text
-        y = pad_y + 16 * s
-        session_pct_i = int(self.session_pct * 100)  # Display as integer percent
-        session_reset = _format_reset_short(self.session_reset)
+        y: float = pad_y + 16 * s
+        session_pct_clamped: float = max(0.0, min(self.session_pct, 1.0))
+        session_pct_i: int = int(session_pct_clamped * 100)
+        session_reset_label: str = _format_reset_short(self.session_reset)
 
-        # "Session" label — left-aligned at pad_x, baseline at y+9*s
+        # "Session" label -- left-aligned at pad_x, baseline at y+9*s
         cr.set_source_rgba(*TEXT_RGBA)
         cr.set_font_size(font_label)
         cr.move_to(pad_x, y + 9 * s)
         cr.show_text("Session")
 
-        # Reset time — right-aligned, placed just to the left of the percentage.
+        # Reset time -- right-aligned, placed just to the left of the percentage.
         # The percentage width is measured first so the two strings are spaced
         # consistently: [reset_time]  [percentage]  [pad_x]
-        if session_reset:
+        pct_text: str = f"{session_pct_i}%"
+        if session_reset_label:
             cr.set_font_size(font_small)
             cr.set_source_rgba(*DIM_RGBA)
-            reset_ext = cr.text_extents(session_reset)
+            reset_ext = cr.text_extents(session_reset_label)
             # Measure the percentage at its own font size to compute the gap
             cr.set_font_size(font_label)
-            pct_text = f"{session_pct_i}%"
             pct_ext = cr.text_extents(pct_text)
             # Place reset text so its right edge is 8*s to the left of the percentage
-            reset_x = w - pad_x - pct_ext.width - 8 * s - reset_ext.width
+            reset_x: float = w - pad_x - pct_ext.width - 8 * s - reset_ext.width
             cr.set_font_size(font_small)
             cr.move_to(reset_x, y + 9 * s)
-            cr.show_text(session_reset)
+            cr.show_text(session_reset_label)
 
-        # Percentage — right-aligned at the right edge of the inner area
+        # Percentage -- right-aligned at the right edge of the inner area
         cr.set_source_rgba(*TEXT_RGBA)
         cr.set_font_size(font_label)
-        pct_text = f"{session_pct_i}%"
         ext = cr.text_extents(pct_text)
         # Subtract ext.width from the right edge so the text's right side
         # aligns exactly with (w - pad_x)
         cr.move_to(w - pad_x - ext.width, y + 9 * s)
         cr.show_text(pct_text)
 
-        # Progress bar track and fill — drawn below the text row
-        bar_y = y + 15 * s  # Vertical position of the bar's top edge
+        # Progress bar track and fill -- drawn below the text row
+        bar_y: float = y + 15 * s  # Vertical position of the bar's top edge
         cr.set_source_rgba(*BAR_TRACK_RGBA)
         _rounded_rect(cr, pad_x, bar_y, bar_w, bar_h, bar_r)
         cr.fill()
-        if self.session_pct > 0:
+        if session_pct_clamped > 0:
             # Minimum fill width = bar_h so even 1 % is visible as a small circle
-            fill_w = max(bar_w * min(self.session_pct, 1.0), bar_h)
+            fill_w = max(bar_w * session_pct_clamped, bar_h)
             cr.set_source_rgba(*_bar_color(self.session_pct))
             _rounded_rect(cr, pad_x, bar_y, fill_w, bar_h, bar_r)
             cr.fill()
 
         # --- Weekly row ---
         # Positioned below the session bar with a 10*s gap
-        y2 = bar_y + bar_h + 10 * s
-        weekly_pct_i = int(self.weekly_pct * 100)
-        weekly_reset = _format_reset_short(self.weekly_reset)
+        y2: float = bar_y + bar_h + 10 * s
+        weekly_pct_clamped: float = max(0.0, min(self.weekly_pct, 1.0))
+        weekly_pct_i: int = int(weekly_pct_clamped * 100)
+        weekly_reset_label: str = _format_reset_short(self.weekly_reset)
 
         # "Weekly" label
         cr.set_source_rgba(*TEXT_RGBA)
@@ -489,46 +509,45 @@ class UsageOverlay:
         cr.move_to(pad_x, y2 + 9 * s)
         cr.show_text("Weekly")
 
-        # Reset time — same right-alignment logic as the session row
-        if weekly_reset:
+        # Reset time -- same right-alignment logic as the session row
+        pct_text = f"{weekly_pct_i}%"
+        if weekly_reset_label:
             cr.set_font_size(font_small)
             cr.set_source_rgba(*DIM_RGBA)
-            reset_ext = cr.text_extents(weekly_reset)
+            reset_ext = cr.text_extents(weekly_reset_label)
             cr.set_font_size(font_label)
-            pct_text = f"{weekly_pct_i}%"
             pct_ext = cr.text_extents(pct_text)
             reset_x = w - pad_x - pct_ext.width - 8 * s - reset_ext.width
             cr.set_font_size(font_small)
             cr.move_to(reset_x, y2 + 9 * s)
-            cr.show_text(weekly_reset)
+            cr.show_text(weekly_reset_label)
 
         # Percentage right-aligned
         cr.set_source_rgba(*TEXT_RGBA)
         cr.set_font_size(font_label)
-        pct_text = f"{weekly_pct_i}%"
         ext = cr.text_extents(pct_text)
         cr.move_to(w - pad_x - ext.width, y2 + 9 * s)
         cr.show_text(pct_text)
 
         # Progress bar track and fill
-        bar_y2 = y2 + 15 * s
+        bar_y2: float = y2 + 15 * s
         cr.set_source_rgba(*BAR_TRACK_RGBA)
         _rounded_rect(cr, pad_x, bar_y2, bar_w, bar_h, bar_r)
         cr.fill()
-        if self.weekly_pct > 0:
-            fill_w = max(bar_w * min(self.weekly_pct, 1.0), bar_h)
+        if weekly_pct_clamped > 0:
+            fill_w = max(bar_w * weekly_pct_clamped, bar_h)
             cr.set_source_rgba(*_bar_color(self.weekly_pct))
             _rounded_rect(cr, pad_x, bar_y2, fill_w, bar_h, bar_r)
             cr.fill()
 
-    def update(self, stats: UsageStats):
+    def update(self, stats: UsageStats) -> None:
         """Refresh displayed values from a UsageStats snapshot and redraw.
 
         Parameters
         ----------
         stats:
             Latest usage snapshot from the collector.  Utilisation values are
-            fractions in 0.0–1.0; reset values are Unix timestamps.
+            fractions in 0.0-1.0; reset values are Unix timestamps.
         """
         self.session_pct = stats.session_utilization
         self.weekly_pct = stats.weekly_utilization

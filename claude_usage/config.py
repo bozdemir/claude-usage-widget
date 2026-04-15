@@ -1,15 +1,25 @@
 """Configuration loading for the Claude Usage Desktop Widget.
 
-Provides DEFAULT_CONFIG with safe built-in values and load_config(), which
-merges an optional user-supplied JSON file on top of those defaults so that
-any key the user omits keeps its default value automatically.
+Provides ``DEFAULT_CONFIG`` with safe built-in values and :func:`load_config`,
+which merges an optional user-supplied JSON file on top of those defaults so
+that any key the user omits keeps its default value automatically.
 """
+
+from __future__ import annotations
 
 import json
 import os
+import sys
+from typing import Any
+
+# Type alias for the config dict returned by load_config().
+# We intentionally use a plain dict rather than a TypedDict because the config
+# is open-ended: user JSON files may contain extra keys consumed by other parts
+# of the codebase, and we propagate them through unchanged.
+Config = dict[str, Any]
 
 # Built-in defaults used when a key is absent from the user's config.json.
-DEFAULT_CONFIG = {
+DEFAULT_CONFIG: Config = {
     # Directory where Claude Code writes its usage logs.  The tilde is
     # expanded at import time so the path is always absolute.
     "claude_dir": os.path.expanduser("~/.claude"),
@@ -40,19 +50,34 @@ DEFAULT_CONFIG = {
 }
 
 
-def load_config(path: str) -> dict:
-    # Start from a shallow copy of the defaults so every key is guaranteed
-    # to be present in the returned dict even if the file is missing or partial.
-    cfg = dict(DEFAULT_CONFIG)
-    if os.path.isfile(path):
-        try:
-            with open(path) as f:
-                user_cfg = json.load(f)
-            # Merge: user values overwrite defaults, unknown keys are added.
-            cfg.update(user_cfg)
-        except (json.JSONDecodeError, OSError) as e:
-            # Bad JSON or unreadable file — warn but continue with defaults so
-            # the widget still starts rather than crashing on a config error.
-            import sys
-            print(f"WARNING: Failed to load config {path}: {e}", file=sys.stderr)
+def load_config(path: str) -> Config:
+    """Load and return the merged configuration dictionary.
+
+    Starts from a shallow copy of :data:`DEFAULT_CONFIG` so every key is
+    guaranteed to be present even if *path* does not exist or is only a partial
+    override.  Unknown keys from the user file are preserved.
+    """
+    cfg: Config = dict(DEFAULT_CONFIG)
+    if not os.path.isfile(path):
+        return cfg
+
+    try:
+        with open(path, encoding="utf-8") as f:
+            user_cfg: object = json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        # Bad JSON or unreadable file -- warn but continue with defaults so
+        # the widget still starts rather than crashing on a config error.
+        print(f"WARNING: Failed to load config {path}: {exc}", file=sys.stderr)
+        return cfg
+
+    if not isinstance(user_cfg, dict):
+        print(
+            f"WARNING: Config {path} must be a JSON object, "
+            f"got {type(user_cfg).__name__}; using defaults.",
+            file=sys.stderr,
+        )
+        return cfg
+
+    # Merge: user values overwrite defaults, unknown keys are added.
+    cfg.update(user_cfg)
     return cfg

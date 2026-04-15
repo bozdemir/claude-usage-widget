@@ -18,10 +18,13 @@ any need for explicit locks because only the timer callback (always on the
 main run-loop thread) writes to shared UI state.
 """
 
+from __future__ import annotations
+
 import os
 import queue
 import threading
 from datetime import datetime
+from typing import Any
 
 import objc
 import rumps
@@ -61,22 +64,25 @@ except Exception:
 from claude_usage.collector import collect_all, UsageStats
 from claude_usage.overlay_macos import UsageOverlay
 
-ICON_PATH = os.path.join(os.path.dirname(__file__), "icons", "claude-tray.svg")
+ICON_PATH: str = os.path.join(os.path.dirname(__file__), "icons", "claude-tray.svg")
+
+# Type alias for normalised RGBA colour tuples (r, g, b, a) in 0.0–1.0 sRGB.
+_RGBA = tuple[float, float, float, float]
 
 # ---------------------------------------------------------------------------
 # Popup color palette — all values are normalised (0.0–1.0) sRGB + alpha.
 # Using named constants keeps the drawing code readable and makes palette
 # changes a single-location edit.
 # ---------------------------------------------------------------------------
-_BG    = (0.102, 0.102, 0.180, 1.0)   # deep navy background
-_PRI   = (0.878, 0.878, 0.910, 1.0)   # primary text (near-white)
-_SEC   = (0.541, 0.541, 0.604, 1.0)   # secondary / muted text
-_DIM   = (0.333, 0.333, 0.408, 1.0)   # dimmed text (timestamps, labels)
-_LINK  = (0.420, 0.643, 0.851, 1.0)   # session path text (blue-ish)
-_BAR   = (0.357, 0.608, 0.835, 1.0)   # progress bar fill
-_TRACK = (0.200, 0.200, 0.251, 1.0)   # progress bar track (empty portion)
-_SEP   = (0.165, 0.165, 0.220, 1.0)   # separator line
-_ERR   = (0.937, 0.267, 0.267, 1.0)   # error text (red)
+_BG:    _RGBA = (0.102, 0.102, 0.180, 1.0)   # deep navy background
+_PRI:   _RGBA = (0.878, 0.878, 0.910, 1.0)   # primary text (near-white)
+_SEC:   _RGBA = (0.541, 0.541, 0.604, 1.0)   # secondary / muted text
+_DIM:   _RGBA = (0.333, 0.333, 0.408, 1.0)   # dimmed text (timestamps, labels)
+_LINK:  _RGBA = (0.420, 0.643, 0.851, 1.0)   # session path text (blue-ish)
+_BAR:   _RGBA = (0.357, 0.608, 0.835, 1.0)   # progress bar fill
+_TRACK: _RGBA = (0.200, 0.200, 0.251, 1.0)   # progress bar track (empty portion)
+_SEP:   _RGBA = (0.165, 0.165, 0.220, 1.0)   # separator line
+_ERR:   _RGBA = (0.937, 0.267, 0.267, 1.0)   # error text (red)
 
 # ---------------------------------------------------------------------------
 # Layout constants — all in points.
@@ -85,22 +91,22 @@ _ERR   = (0.937, 0.267, 0.267, 1.0)   # error text (red)
 # PAD_BTM : space below the last element before the bottom edge.
 # POPUP_W : fixed popup width (height is computed dynamically).
 # ---------------------------------------------------------------------------
-PAD_X = 24
-PAD_TOP = 20
-PAD_BTM = 20
-POPUP_W = 520
+PAD_X:   int = 24
+PAD_TOP: int = 20
+PAD_BTM: int = 20
+POPUP_W: int = 520
 
 
 # ---------------------------------------------------------------------------
 # Low-level drawing helpers
 # ---------------------------------------------------------------------------
 
-def _ns_color(r, g, b, a=1.0):
+def _ns_color(r: float, g: float, b: float, a: float = 1.0) -> Any:
     """Convert a normalised RGBA tuple to an NSColor object."""
     return NSColor.colorWithCalibratedRed_green_blue_alpha_(r, g, b, a)
 
 
-def _fill_rrect(x, y, w, h, r=6.0):
+def _fill_rrect(x: float, y: float, w: float, h: float, r: float = 6.0) -> None:
     """Fill a rounded rectangle.
 
     Clamps the corner radius so it never exceeds half the shorter dimension,
@@ -117,14 +123,14 @@ def _fill_rrect(x, y, w, h, r=6.0):
     ).fill()
 
 
-def _sys_font(size, bold=False):
+def _sys_font(size: float, bold: bool = False) -> Any:
     """Return a system font at the given point size, optionally bold."""
     if bold:
         return NSFont.boldSystemFontOfSize_(size)
     return NSFont.systemFontOfSize_(size)
 
 
-def _draw_str(text, x, y, font, rgba):
+def _draw_str(text: str, x: float, y: float, font: Any, rgba: _RGBA) -> Any:
     """Draw *text* at AppKit point (x, y) using the given font and colour.
 
     Because PopupView.isFlipped() returns True, the coordinate system has its
@@ -141,7 +147,7 @@ def _draw_str(text, x, y, font, rgba):
     return ns_str.size()
 
 
-def _str_size(text, font):
+def _str_size(text: str, font: Any) -> Any:
     """Return the NSSize (width, height) of *text* rendered in *font*.
 
     Used to compute layout positions before drawing (e.g. right-aligning text
@@ -153,7 +159,7 @@ def _str_size(text, font):
     return ns_str.size()
 
 
-def _format_reset_duration(reset_ts):
+def _format_reset_duration(reset_ts: float) -> str:
     """Return a human-readable countdown string to *reset_ts* (Unix epoch).
 
     Returns an empty string when the timestamp is not available, and
@@ -170,7 +176,7 @@ def _format_reset_duration(reset_ts):
     return f"Resets in {hours} hr {minutes} min" if hours > 0 else f"Resets in {minutes} min"
 
 
-def _format_reset_day(reset_ts):
+def _format_reset_day(reset_ts: float) -> str:
     """Return a short day/time string for a weekly reset timestamp.
 
     Example: "Resets Mon 09:00 AM".
@@ -180,14 +186,14 @@ def _format_reset_day(reset_ts):
     return datetime.fromtimestamp(reset_ts).strftime("Resets %a %I:%M %p")
 
 
-def _format_session_duration(seconds):
+def _format_session_duration(seconds: int) -> str:
     """Return a compact elapsed-time string like "2h 5m" or "47m"."""
-    hours, rem = divmod(int(seconds), 3600)
+    hours, rem = divmod(seconds, 3600)
     minutes = rem // 60
     return f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
 
 
-def _calc_popup_height(n_sessions):
+def _calc_popup_height(n_sessions: int) -> int:
     """Compute the total pixel height required for the popup content.
 
     The popup has a fixed width (POPUP_W) but a variable height that depends
@@ -200,7 +206,7 @@ def _calc_popup_height(n_sessions):
       - separator
       - "Weekly limits" header + usage row
       - separator
-      - "Active sessions" header + session rows (1–8, or placeholder)
+      - "Active sessions" header + session rows (1-8, or placeholder)
       - separator
       - footer
       - PAD_BTM
@@ -240,7 +246,9 @@ class PopupView(NSView):
     ``_stats`` and then calls setNeedsDisplay_(True) to trigger a redraw.
     """
 
-    def initWithFrame_(self, frame):
+    _stats: UsageStats | None
+
+    def initWithFrame_(self, frame: Any) -> PopupView | None:
         """Initialise the view and set up internal state."""
         self = objc.super(PopupView, self).initWithFrame_(frame)
         if self is None:
@@ -250,7 +258,7 @@ class PopupView(NSView):
         self._stats = None
         return self
 
-    def isFlipped(self):
+    def isFlipped(self) -> bool:
         """Return True to make y=0 the top of the view (flipped coordinates).
 
         AppKit normally places y=0 at the bottom-left.  By returning True here
@@ -259,7 +267,7 @@ class PopupView(NSView):
         """
         return True
 
-    def drawRect_(self, rect):
+    def drawRect_(self, rect: Any) -> None:
         """Paint the entire popup.
 
         Called by AppKit whenever the view needs to be redrawn (after
@@ -339,7 +347,8 @@ class PopupView(NSView):
     # ------------------------------------------------------------------
 
     @objc.python_method
-    def _section_header(self, title, y, w, right_text=""):
+    def _section_header(self, title: str, y: float, w: float,
+                        right_text: str = "") -> float:
         """Draw a bold section heading and an optional right-aligned label.
 
         The right label (e.g. "3 running") is vertically centred relative to
@@ -369,7 +378,8 @@ class PopupView(NSView):
         return y + _str_size(title, f_title).height + 12
 
     @objc.python_method
-    def _usage_row(self, label, subtitle, fraction, y, w, bar_w):
+    def _usage_row(self, label: str, subtitle: str, fraction: float,
+                   y: float, w: float, bar_w: float) -> float:
         """Draw one usage row: name/subtitle on the left, bar in the middle,
         percentage on the right.
 
@@ -440,7 +450,7 @@ class PopupView(NSView):
         return y + row_h + 16   # 16 pts of bottom padding after the row
 
     @objc.python_method
-    def _draw_separator(self, y):
+    def _draw_separator(self, y: float) -> float:
         """Draw a 1-point-tall horizontal rule and return the y after it.
 
         The rule is inset PAD_X from both sides.  We add 4 pts before the line
@@ -452,7 +462,7 @@ class PopupView(NSView):
         return y + 25   # total vertical space consumed by the separator
 
     @objc.python_method
-    def _session_row(self, sess, y, w):
+    def _session_row(self, sess: dict[str, Any], y: float, w: float) -> float:
         """Draw one active-session row: working directory on the left, elapsed
         time on the right.
 
@@ -511,7 +521,7 @@ class _PopupDelegate(NSObject):
          to ``show()`` can bring it back instantly without re-creating it.
     """
 
-    def windowShouldClose_(self, sender):
+    def windowShouldClose_(self, sender: Any) -> bool:
         """Intercept the close event: hide the window and veto the close.
 
         ``sender`` is the NSWindow that wants to close.  Calling
@@ -546,7 +556,7 @@ class UsagePopup:
     the actual usable region rather than under system chrome.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Create the NSWindow and set up its content view and delegate."""
         # Start with zero sessions so we can compute an initial window height.
         h = _calc_popup_height(0)
@@ -584,7 +594,7 @@ class UsagePopup:
         self._view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
         self._win.setContentView_(self._view)
 
-    def update(self, stats: UsageStats):
+    def update(self, stats: UsageStats) -> None:
         """Push new stats into the view and resize the window to fit.
 
         Resizing keeps the *top edge* of the window fixed so that the header
@@ -612,7 +622,7 @@ class UsagePopup:
         # Ask AppKit to redraw the view with the new data.
         self._view.setNeedsDisplay_(True)
 
-    def show(self):
+    def show(self) -> None:
         """Bring the popup to the front and make it the key window."""
         # activateIgnoringOtherApps_(True) is required because the menu-bar
         # app may not be the active application when the user clicks the tray
@@ -621,7 +631,7 @@ class UsagePopup:
         NSApp.activateIgnoringOtherApps_(True)
         self._win.makeKeyAndOrderFront_(None)
 
-    def hide(self):
+    def hide(self) -> None:
         """Remove the popup from the screen without destroying it."""
         self._win.orderOut_(None)
 
@@ -659,7 +669,7 @@ class ClaudeUsageTray(rumps.App):
     rather than being baked in as a decorator argument.
     """
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict[str, Any]) -> None:
         """Set up the menu bar icon, menu items, popup, and overlay.
 
         Parameters
@@ -684,7 +694,7 @@ class ClaudeUsageTray(rumps.App):
         # _update_queue is the bridge between the background collector thread
         # and the main-thread timer (_check_queue).  Using a Queue is the
         # simplest thread-safe hand-off: the worker puts(), the timer gets().
-        self._update_queue: queue.Queue = queue.Queue()
+        self._update_queue: queue.Queue[UsageStats] = queue.Queue()
 
         # Guard flag: prevents launching a second collection thread while one
         # is already running.  Set to True in _do_refresh(), cleared to False
@@ -749,11 +759,11 @@ class ClaudeUsageTray(rumps.App):
     # ------------------------------------------------------------------
 
     @rumps.timer(1)
-    def _check_queue(self, _):
+    def _check_queue(self, _: rumps.Timer) -> None:
         """Drain the update queue and apply the most-recent stats snapshot.
 
         This timer fires every second on the main run-loop thread.  It reads
-        all items currently in the queue but only applies the *last* one — any
+        all items currently in the queue but only applies the *last* one -- any
         intermediate results are discarded because showing stale intermediate
         states would cause flicker with no benefit.
 
@@ -768,7 +778,7 @@ class ClaudeUsageTray(rumps.App):
             takes several seconds, so the timer will typically find the queue
             empty on most ticks.
         """
-        latest = None
+        latest: UsageStats | None = None
         while True:
             try:
                 latest = self._update_queue.get_nowait()
@@ -777,7 +787,7 @@ class ClaudeUsageTray(rumps.App):
         if latest is not None:
             self._apply_stats(latest)
 
-    def _auto_refresh(self, _):
+    def _auto_refresh(self, _: rumps.Timer) -> None:
         """Trigger a background data refresh on the configured interval.
 
         Called by the rumps.Timer started in __init__.  Delegates immediately
@@ -789,7 +799,7 @@ class ClaudeUsageTray(rumps.App):
     # Data collection helpers
     # ------------------------------------------------------------------
 
-    def _do_refresh(self):
+    def _do_refresh(self) -> None:
         """Start a background data-collection thread (idempotent).
 
         If a collection is already in flight (_refreshing is True) this method
@@ -802,12 +812,12 @@ class ClaudeUsageTray(rumps.App):
         self._refreshing = True
         threading.Thread(target=self._collect_worker, daemon=True).start()
 
-    def _collect_worker(self):
+    def _collect_worker(self) -> None:
         """Background thread: collect stats and post the result to the queue.
 
         This method runs on a daemon thread (not the main thread) so it is
         safe to do blocking I/O (filesystem reads, API calls) here.  The
-        result — either a valid UsageStats or an error placeholder — is posted
+        result -- either a valid UsageStats or an error placeholder -- is posted
         to _update_queue for the main-thread timer to pick up.
 
         The finally block guarantees _refreshing is reset to False even if an
@@ -830,7 +840,7 @@ class ClaudeUsageTray(rumps.App):
             # Always clear the guard flag so future refreshes are not blocked.
             self._refreshing = False
 
-    def _apply_stats(self, stats: UsageStats):
+    def _apply_stats(self, stats: UsageStats) -> None:
         """Apply a new UsageStats snapshot to all UI surfaces.
 
         Called exclusively from the main thread (via _check_queue) so all
@@ -840,7 +850,6 @@ class ClaudeUsageTray(rumps.App):
           - The details popup content and window size
           - The on-screen overlay widget
         """
-        self._refreshing = False
         self.stats = stats
 
         s_pct = int(stats.session_utilization * 100)
@@ -858,30 +867,30 @@ class ClaudeUsageTray(rumps.App):
     # Menu item action callbacks
     # ------------------------------------------------------------------
 
-    def _on_show_details(self, _):
+    def _on_show_details(self, _: rumps.MenuItem) -> None:
         """Show the detailed usage popup window."""
         self.popup.show()
 
-    def _on_refresh(self, _):
+    def _on_refresh(self, _: rumps.MenuItem) -> None:
         """Manually trigger an immediate data refresh."""
         self._do_refresh()
 
-    def _on_toggle_osd(self, sender):
+    def _on_toggle_osd(self, sender: rumps.MenuItem) -> None:
         """Toggle the on-screen display overlay on or off.
 
         sender.state is 1 (checked) when the overlay is currently visible.
         We toggle the state and show/hide the overlay accordingly.
         """
-        sender.state = not sender.state
+        sender.state = 0 if sender.state else 1
         if sender.state:
             self.overlay.show_all()
         else:
             self.overlay.hide()
 
-    def _on_set_opacity(self, pct):
-        """Set the OSD overlay opacity to *pct* percent (0–100)."""
+    def _on_set_opacity(self, pct: int) -> None:
+        """Set the OSD overlay opacity to *pct* percent (0-100)."""
         self.overlay.set_opacity(pct / 100.0)
 
-    def _on_quit(self, _):
+    def _on_quit(self, _: rumps.MenuItem) -> None:
         """Quit the application cleanly via rumps."""
         rumps.quit_application()

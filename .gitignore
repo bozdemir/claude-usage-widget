@@ -6,3 +6,8 @@ __pycache__/
 docs/superpowers/
 config.json
 _gi_fix/
+
+.env
+dist/
+build/
+*.egg-info/

@@ -1,6 +1,6 @@
 # Claude Usage Widget
 
-A desktop widget that displays your Claude Code usage limits in real-time. Shows session and weekly utilization percentages fetched directly from the Anthropic API, with an always-on-top OSD overlay and a system tray / menu bar icon.
+A desktop widget that displays your Claude Code usage limits in real time. Shows session and weekly utilization percentages fetched from the Anthropic API, with an always-on-top OSD overlay and a system tray / menu bar icon.
 
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue)
 ![Python](https://img.shields.io/badge/python-3.10+-green)
@@ -8,16 +8,16 @@ A desktop widget that displays your Claude Code usage limits in real-time. Shows
 
 ## Features
 
-- **Real API data** — Fetches actual rate limit utilization from `anthropic-ratelimit-unified-*` response headers
-- **OSD overlay** — Transparent, borderless widget in the corner of your screen showing session and weekly usage bars with reset countdowns
-- **System tray / Menu bar** — Quick-glance usage info and a detailed popup window
-- **Cross-platform** — Native GTK3 on Linux, native AppKit/rumps on macOS
-- **Auto-refresh** — Updates every 30 seconds (configurable)
-- **Resizable** — Scroll wheel to scale the OSD up/down
-- **Opacity control** — Adjustable OSD transparency via tray/menu bar
-- **Draggable** — Left-click and drag to reposition the OSD
-- **Minimizable** — Right-click OSD to collapse to a thin progress bar
-- **Active sessions** — Shows running Claude Code sessions with project paths and durations
+- **Real API data** -- fetches rate-limit utilization from `anthropic-ratelimit-unified-*` response headers
+- **OSD overlay** -- transparent, borderless widget in the corner of your screen showing session and weekly usage bars with reset countdowns
+- **System tray / menu bar** -- quick-glance usage info and a detailed popup window
+- **Cross-platform** -- native GTK3 on Linux, native AppKit/rumps on macOS
+- **Auto-refresh** -- updates every 30 seconds (configurable)
+- **Resizable** -- scroll wheel to scale the OSD up or down (0.6x--2.0x)
+- **Opacity control** -- adjustable OSD transparency via the tray / menu bar
+- **Draggable** -- left-click and drag to reposition the OSD
+- **Minimizable** -- right-click the OSD to collapse it to a thin progress bar
+- **Active sessions** -- shows running Claude Code sessions with project paths and durations
 
 ## Requirements
 
@@ -26,7 +26,7 @@ A desktop widget that displays your Claude Code usage limits in real-time. Shows
 
 ### Linux
 
-- GTK 3, python3-gi, python3-gi-cairo, python3-cairo
+- GTK3, python3-gi, python3-gi-cairo, python3-cairo
 - `gir1.2-ayatanaappindicator3-0.1` (system tray)
 
 ### macOS
@@ -69,7 +69,7 @@ pip3 install -r requirements-macos.txt
 # 3. Run
 python3 main.py
 
-# 4. Autostart on login (optional) — installs a Launch Agent
+# 4. Autostart on login (optional) -- installs a Launch Agent
 ./install-macos.sh
 ```
 
@@ -79,22 +79,22 @@ python3 main.py
 
 | Action | Effect |
 |--------|--------|
-| **Scroll up/down** | Resize (scale 0.6x - 2.0x) |
+| **Scroll up / down** | Resize (0.6x--2.0x) |
 | **Left-click drag** | Move the OSD |
-| **Right-click** | Minimize / Restore |
+| **Right-click** | Minimize / restore |
 
 ### System Tray / Menu Bar
 
-- **Session / Weekly** — Current usage percentages
-- **Details...** — Opens detailed popup with usage bars and active sessions
-- **Refresh** — Force immediate data refresh
-- **OSD Overlay** — Toggle the OSD on/off
-- **OSD Opacity** — Set OSD transparency (100% / 75% / 50% / 25%)
-- **Quit** — Exit the widget
+- **Session / Weekly** -- current usage percentages
+- **Details...** -- opens a detailed popup with usage bars and active sessions
+- **Refresh** -- force an immediate data refresh
+- **OSD Overlay** -- toggle the OSD on or off
+- **OSD Opacity** -- set OSD transparency (100% / 75% / 50% / 25%)
+- **Quit** -- exit the widget
 
 ## Configuration
 
-Copy `config.json.example` to `config.json` and edit:
+All settings are optional. Copy `config.json.example` to `config.json` and edit the values you want to change:
 
 ```bash
 cp config.json.example config.json
@@ -114,18 +114,20 @@ cp config.json.example config.json
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `refresh_seconds` | `30` | How often to fetch new data from API |
-| `osd_opacity` | `0.75` | Initial OSD background opacity (0.15 - 1.0) |
-| `osd_scale` | `1.0` | Initial OSD scale factor (0.6 - 2.0) |
-| `daily_message_limit` | `200` | Used for local message tracking in the popup |
-| `weekly_message_limit` | `1000` | Used for local message tracking in the popup |
+| `refresh_seconds` | `30` | How often to fetch new data from the API (seconds) |
+| `osd_opacity` | `0.75` | OSD background opacity (0.15--1.0) |
+| `osd_scale` | `1.0` | OSD scale factor (0.6--2.0) |
+| `daily_message_limit` | `200` | Daily message limit for local tracking in the popup |
+| `weekly_message_limit` | `1000` | Weekly message limit for local tracking in the popup |
 | `daily_token_limit` | `5000000` | Daily token limit for local tracking |
 | `weekly_token_limit` | `25000000` | Weekly token limit for local tracking |
-| `claude_dir` | `~/.claude` | Path to Claude Code data directory |
+| `claude_dir` | `~/.claude` | Path to the Claude Code data directory |
+
+Keys omitted from `config.json` fall back to built-in defaults. `claude_dir` is not included in the example file because the default is correct for most setups.
 
 ## How It Works
 
-The widget reads your Claude Code OAuth credentials from `~/.claude/.credentials.json` (Linux) or the macOS Keychain and makes a minimal API call (1 token to `claude-haiku`) to read the rate limit response headers:
+The widget reads your Claude Code OAuth credentials from `~/.claude/.credentials.json` (Linux) or the macOS Keychain and makes a minimal API call (`max_tokens=1` to `claude-haiku-4-5-20251001`) to read the rate-limit response headers:
 
 ```
 anthropic-ratelimit-unified-5h-utilization: 0.58
@@ -138,46 +140,46 @@ These are the same values shown on the [claude.ai usage page](https://claude.ai/
 
 ### How the OSD Works
 
-The OSD is a transparent, click-through-capable borderless window rendered entirely via 2D drawing primitives:
+The OSD is a transparent, borderless window rendered entirely via 2D drawing primitives:
 
-- **Linux** — A `gtk.Window` with `HINT_NOTIFICATION` type hint uses Cairo to draw rounded rectangles, progress bars, and text directly onto an RGBA surface. The compositor handles transparency; `INPUT_ONLY` event passthrough lets mouse clicks reach windows underneath except when the user is interacting with the OSD itself.
-- **macOS** — An `NSWindow` at `NSScreenSaverWindowLevel` with `NSWindowStyleMaskBorderless` and a transparent `NSView` subclass does the equivalent drawing via Quartz/AppKit (`NSBezierPath`, `NSColor`, `NSAttributedString`).
+- **Linux** -- a `Gtk.Window` with the `NOTIFICATION` type hint uses Cairo to draw rounded rectangles, progress bars, and text onto an RGBA surface. The compositor handles transparency; `set_accept_focus(False)` prevents the overlay from stealing keyboard focus.
+- **macOS** -- an `NSWindow` at `NSFloatingWindowLevel` with `NSWindowStyleMaskBorderless` and a transparent `NSView` subclass does the equivalent drawing via AppKit (`NSBezierPath`, `NSColor`, `NSAttributedString`).
 
-**Scale and opacity system** — Both platforms store a float `scale` (range 0.6–2.0, default 1.0) and `opacity` (range 0.15–1.0, default 0.75) that are applied at draw time. Scale multiplies every pixel dimension (padding, font size, bar height, window size) before drawing so the entire widget resizes proportionally without re-layout. Opacity is used as the alpha channel of the background fill; bar and text elements are drawn at full alpha on top so they remain legible at low opacity.
+**Scale and opacity** -- Both platforms store a float `scale` (0.6--2.0, default 1.0) and `opacity` (0.15--1.0, default 0.75) that are applied at draw time. Scale multiplies every pixel dimension (padding, font size, bar height, window size) before drawing, so the entire widget resizes proportionally without re-layout. Opacity is used as the alpha channel of the background fill; bar and text elements are drawn at full alpha on top so they remain legible at low opacity.
 
-**Refresh cycle** — A background thread wakes every `refresh_seconds` (default 30), fires an API call, and posts the result back to the main thread via GLib `idle_add` (Linux) or `performSelectorOnMainThread` (macOS). The main thread then invalidates the OSD window, triggering a synchronous redraw. User interactions (scroll to resize, drag to move, right-click to minimize) update `scale`/position in-place and queue an immediate redraw without waiting for the next refresh tick.
+**Refresh cycle** -- A background thread wakes every `refresh_seconds` (default 30), makes an API call, and posts the result back to the main thread via `GLib.idle_add` (Linux) or a `rumps.Timer`-drained queue (macOS). The main thread then invalidates the OSD window, triggering a synchronous redraw. User interactions (scroll to resize, drag to move, right-click to minimize) update scale and position in place and queue an immediate redraw without waiting for the next refresh tick.
 
 ## Troubleshooting
 
 ### Linux: OSD not visible
-- Make sure XWayland is available (the widget forces `GDK_BACKEND=x11` for reliable borderless windows)
+- Ensure XWayland is available. The widget forces `GDK_BACKEND=x11` for reliable borderless windows.
 - Check if the process is running: `ps aux | grep main.py`
 
-### Linux: No system tray icon
-- Install `gir1.2-ayatanaappindicator3-0.1`
-- On GNOME, you may need the [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/)
+### Linux: no system tray icon
+- Install `gir1.2-ayatanaappindicator3-0.1`.
+- On GNOME, you may need the [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/).
 
 ### Linux: Cairo errors (`Couldn't find foreign struct converter`)
 - Install `python3-gi-cairo`: `sudo apt install python3-gi-cairo`
 
-### macOS: No menu bar icon
+### macOS: no menu bar icon
 - Make sure `rumps` is installed: `pip3 install rumps`
-- If using a virtualenv, ensure `pyobjc-framework-Cocoa` is also installed
+- If using a virtualenv, ensure `pyobjc-framework-Cocoa` is also installed.
 
 ### API authentication fails
-- Make sure Claude Code CLI is installed and you're logged in (`claude` command works)
-- Linux: OAuth token is read from `~/.claude/.credentials.json`
-- macOS: OAuth token is read from Keychain (fallback to `~/.claude/.credentials.json`)
+- Make sure the Claude Code CLI is installed and you are logged in (the `claude` command should work).
+- Linux: the OAuth token is read from `~/.claude/.credentials.json`.
+- macOS: the OAuth token is read from the Keychain, with a fallback to `~/.claude/.credentials.json`.
 
 ## Contributing
 
 Contributions are welcome. A few guidelines:
 
-- **Bug reports** — Open an issue with your OS, Python version, and the full error output. If the OSD is invisible, include `xrandr` / `system_profiler SPDisplaysDataType` output.
-- **Pull requests** — Keep changes focused. One fix or feature per PR. Run the widget manually on the target platform before submitting.
-- **Platform parity** — Features that affect the OSD or tray should work on both Linux and macOS, or be clearly gated behind a platform check.
-- **No new dependencies** — Avoid adding Python packages beyond those already in `requirements-macos.txt` and the listed GTK stack. If a dependency is truly necessary, discuss it in an issue first.
-- **Code style** — Follow the existing conventions (no formatter is enforced; just match the surrounding code).
+- **Bug reports** -- open an issue with your OS, Python version, and the full error output. If the OSD is invisible, include `xrandr` or `system_profiler SPDisplaysDataType` output.
+- **Pull requests** -- keep changes focused. One fix or feature per PR. Run the widget manually on the target platform before submitting.
+- **Platform parity** -- features that affect the OSD or tray should work on both Linux and macOS, or be clearly gated behind a platform check.
+- **No new dependencies** -- avoid adding Python packages beyond those already in `requirements-macos.txt` and the listed GTK stack. If a dependency is truly necessary, discuss it in an issue first.
+- **Code style** -- follow the existing conventions. No formatter is enforced; just match the surrounding code.
 
 ## License
 

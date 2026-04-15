@@ -36,19 +36,65 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+readonly AGENT_LABEL="com.claude-usage-widget"
+readonly MAIN_SCRIPT="main.py"
+readonly REQUIREMENTS_FILE="requirements-macos.txt"
+readonly LOG_FILE="$HOME/Library/Logs/claude-usage-widget.log"
+readonly ERR_FILE="$HOME/Library/Logs/claude-usage-widget.err"
+
+# ---------------------------------------------------------------------------
+# Helper: print an error message to stderr and exit
+# ---------------------------------------------------------------------------
+die() {
+    printf 'Error: %s\n' "$1" >&2
+    exit "${2:-1}"
+}
+
+# ---------------------------------------------------------------------------
 # Resolve paths
 # SCRIPT_DIR: absolute path to the repo root (where main.py lives).
 # PLIST_DIR:  standard per-user Launch Agents directory on macOS.
 # PLIST_FILE: full path for the plist that launchd will manage.
-# PYTHON:     absolute path to python3, captured now so the plist remains
-#             valid even if PATH changes in future login sessions.
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 PLIST_DIR="$HOME/Library/LaunchAgents"
-PLIST_FILE="$PLIST_DIR/com.claude-usage-widget.plist"
-PYTHON="$(which python3)"
+readonly PLIST_DIR
+PLIST_FILE="$PLIST_DIR/${AGENT_LABEL}.plist"
+readonly PLIST_FILE
 
-echo "=== Claude Usage Widget — macOS installer ==="
+echo "=== Claude Usage Widget -- macOS installer ==="
+
+# ---------------------------------------------------------------------------
+# Preflight checks
+# ---------------------------------------------------------------------------
+
+# Verify python3 is available
+if ! command -v python3 >/dev/null 2>&1; then
+    die "python3 is not installed or not in PATH. Install it with: brew install python3"
+fi
+
+# Capture the absolute path to python3 so the plist remains valid even if
+# PATH changes in future login sessions.
+PYTHON="$(command -v python3)"
+readonly PYTHON
+
+# Verify pip3 is available
+if ! command -v pip3 >/dev/null 2>&1; then
+    die "pip3 is not installed or not in PATH. Install it with: brew install python3"
+fi
+
+# Verify main.py exists in the repo directory
+if [[ ! -f "$SCRIPT_DIR/$MAIN_SCRIPT" ]]; then
+    die "$MAIN_SCRIPT not found in $SCRIPT_DIR. Is this script in the repository root?"
+fi
+
+# Verify requirements file exists
+if [[ ! -f "$SCRIPT_DIR/$REQUIREMENTS_FILE" ]]; then
+    die "$REQUIREMENTS_FILE not found in $SCRIPT_DIR. Is this script in the repository root?"
+fi
 
 # ---------------------------------------------------------------------------
 # Install Python dependencies
@@ -57,14 +103,25 @@ echo "=== Claude Usage Widget — macOS installer ==="
 # The -q flag suppresses verbose pip output.
 # ---------------------------------------------------------------------------
 echo "Installing Python dependencies..."
-pip3 install -q -r "$SCRIPT_DIR/requirements-macos.txt"
+if ! pip3 install -q -r "$SCRIPT_DIR/$REQUIREMENTS_FILE"; then
+    die "pip3 install failed. Check the output above for details."
+fi
 
 # ---------------------------------------------------------------------------
 # Create the LaunchAgents directory if it does not already exist
 # (It is present by default on standard macOS installs, but may be absent
 # in minimal or freshly provisioned environments.)
 # ---------------------------------------------------------------------------
-mkdir -p "$PLIST_DIR"
+if ! mkdir -p "$PLIST_DIR"; then
+    die "Failed to create LaunchAgents directory: $PLIST_DIR"
+fi
+
+# ---------------------------------------------------------------------------
+# Unload any previously loaded version of the agent before writing the new
+# plist.  This makes the script safe to run multiple times (idempotent).
+# Errors are suppressed because the agent may not be loaded on first run.
+# ---------------------------------------------------------------------------
+launchctl unload "$PLIST_FILE" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Write the launchd plist
@@ -85,20 +142,20 @@ cat > "$PLIST_FILE" <<EOF
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.claude-usage-widget</string>
+    <string>${AGENT_LABEL}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>$PYTHON</string>
-        <string>$SCRIPT_DIR/main.py</string>
+        <string>${PYTHON}</string>
+        <string>${SCRIPT_DIR}/${MAIN_SCRIPT}</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <false/>
     <key>StandardOutPath</key>
-    <string>$HOME/Library/Logs/claude-usage-widget.log</string>
+    <string>${LOG_FILE}</string>
     <key>StandardErrorPath</key>
-    <string>$HOME/Library/Logs/claude-usage-widget.err</string>
+    <string>${ERR_FILE}</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
@@ -108,28 +165,34 @@ cat > "$PLIST_FILE" <<EOF
 </plist>
 EOF
 
+# Verify the plist was written successfully
+if [[ ! -f "$PLIST_FILE" ]]; then
+    die "Failed to write plist to $PLIST_FILE"
+fi
+
 # ---------------------------------------------------------------------------
 # Create log files and lock down permissions
 # The log files are created explicitly here so chmod can be applied before
 # the agent runs.  chmod 600 ensures only the owning user can read the logs,
 # which may contain Python tracebacks or sensitive path information.
 # ---------------------------------------------------------------------------
-touch "$HOME/Library/Logs/claude-usage-widget.log" "$HOME/Library/Logs/claude-usage-widget.err"
-chmod 600 "$HOME/Library/Logs/claude-usage-widget.log" "$HOME/Library/Logs/claude-usage-widget.err"
+if ! mkdir -p "$(dirname "$LOG_FILE")"; then
+    die "Failed to create log directory: $(dirname "$LOG_FILE")"
+fi
+touch "$LOG_FILE" "$ERR_FILE"
+chmod 600 "$LOG_FILE" "$ERR_FILE"
 
 # ---------------------------------------------------------------------------
-# Register and start the Launch Agent
-# "launchctl unload" is attempted first (suppressing errors) to cleanly
-# remove any previously loaded version of the agent before reloading it.
-# This makes the script safe to run on subsequent installs or upgrades.
+# Load and start the Launch Agent
 # ---------------------------------------------------------------------------
-launchctl unload "$PLIST_FILE" 2>/dev/null || true
-launchctl load "$PLIST_FILE"
+if ! launchctl load "$PLIST_FILE"; then
+    die "launchctl load failed. Check the plist for errors: $PLIST_FILE"
+fi
 
 # ---------------------------------------------------------------------------
 # Confirm installation and print helpful next steps
 # ---------------------------------------------------------------------------
 echo ""
 echo "Done! The widget will start automatically on next login."
-echo "To start it now: launchctl start com.claude-usage-widget"
-echo "To remove:       launchctl unload $PLIST_FILE && rm $PLIST_FILE"
+echo "To start it now: launchctl start $AGENT_LABEL"
+echo "To remove:       launchctl unload \"$PLIST_FILE\" && rm \"$PLIST_FILE\""

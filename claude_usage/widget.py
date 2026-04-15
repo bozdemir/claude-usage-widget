@@ -1,20 +1,26 @@
 """System tray icon and detailed popup window."""
 
+from __future__ import annotations
+
 import math
 import os
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime
+from typing import TYPE_CHECKING
 
 import gi
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("AyatanaAppIndicator3", "0.1")
 
-from gi.repository import Gtk, GLib, Gdk, Pango
-from gi.repository import AyatanaAppIndicator3 as AppIndicator
+from gi.repository import Gtk, GLib, Gdk, Pango  # type: ignore[attr-defined]
+from gi.repository import AyatanaAppIndicator3 as AppIndicator  # type: ignore[attr-defined]
 
 from claude_usage.collector import collect_all, UsageStats
 from claude_usage.overlay import UsageOverlay
+
+if TYPE_CHECKING:
+    import cairo
 
 
 ICON_PATH = os.path.join(os.path.dirname(__file__), "icons", "claude-tray.svg")
@@ -35,7 +41,15 @@ TEXT_LINK = "#6BA4D9"      # active-session paths — lighter accent blue
 SEPARATOR_COLOR = "#2a2a38" # horizontal rule — slightly lighter than the background
 
 
-def _rounded_rect(cr, x, y, w, h, r):
+def _rounded_rect(
+    cr: cairo.Context,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    r: float,
+) -> None:
+    """Trace a rounded-rectangle path onto Cairo context *cr*."""
     r = min(r, w / 2, h / 2)
     if r < 0.5:
         cr.rectangle(x, y, w, h)
@@ -48,9 +62,13 @@ def _rounded_rect(cr, x, y, w, h, r):
     cr.close_path()
 
 
-def _hex_to_rgb(hex_color: str) -> tuple:
+def _hex_to_rgb(hex_color: str) -> tuple[float, float, float]:
+    """Convert a ``#RRGGBB`` hex string to an ``(r, g, b)`` float triple."""
     hex_color = hex_color.lstrip("#")
-    return tuple(int(hex_color[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
+    r = int(hex_color[0:2], 16) / 255.0
+    g = int(hex_color[2:4], 16) / 255.0
+    b = int(hex_color[4:6], 16) / 255.0
+    return (r, g, b)
 
 
 def _format_reset_duration(reset_ts: int) -> str:
@@ -74,8 +92,9 @@ def _format_reset_day(reset_ts: int) -> str:
     return datetime.fromtimestamp(reset_ts).strftime("Resets %a %I:%M %p")
 
 
-def _format_session_duration(seconds: int) -> str:
-    hours, remainder = divmod(seconds, 3600)
+def _format_session_duration(total_seconds: int) -> str:
+    """Format a duration in seconds as ``Xh Ym`` or ``Ym``."""
+    hours, remainder = divmod(total_seconds, 3600)
     minutes = remainder // 60
     if hours > 0:
         return f"{hours}h {minutes}m"
@@ -141,7 +160,9 @@ separator {{
 class UsagePopup(Gtk.Window):
     """Detailed popup window showing usage bars, sessions, and model breakdown."""
 
-    def __init__(self, config: dict):
+    _css_loaded: bool = False
+
+    def __init__(self, config: dict[str, object]) -> None:
         super().__init__(title="Claude Usage", type=Gtk.WindowType.TOPLEVEL)
         self.config = config
         self.set_default_size(520, -1)
@@ -152,11 +173,17 @@ class UsagePopup(Gtk.Window):
         self.set_position(Gtk.WindowPosition.MOUSE)
         self.connect("delete-event", self._on_delete)
 
-        css = Gtk.CssProvider()
-        css.load_from_data(CSS)
-        Gtk.StyleContext.add_provider_for_screen(
-            Gdk.Screen.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
+        # Install the application-wide CSS exactly once, no matter how many
+        # UsagePopup instances are created (normally just one).
+        if not UsagePopup._css_loaded:
+            css = Gtk.CssProvider()
+            css.load_from_data(CSS)
+            Gtk.StyleContext.add_provider_for_screen(
+                Gdk.Screen.get_default(),
+                css,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+            )
+            UsagePopup._css_loaded = True
 
         self._main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self._main_box.set_margin_top(20)
@@ -168,15 +195,18 @@ class UsagePopup(Gtk.Window):
         self._content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self._main_box.pack_start(self._content_box, False, False, 0)
 
-    def _on_delete(self, *args):
+    def _on_delete(self, widget: Gtk.Widget, event: Gdk.Event) -> bool:
+        """Hide instead of destroying so the window can be re-shown later."""
         self.hide()
         return True
 
-    def _clear(self):
+    def _clear(self) -> None:
+        """Destroy all child widgets inside the content box."""
         for child in self._content_box.get_children():
             child.destroy()
 
-    def _add_section_header(self, title: str, right_text: str = ""):
+    def _add_section_header(self, title: str, right_text: str = "") -> None:
+        """Append a bold section heading with an optional right-aligned subtitle."""
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         box.set_margin_bottom(12)
 
@@ -186,14 +216,14 @@ class UsagePopup(Gtk.Window):
         box.pack_start(lbl, True, True, 0)
 
         if right_text:
-            r = Gtk.Label(label=right_text)
-            r.get_style_context().add_class("section-right")
-            box.pack_end(r, False, False, 0)
+            right_lbl = Gtk.Label(label=right_text)
+            right_lbl.get_style_context().add_class("section-right")
+            box.pack_end(right_lbl, False, False, 0)
 
         self._content_box.pack_start(box, False, False, 0)
 
-    def _add_usage_row(self, label: str, subtitle: str, fraction: float):
-        """Add a row: Label [====bar====] XX% used"""
+    def _add_usage_row(self, label: str, subtitle: str, fraction: float) -> None:
+        """Add a row: Label [====bar====] XX% used."""
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
         row.set_margin_bottom(16)
 
@@ -217,24 +247,24 @@ class UsagePopup(Gtk.Window):
         bar.set_size_request(200, 12)
         bar.set_valign(Gtk.Align.CENTER)
 
-        def draw_bar(widget, cr):
+        def _draw_bar(widget: Gtk.DrawingArea, cr: cairo.Context) -> None:
             w = widget.get_allocated_width()
             h = widget.get_allocated_height()
             # Draw the empty track first, then paint the filled portion on top.
-            r, g, b = _hex_to_rgb(BAR_TRACK)
-            cr.set_source_rgb(r, g, b)
+            tr, tg, tb = _hex_to_rgb(BAR_TRACK)
+            cr.set_source_rgb(tr, tg, tb)
             _rounded_rect(cr, 0, 0, w, h, 6)
             cr.fill()
             if fraction > 0:
-                # Clamp to 100 % and enforce a minimum pill width equal to the
+                # Clamp to 100% and enforce a minimum pill width equal to the
                 # bar height so the rounded caps always render correctly.
                 fill_w = max(w * min(fraction, 1.0), h)
-                r, g, b = _hex_to_rgb(BAR_BLUE)
-                cr.set_source_rgb(r, g, b)
+                fr, fg, fb = _hex_to_rgb(BAR_BLUE)
+                cr.set_source_rgb(fr, fg, fb)
                 _rounded_rect(cr, 0, 0, fill_w, h, 6)
                 cr.fill()
 
-        bar.connect("draw", draw_bar)
+        bar.connect("draw", _draw_bar)
         row.pack_start(bar, True, True, 0)
 
         pct_lbl = Gtk.Label(label=f"{min(int(fraction * 100), 100)}% used")
@@ -245,13 +275,14 @@ class UsagePopup(Gtk.Window):
 
         self._content_box.pack_start(row, False, False, 0)
 
-    def _add_separator(self):
+    def _add_separator(self) -> None:
+        """Append a styled horizontal separator."""
         sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         sep.set_margin_top(4)
         sep.set_margin_bottom(16)
         self._content_box.pack_start(sep, False, False, 0)
 
-    def update(self, stats: UsageStats):
+    def update(self, stats: UsageStats) -> None:
         """Rebuild the popup contents from the latest ``UsageStats``.
 
         Destroys all existing child widgets and recreates them so that layout
@@ -290,39 +321,45 @@ class UsagePopup(Gtk.Window):
                 started = datetime.fromtimestamp(sess.get("startedAt", 0) / 1000)
                 duration = datetime.now() - started
                 # Replace the home directory prefix with ~ for compact display.
-                cwd = sess.get("cwd", "?").replace(os.path.expanduser("~"), "~")
+                cwd: str = sess.get("cwd", "?").replace(
+                    os.path.expanduser("~"), "~"
+                )
 
-                row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-                row.set_margin_bottom(6)
+                sess_row = Gtk.Box(
+                    orientation=Gtk.Orientation.HORIZONTAL, spacing=8
+                )
+                sess_row.set_margin_bottom(6)
 
-                lbl = Gtk.Label(label=cwd)
-                lbl.get_style_context().add_class("session-text")
-                lbl.set_halign(Gtk.Align.START)
-                lbl.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
-                row.pack_start(lbl, True, True, 0)
+                path_lbl = Gtk.Label(label=cwd)
+                path_lbl.get_style_context().add_class("session-text")
+                path_lbl.set_halign(Gtk.Align.START)
+                path_lbl.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+                sess_row.pack_start(path_lbl, True, True, 0)
 
-                dur = Gtk.Label(label=_format_session_duration(int(duration.total_seconds())))
-                dur.get_style_context().add_class("dim-text")
-                row.pack_end(dur, False, False, 0)
+                dur_lbl = Gtk.Label(
+                    label=_format_session_duration(int(duration.total_seconds()))
+                )
+                dur_lbl.get_style_context().add_class("dim-text")
+                sess_row.pack_end(dur_lbl, False, False, 0)
 
-                self._content_box.pack_start(row, False, False, 0)
+                self._content_box.pack_start(sess_row, False, False, 0)
         else:
-            lbl = Gtk.Label(label="No active sessions")
-            lbl.get_style_context().add_class("dim-text")
-            lbl.set_halign(Gtk.Align.START)
-            self._content_box.pack_start(lbl, False, False, 0)
+            empty_lbl = Gtk.Label(label="No active sessions")
+            empty_lbl.get_style_context().add_class("dim-text")
+            empty_lbl.set_halign(Gtk.Align.START)
+            self._content_box.pack_start(empty_lbl, False, False, 0)
 
         self._add_separator()
 
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        updated = Gtk.Label(label="Last updated: just now")
-        updated.get_style_context().add_class("updated-text")
-        footer.pack_start(updated, True, True, 0)
+        updated_lbl = Gtk.Label(label="Last updated: just now")
+        updated_lbl.get_style_context().add_class("updated-text")
+        footer.pack_start(updated_lbl, True, True, 0)
 
         if stats.rate_limit_error:
-            err = Gtk.Label(label=f"API: {stats.rate_limit_error}")
-            err.get_style_context().add_class("error-text")
-            footer.pack_end(err, False, False, 0)
+            err_lbl = Gtk.Label(label=f"API: {stats.rate_limit_error}")
+            err_lbl.get_style_context().add_class("error-text")
+            footer.pack_end(err_lbl, False, False, 0)
 
         self._content_box.pack_start(footer, False, False, 0)
         self._content_box.show_all()
@@ -354,13 +391,13 @@ class ClaudeUsageTray:
         timer fires again before the previous one finishes.
     """
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict[str, object]) -> None:
         self.config = config
-        self.stats = UsageStats()
+        self.stats: UsageStats = UsageStats()
         # _alive guards all post-quit GTK access (see class docstring).
-        self._alive = True
+        self._alive: bool = True
         # _refreshing prevents concurrent collection runs (see class docstring).
-        self._refreshing = False
+        self._refreshing: bool = False
 
         self.indicator = AppIndicator.Indicator.new(
             "claude-usage",
@@ -386,7 +423,7 @@ class ClaudeUsageTray:
         menu.append(mi_details)
 
         mi_refresh = Gtk.MenuItem(label="Refresh")
-        mi_refresh.connect("activate", lambda _: self._refresh_async())
+        mi_refresh.connect("activate", lambda _w: self._refresh_async())
         menu.append(mi_refresh)
 
         menu.append(Gtk.SeparatorMenuItem())
@@ -398,7 +435,7 @@ class ClaudeUsageTray:
 
         opacity_item = Gtk.MenuItem(label="OSD Opacity")
         opacity_menu = Gtk.Menu()
-        for pct in [100, 75, 50, 25]:
+        for pct in (100, 75, 50, 25):
             mi = Gtk.MenuItem(label=f"{pct}%")
             mi.connect("activate", self._on_set_opacity, pct / 100.0)
             opacity_menu.append(mi)
@@ -414,15 +451,17 @@ class ClaudeUsageTray:
         menu.show_all()
         self.indicator.set_menu(menu)
 
-        self.popup = UsagePopup(config)
-        self.overlay = UsageOverlay(config)
+        self.popup: UsagePopup = UsagePopup(config)
+        self.overlay: UsageOverlay = UsageOverlay(config)
         self.overlay.show_all()
 
         # Populate the UI immediately, then register the recurring timer.
         self._refresh_async()
-        self._timer_id = GLib.timeout_add_seconds(config["refresh_seconds"], self._on_timer)
+        self._timer_id: int = GLib.timeout_add_seconds(
+            config["refresh_seconds"], self._on_timer
+        )
 
-    def _refresh_async(self):
+    def _refresh_async(self) -> None:
         """Spawn a daemon thread to collect usage data without blocking the UI.
 
         Returns immediately if a refresh is already in flight (``_refreshing``)
@@ -435,7 +474,7 @@ class ClaudeUsageTray:
             return
         self._refreshing = True
 
-        def _worker():
+        def _worker() -> None:
             try:
                 stats = collect_all(self.config)
             except Exception:
@@ -447,7 +486,7 @@ class ClaudeUsageTray:
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _apply_stats(self, stats):
+    def _apply_stats(self, stats: UsageStats) -> bool:
         """Push freshly collected stats into every UI surface.
 
         Called exclusively from ``GLib.idle_add``, guaranteeing execution on
@@ -475,26 +514,31 @@ class ClaudeUsageTray:
         self.overlay.update(stats)
         return False  # remove from idle queue
 
-    def _on_timer(self):
+    def _on_timer(self) -> bool:
+        """GLib timeout callback. Returns ``True`` to keep the timer alive."""
         if not self._alive:
             return False
         self._refresh_async()
         return True
 
-    def _on_show_details(self, _):
+    def _on_show_details(self, _widget: Gtk.MenuItem) -> None:
+        """Open (or re-show) the detailed usage popup."""
         self.popup.show_all()
         self.popup.present()
 
-    def _on_toggle_osd(self, widget):
+    def _on_toggle_osd(self, widget: Gtk.CheckMenuItem) -> None:
+        """Show or hide the OSD overlay based on the check-menu state."""
         if widget.get_active():
             self.overlay.show_all()
         else:
             self.overlay.hide()
 
-    def _on_set_opacity(self, _, value):
+    def _on_set_opacity(self, _widget: Gtk.MenuItem, value: float) -> None:
+        """Set the OSD overlay opacity from the submenu selection."""
         self.overlay.set_opacity(value)
 
-    def _on_quit(self, _):
+    def _on_quit(self, _widget: Gtk.MenuItem) -> None:
+        """Shut down the application cleanly."""
         # Mark dead before removing the timer so any in-flight idle callback
         # that fires during teardown sees _alive=False and exits cleanly.
         self._alive = False
