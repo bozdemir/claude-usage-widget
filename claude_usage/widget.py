@@ -159,7 +159,7 @@ class UsagePopup(Gtk.Window):
 
     def _clear(self):
         for child in self._content_box.get_children():
-            self._content_box.remove(child)
+            child.destroy()
 
     def _add_section_header(self, title: str, right_text: str = ""):
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -307,6 +307,8 @@ class ClaudeUsageTray:
     def __init__(self, config: dict):
         self.config = config
         self.stats = UsageStats()
+        self._alive = True
+        self._refreshing = False
 
         self.indicator = AppIndicator.Indicator.new(
             "claude-usage",
@@ -369,14 +371,25 @@ class ClaudeUsageTray:
 
     def _refresh_async(self):
         """Run data collection in a background thread to avoid blocking GTK."""
+        if self._refreshing or not self._alive:
+            return
+        self._refreshing = True
+
         def _worker():
-            stats = collect_all(self.config)
-            GLib.idle_add(self._apply_stats, stats)
+            try:
+                stats = collect_all(self.config)
+            except Exception:
+                stats = UsageStats(rate_limit_error="Collection failed")
+            if self._alive:
+                GLib.idle_add(self._apply_stats, stats)
 
         threading.Thread(target=_worker, daemon=True).start()
 
     def _apply_stats(self, stats):
         """Apply collected stats to the UI (must run on GTK main thread)."""
+        self._refreshing = False
+        if not self._alive:
+            return False
         self.stats = stats
 
         session_pct = int(stats.session_utilization * 100)
@@ -391,6 +404,8 @@ class ClaudeUsageTray:
         return False  # remove from idle queue
 
     def _on_timer(self):
+        if not self._alive:
+            return False
         self._refresh_async()
         return True
 
@@ -408,4 +423,5 @@ class ClaudeUsageTray:
         self.overlay.set_opacity(value)
 
     def _on_quit(self, _):
+        self._alive = False
         Gtk.main_quit()

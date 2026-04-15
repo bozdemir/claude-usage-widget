@@ -3,10 +3,11 @@
 import glob
 import json
 import os
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from urllib.request import Request, urlopen
-from urllib.error import URLError
+from urllib.error import URLError, HTTPError
 
 
 @dataclass
@@ -23,7 +24,7 @@ class UsageStats:
     today_hourly: dict = field(default_factory=dict)
     # Real rate limit data from API
     session_utilization: float = 0.0  # 0.0 - 1.0
-    session_reset: int = 0  # unix timestamp
+    session_reset: int = 0  # unix timestamp (seconds)
     weekly_utilization: float = 0.0
     weekly_reset: int = 0
     overage_status: str = ""  # "rejected" or "allowed"
@@ -80,8 +81,13 @@ def collect_tokens_from_conversations(claude_dir: str, date_prefixes: list[str])
     if not os.path.isdir(projects_dir):
         return result
 
+    # Resolve to real path to prevent symlink traversal
+    projects_dir = os.path.realpath(projects_dir)
+
     for jsonl_path in glob.glob(os.path.join(projects_dir, "*", "*.jsonl")):
-        if os.sep + "subagents" + os.sep in jsonl_path:
+        # Skip subagent conversation files
+        parts = jsonl_path.split(os.sep)
+        if "subagents" in parts:
             continue
         _parse_conversation_tokens(jsonl_path, date_prefixes, result)
 
@@ -145,9 +151,14 @@ def get_active_sessions(claude_dir: str) -> list[dict]:
             with open(path) as f:
                 sess = json.load(f)
             pid = sess.get("pid", 0)
+            if pid <= 0:
+                continue
             os.kill(pid, 0)
             active.append(sess)
-        except (ProcessLookupError, PermissionError):
+        except PermissionError:
+            # Process exists but owned by another user — still active
+            active.append(sess)
+        except ProcessLookupError:
             pass
         except (json.JSONDecodeError, OSError):
             continue
@@ -167,7 +178,7 @@ def _load_credentials(claude_dir: str) -> str | None:
             return None
 
     # 2. Try macOS Keychain (credentials stored by Claude Code for macOS)
-    if os.uname().sysname == "Darwin":
+    if sys.platform == "darwin":
         try:
             import subprocess
             result = subprocess.run(
@@ -214,23 +225,53 @@ def fetch_rate_limits(claude_dir: str) -> dict:
     try:
         with urlopen(req, timeout=15) as resp:
             headers = {k.lower(): v for k, v in resp.getheaders()}
+    except HTTPError as e:
+        if e.code == 401:
+            return {"error": "Credentials expired — re-authenticate with 'claude'"}
+        if e.code == 429:
+            # Rate limited — try to read headers from error response
+            headers = {k.lower(): v for k, v in e.headers.items()}
+            prefix = "anthropic-ratelimit-unified-"
+            if any(k.startswith(prefix) for k in headers):
+                return _parse_rate_limit_headers(headers)
+            return {"error": "Rate limited"}
+        return {"error": f"API error {e.code}"}
     except (URLError, OSError, TimeoutError):
         return {"error": "API request failed"}
 
+    return _parse_rate_limit_headers(headers)
+
+
+def _parse_rate_limit_headers(headers: dict) -> dict:
+    """Parse rate limit values from API response headers with safe type conversion."""
     prefix = "anthropic-ratelimit-unified-"
     if not any(k.startswith(prefix) for k in headers):
         return {"error": "No rate limit headers in response"}
 
-    def _h(suffix, default="0"):
-        return headers.get(prefix + suffix, default)
+    def _safe_float(suffix, default=0.0):
+        try:
+            return float(headers.get(prefix + suffix, default))
+        except (ValueError, TypeError):
+            return default
+
+    def _safe_int(suffix, default=0):
+        try:
+            val = int(headers.get(prefix + suffix, default))
+            # Sanity check: reset timestamps should be in seconds, not milliseconds.
+            # A value > year 2100 in seconds (4102444800) likely means milliseconds.
+            if suffix.endswith("-reset") and val > 4_102_444_800:
+                val = val // 1000
+            return val
+        except (ValueError, TypeError):
+            return default
 
     return {
-        "session_utilization": float(_h("5h-utilization")),
-        "session_reset": int(_h("5h-reset")),
-        "weekly_utilization": float(_h("7d-utilization")),
-        "weekly_reset": int(_h("7d-reset")),
-        "overage_status": _h("overage-status", ""),
-        "fallback_status": _h("fallback", ""),
+        "session_utilization": min(_safe_float("5h-utilization"), 1.0),
+        "session_reset": _safe_int("5h-reset"),
+        "weekly_utilization": min(_safe_float("7d-utilization"), 1.0),
+        "weekly_reset": _safe_int("7d-reset"),
+        "overage_status": headers.get(prefix + "overage-status", ""),
+        "fallback_status": headers.get(prefix + "fallback", ""),
     }
 
 

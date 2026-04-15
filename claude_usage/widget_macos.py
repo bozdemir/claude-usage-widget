@@ -349,6 +349,7 @@ class ClaudeUsageTray(rumps.App):
         self.config = config
         self.stats = UsageStats()
         self._update_queue: queue.Queue = queue.Queue()
+        self._refreshing = False
 
         # Menu items
         self.mi_session = rumps.MenuItem("Session: —")
@@ -404,14 +405,21 @@ class ClaudeUsageTray(rumps.App):
     # ------------------------------------------------------------------ actions
 
     def _do_refresh(self):
-        """Launch background data collection."""
+        """Launch background data collection (guards against concurrent runs)."""
+        if self._refreshing:
+            return
+        self._refreshing = True
         threading.Thread(target=self._collect_worker, daemon=True).start()
 
     def _collect_worker(self):
-        stats = collect_all(self.config)
+        try:
+            stats = collect_all(self.config)
+        except Exception:
+            stats = UsageStats(rate_limit_error="Collection failed")
         self._update_queue.put(stats)
 
     def _apply_stats(self, stats: UsageStats):
+        self._refreshing = False
         self.stats = stats
         s_pct = int(stats.session_utilization * 100)
         w_pct = int(stats.weekly_utilization * 100)

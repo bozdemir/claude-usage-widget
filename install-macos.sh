@@ -47,6 +47,10 @@ cat > "$PLIST_FILE" <<EOF
 </plist>
 EOF
 
+# Restrict log file permissions (may contain error tracebacks)
+touch "$HOME/Library/Logs/claude-usage-widget.log" "$HOME/Library/Logs/claude-usage-widget.err"
+chmod 600 "$HOME/Library/Logs/claude-usage-widget.log" "$HOME/Library/Logs/claude-usage-widget.err"
+
 # Load the agent
 launchctl unload "$PLIST_FILE" 2>/dev/null || true
 launchctl load "$PLIST_FILE"
