@@ -154,22 +154,45 @@ def get_active_sessions(claude_dir: str) -> list[dict]:
     return active
 
 
+def _load_credentials(claude_dir: str) -> str | None:
+    """Load OAuth access token from credentials file or macOS Keychain."""
+    # 1. Try the credentials file (Linux + macOS)
+    creds_path = os.path.join(claude_dir, ".credentials.json")
+    if os.path.isfile(creds_path):
+        try:
+            with open(creds_path) as f:
+                creds = json.load(f)
+            return creds["claudeAiOauth"]["accessToken"]
+        except (json.JSONDecodeError, KeyError, OSError):
+            return None
+
+    # 2. Try macOS Keychain (credentials stored by Claude Code for macOS)
+    if os.uname().sysname == "Darwin":
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["security", "find-generic-password",
+                 "-s", "Claude Code-credentials", "-w"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                creds = json.loads(result.stdout.strip())
+                return creds["claudeAiOauth"]["accessToken"]
+        except Exception:
+            pass
+
+    return None
+
+
 def fetch_rate_limits(claude_dir: str) -> dict:
     """Fetch rate limit data from Anthropic API using OAuth credentials.
 
     Makes a minimal API call (1 token to haiku) and reads rate limit headers.
     Uses urllib to keep credentials in-process (not exposed via /proc/cmdline).
     """
-    creds_path = os.path.join(claude_dir, ".credentials.json")
-    if not os.path.isfile(creds_path):
+    token = _load_credentials(claude_dir)
+    if not token:
         return {"error": "No credentials found"}
-
-    try:
-        with open(creds_path) as f:
-            creds = json.load(f)
-        token = creds["claudeAiOauth"]["accessToken"]
-    except (json.JSONDecodeError, KeyError):
-        return {"error": "Invalid credentials file"}
 
     body = json.dumps({
         "model": "claude-haiku-4-5-20251001",
