@@ -1,4 +1,10 @@
-"""OSD overlay for macOS — always-on-top transparent widget in top-right corner."""
+"""OSD overlay for macOS — always-on-top transparent widget in top-right corner.
+
+This module creates a borderless, always-on-top NSWindow that floats over every
+Space and every full-screen app.  All drawing is done with AppKit (NSBezierPath /
+NSAttributedString) inside an NSView subclass, so there is no external dependency
+on Cairo or Qt.
+"""
 
 from datetime import datetime
 
@@ -10,7 +16,7 @@ from AppKit import (
     NSFontAttributeName, NSForegroundColorAttributeName,
     NSAttributedString,
     NSScreen,
-    NSFloatingWindowLevel,
+    NSFloatingWindowLevel,   # window-level constant (value ~3); sits above normal app windows
     NSViewWidthSizable, NSViewHeightSizable,
     NSEvent,
 )
@@ -18,11 +24,39 @@ from Foundation import NSMakeRect, NSMakePoint
 
 from claude_usage.collector import UsageStats
 
+# ---------------------------------------------------------------------------
+# Style-mask compatibility shim
+# ---------------------------------------------------------------------------
+# The "borderless" style-mask constant was renamed in the macOS 10.12 SDK.
+# NSWindowStyleMaskBorderless is the modern name; NSBorderlessWindowMask is the
+# legacy alias kept for older PyObjC builds.  Both resolve to the integer 0.
 try:
     from AppKit import NSWindowStyleMaskBorderless as _BORDERLESS
 except ImportError:
     from AppKit import NSBorderlessWindowMask as _BORDERLESS  # type: ignore
 
+# ---------------------------------------------------------------------------
+# Collection-behavior flags
+# ---------------------------------------------------------------------------
+# NSWindowCollectionBehavior controls how a window interacts with Spaces,
+# Mission Control, and the Cmd-Tab / window-cycle features.
+#
+#   CanJoinAllSpaces  — the window appears on every virtual desktop (Space),
+#                       including the one shown in full-screen apps.  Without
+#                       this the overlay disappears whenever the user switches
+#                       Spaces.
+#
+#   Stationary        — the window does not participate in the "push aside"
+#                       animation when Mission Control is invoked; it stays
+#                       pinned at its current position on screen.
+#
+#   IgnoresCycle      — hides the window from the Cmd-` (cycle through windows
+#                       of current app) and from the Exposé/App Exposé window
+#                       picker.  The overlay is a HUD, not a document window,
+#                       so it should be invisible to normal window management.
+#
+# All three flags are OR-ed together into a single integer bitmask.
+# The try/except guards against very old PyObjC builds that lack these symbols.
 try:
     from AppKit import (
         NSWindowCollectionBehaviorCanJoinAllSpaces,
@@ -35,31 +69,46 @@ try:
         | NSWindowCollectionBehaviorIgnoresCycle
     )
 except ImportError:
-    _COLLECTION = 0
+    _COLLECTION = 0  # fall back to default behavior; overlay may vanish on Space switch
 
+
+# ---------------------------------------------------------------------------
+# Layout constants
+# ---------------------------------------------------------------------------
 
 # Base OSD dimensions (at scale=1.0)
 BASE_WIDTH = 260
 BASE_HEIGHT = 100
-OSD_MARGIN = 16
-OSD_RADIUS = 12
-OSD_BAR_HEIGHT = 6
-OSD_BAR_RADIUS = 3
-MINIMIZED_HEIGHT = 6
+OSD_MARGIN = 16       # gap between the overlay and the screen edge (points)
+OSD_RADIUS = 12       # corner radius of the background pill
+OSD_BAR_HEIGHT = 6    # height of each progress bar track
+OSD_BAR_RADIUS = 3    # corner radius of progress bar caps
+MINIMIZED_HEIGHT = 6  # height of the overlay when collapsed to a thin bar
 
-SCALE_MIN, SCALE_MAX, SCALE_STEP = 0.6, 2.0, 0.1
+SCALE_MIN, SCALE_MAX, SCALE_STEP = 0.6, 2.0, 0.1  # scroll-wheel zoom range
 
-# Colors (r, g, b, a)
-BG_RGBA        = (0.08, 0.08, 0.15, 0.75)
-BAR_TRACK_RGBA = (0.25, 0.25, 0.32, 0.60)
-TEXT_RGBA      = (0.88, 0.88, 0.92, 0.95)
-DIM_RGBA       = (0.50, 0.50, 0.58, 0.75)
-WARN_RGBA      = (0.92, 0.70, 0.05, 0.95)
-CRIT_RGBA      = (0.94, 0.27, 0.27, 0.95)
-BAR_BLUE_RGBA  = (0.36, 0.61, 0.84, 0.95)
+# ---------------------------------------------------------------------------
+# Color palette — all values are normalized floats in [0, 1], stored as
+# (red, green, blue, alpha) tuples so they can be unpacked directly into
+# NSColor.colorWithCalibratedRed_green_blue_alpha_().
+# ---------------------------------------------------------------------------
+BG_RGBA        = (0.08, 0.08, 0.15, 0.75)  # dark translucent background
+BAR_TRACK_RGBA = (0.25, 0.25, 0.32, 0.60)  # empty portion of progress bar
+TEXT_RGBA      = (0.88, 0.88, 0.92, 0.95)  # primary label text
+DIM_RGBA       = (0.50, 0.50, 0.58, 0.75)  # secondary / dimmed text
+WARN_RGBA      = (0.92, 0.70, 0.05, 0.95)  # amber warning (60–85 % usage)
+CRIT_RGBA      = (0.94, 0.27, 0.27, 0.95)  # red critical (> 85 % usage)
+BAR_BLUE_RGBA  = (0.36, 0.61, 0.84, 0.95)  # blue normal (< 60 % usage)
 
 
 def _bar_color(pct):
+    """Return the RGBA tuple for a progress bar fill given a usage fraction.
+
+    Thresholds:
+        < 0.60  — blue (normal)
+        < 0.85  — amber (warning)
+        >= 0.85 — red (critical)
+    """
     if pct < 0.6:
         return BAR_BLUE_RGBA
     if pct < 0.85:
@@ -68,13 +117,26 @@ def _bar_color(pct):
 
 
 def _ns_color(r, g, b, a=1.0):
+    """Construct an NSColor from normalized RGBA floats.
+
+    Uses the "calibrated" color space (sRGB-ish), which is appropriate for
+    UI elements rendered in a window with a standard display profile.
+    """
     return NSColor.colorWithCalibratedRed_green_blue_alpha_(r, g, b, a)
 
 
 def _fill_rrect(x, y, w, h, r):
-    """Fill a rounded rectangle."""
+    """Fill a rounded rectangle using the current NSBezierPath fill color.
+
+    Args:
+        x, y: bottom-left origin in the current coordinate system.
+        w, h: width and height of the rectangle.
+        r:    corner radius.  Clamped to half the shorter side to prevent
+              distortion on very small rectangles (e.g. thin progress bars).
+    """
     r = min(r, w / 2, h / 2)
     if r < 0.5:
+        # Radius too small to matter; skip the curve math and use a plain rect.
         NSBezierPath.fillRect_(NSMakeRect(x, y, w, h))
         return
     NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
@@ -83,6 +145,14 @@ def _fill_rrect(x, y, w, h, r):
 
 
 def _mono_font(size):
+    """Return the best available monospaced system font at the given point size.
+
+    Preference order:
+        1. monospacedSystemFontOfSize_weight_  — SF Mono (macOS 10.15+).
+        2. Menlo                               — bundled monospaced font.
+        3. systemFontOfSize_                   — proportional fallback; unlikely
+                                                 to be reached in practice.
+    """
     try:
         return NSFont.monospacedSystemFontOfSize_weight_(size, 0.0)
     except AttributeError:
@@ -90,6 +160,17 @@ def _mono_font(size):
 
 
 def _format_reset_short(reset_ts):
+    """Format the time remaining until a usage reset as a compact string.
+
+    Args:
+        reset_ts: Unix timestamp of the upcoming reset, or 0 if unknown.
+
+    Returns:
+        ""        — when reset_ts is 0 (no information available).
+        "soon"    — when the reset time is in the past or imminent.
+        "Xh Ym"   — when the reset is within 24 hours.
+        "Day HH:MM" — when the reset is more than 24 hours away.
+    """
     if reset_ts <= 0:
         return ""
     remaining = int(reset_ts - datetime.now().timestamp())
@@ -103,50 +184,130 @@ def _format_reset_short(reset_ts):
 
 
 def _resize_window(win, scale, minimized):
-    """Resize the window keeping the top-right corner anchored."""
+    """Resize the NSWindow while keeping its top-right corner anchored.
+
+    When the user zooms in/out or toggles the minimized state the window size
+    changes.  Naively setting a new frame would anchor the bottom-left corner,
+    which makes the overlay jump around the screen.  Instead we:
+
+        1. Read the current top-right corner (tr_x, tr_y) from the existing
+           frame.  NSWindow.frame() is always in screen coordinates with the
+           origin at the bottom-left of the main display (Quartz / CoreGraphics
+           convention — y increases upward).
+        2. Compute the new width/height from scale and minimized state.
+        3. Set the frame origin so that (origin.x + new_w, origin.y + new_h)
+           equals the saved top-right corner.
+
+    Args:
+        win:       The NSWindow to resize.
+        scale:     Current zoom multiplier applied to BASE_WIDTH / BASE_HEIGHT.
+        minimized: When True, height is collapsed to MINIMIZED_HEIGHT.
+    """
     frame = win.frame()
+    # Compute the invariant top-right corner in screen coordinates.
     tr_x = frame.origin.x + frame.size.width
     tr_y = frame.origin.y + frame.size.height
     new_w = int(BASE_WIDTH * scale)
     new_h = MINIMIZED_HEIGHT if minimized else int(BASE_HEIGHT * scale)
+    # Derive the new bottom-left origin so that the top-right stays fixed.
     win.setFrame_display_animate_(
         NSMakeRect(tr_x - new_w, tr_y - new_h, new_w, new_h),
-        True, False,
+        True,   # redraw the window content immediately
+        False,  # no animation; size change should feel instant
     )
 
 
 class OSDView(NSView):
-    """NSView subclass that renders the OSD overlay via AppKit drawing."""
+    """NSView subclass that renders the OSD overlay via AppKit drawing.
+
+    Coordinate system note — isFlipped
+    -----------------------------------
+    By default NSView uses a *flipped-off* (Cartesian) coordinate system where
+    the origin is at the bottom-left and y increases upward.  This is
+    unintuitive for UI layout where you typically think top-to-bottom.
+
+    Overriding isFlipped() to return True switches to a *flipped* coordinate
+    system where the origin is at the top-left and y increases downward — the
+    same convention used by UIKit on iOS, most web layout engines, and Cairo.
+    All drawRect_ calculations in this class therefore use top-left origins and
+    add positive y offsets to move downward.
+
+    ObjC method naming convention
+    --------------------------------
+    PyObjC exposes Objective-C selectors as Python method names by replacing
+    every colon (:) in the selector with an underscore (_).  For example:
+
+        ObjC selector                    Python method name
+        ─────────────────────────────── ─────────────────────────────────
+        initWithFrame:                   initWithFrame_
+        setFrame:display:animate:        setFrame_display_animate_
+        colorWithCalibratedRed:green:    colorWithCalibratedRed_green_
+          blue:alpha:                      blue_alpha_
+
+    Methods decorated with @objc.python_method are *not* exposed to the ObjC
+    runtime at all; they are plain Python helpers called only from Python code.
+    This avoids selector-name clashes and is the correct pattern for internal
+    helper methods on NSView subclasses.
+    """
 
     def initWithFrame_(self, frame):
+        """Designated initializer.  Calls NSView's initWithFrame_ via super."""
         self = objc.super(OSDView, self).initWithFrame_(frame)
         if self is None:
             return None
-        self._session_pct = 0.0
-        self._weekly_pct = 0.0
-        self._session_reset = 0
-        self._weekly_reset = 0
-        self._minimized = False
-        self._scale = 1.0
-        self._opacity = 0.75
-        self._drag_start_screen = None
-        self._drag_start_win = None
+        # Internal state — all mutable at runtime by UsageOverlay.update().
+        self._session_pct = 0.0     # session usage fraction [0, 1]
+        self._weekly_pct  = 0.0     # weekly usage fraction  [0, 1]
+        self._session_reset = 0     # Unix timestamp of next session reset
+        self._weekly_reset  = 0     # Unix timestamp of next weekly reset
+        self._minimized = False     # True while collapsed to the thin-bar mode
+        self._scale = 1.0           # zoom multiplier applied to all dimensions
+        self._opacity = 0.75        # background alpha; overrides BG_RGBA[3]
+        self._drag_start_screen = None  # (x, y) screen coords at drag start
+        self._drag_start_win    = None  # (x, y) window origin at drag start
         return self
 
     def isFlipped(self):
-        return True  # top-left origin — matches Cairo coordinate space
+        """Return True to use top-left origin with y increasing downward.
+
+        Flipping the coordinate system lets drawRect_ lay out rows by adding
+        positive offsets from the top, which is far more readable than
+        subtracting from the height.  All x/y values in drawRect_ assume this
+        convention.
+        """
+        return True
 
     def acceptsFirstMouse_(self, event):
+        """Allow the overlay to receive mouse-down even when it is not the key window.
+
+        Without this, the first click on the overlay would merely bring it to
+        the front without triggering mouseDown_; a second click would be needed
+        to start a drag.
+        """
         return True
 
     def acceptsFirstResponder(self):
+        """Allow the view to become first responder so it receives key/scroll events."""
         return True
 
     # ------------------------------------------------------------------ drawing
 
     @objc.python_method
     def _draw_str(self, text, x, y, size, rgba):
-        """Draw text; returns drawn width."""
+        """Draw a string at (x, y) with the given point size and RGBA color.
+
+        Uses NSAttributedString so font and color are bundled together before
+        drawing, avoiding separate setFont/setColor calls.
+
+        Args:
+            text: The Python str to render.
+            x, y: Top-left origin in the flipped view coordinate system.
+            size: Font size in points.
+            rgba: (r, g, b, a) tuple.
+
+        Returns:
+            The rendered string width in points (used to right-align text).
+        """
         font = _mono_font(size)
         ns_str = NSAttributedString.alloc().initWithString_attributes_(
             text,
@@ -158,6 +319,11 @@ class OSDView(NSView):
 
     @objc.python_method
     def _str_w(self, text, size):
+        """Return the rendered width of a string in points without drawing it.
+
+        Used for right-alignment: the caller subtracts this from the right
+        edge to find the x origin that will place the string flush-right.
+        """
         ns_str = NSAttributedString.alloc().initWithString_attributes_(
             text, {NSFontAttributeName: _mono_font(size)}
         )
@@ -165,86 +331,147 @@ class OSDView(NSView):
 
     @objc.python_method
     def _font_h(self, size):
+        """Return the cap-height bounding box of the monospaced font at *size* points.
+
+        boundingRectForFont() returns the union rectangle of all glyphs in the
+        font, which is a reliable proxy for line height when positioning rows.
+        """
         return _mono_font(size).boundingRectForFont().size.height
 
     def drawRect_(self, rect):
-        w = self.bounds().size.width
-        s = self._scale
+        """Paint the entire overlay content.
 
-        # Always clear to transparent first
+        Called by the AppKit display machinery whenever setNeedsDisplay_(True)
+        has been called or the view is first shown.  All drawing uses the
+        flipped coordinate system (top-left origin, y increases downward).
+
+        Layout passes:
+            1. Clear the view to fully transparent (required for the overlay
+               glass effect because the window background is also transparent).
+            2. If minimized: draw a single thin bar representing session usage.
+            3. Otherwise: draw the background pill, the "CLAUDE" title, and
+               two rows of (label, percentage, countdown, progress bar) for
+               session and weekly usage.
+        """
+        w = self.bounds().size.width
+        s = self._scale  # shorthand; avoids repeated attribute lookup below
+
+        # --- Pass 1: clear to transparent ---
+        # The window has setOpaque_(False) and a clear background color, so we
+        # must explicitly erase every frame; AppKit does not do it for us.
         NSColor.clearColor().setFill()
         NSBezierPath.fillRect_(self.bounds())
 
+        # --- Minimized mode: render only a thin colored bar ---
         if self._minimized:
+            # Draw the empty track first, then the filled portion on top.
             _ns_color(*BAR_TRACK_RGBA).setFill()
             _fill_rrect(0, 0, w, MINIMIZED_HEIGHT, 3)
             if self._session_pct > 0:
+                # Clamp the fill width to [4 px, w] so the bar is always
+                # visible even at very low usage fractions.
                 fw = max(w * min(self._session_pct, 1.0), 4)
                 _ns_color(*_bar_color(self._session_pct)).setFill()
                 _fill_rrect(0, 0, fw, MINIMIZED_HEIGHT, 3)
             return
 
-        # Background
+        # --- Full mode ---
+
+        # Background pill; use self._opacity instead of BG_RGBA[3] so the
+        # user can adjust transparency at runtime without editing the constant.
         _ns_color(BG_RGBA[0], BG_RGBA[1], BG_RGBA[2], self._opacity).setFill()
         _fill_rrect(0, 0, w, self.bounds().size.height, OSD_RADIUS * s)
 
-        pad_x = 14 * s
-        pad_y = 10 * s
+        # Scale-dependent layout metrics
+        pad_x = 14 * s    # horizontal padding inside the background pill
+        pad_y = 10 * s    # vertical padding from the top of the pill
         bar_h = OSD_BAR_HEIGHT * s
         bar_r = OSD_BAR_RADIUS * s
-        bar_w = w - 2 * pad_x
-        fl = 10 * s    # label font size
-        fs = 7.5 * s   # small font size
-        ft = 8 * s     # title font size
-        lh = self._font_h(fl)
-        th = self._font_h(ft)
+        bar_w = w - 2 * pad_x   # progress bar spans the full inner width
+        fl  = 10 * s    # font size for main labels and percentages
+        fs  = 7.5 * s   # font size for the countdown/reset time strings
+        ft  = 8 * s     # font size for the "CLAUDE" title
+        lh  = self._font_h(fl)   # line height for main rows
+        th  = self._font_h(ft)   # line height for title row
 
-        # Title
+        # Title row — static, dimmed label in the top-left
         self._draw_str("CLAUDE", pad_x, pad_y, ft, DIM_RGBA)
 
         # --- Session row ---
+        # y advances downward from pad_y by the title height plus a small gap.
         y = pad_y + th + 4 * s
+
         pct_s = f"{int(self._session_pct * 100)}%"
         pct_w = self._str_w(pct_s, fl)
+
+        # Label flush-left; percentage flush-right.
         self._draw_str("Session", pad_x, y, fl, TEXT_RGBA)
         self._draw_str(pct_s, w - pad_x - pct_w, y, fl, TEXT_RGBA)
+
+        # Reset countdown rendered between the percentage and the right edge
+        # of the label column, vertically centered within the label row.
         reset_s = _format_reset_short(self._session_reset)
         if reset_s:
             rw = self._str_w(reset_s, fs)
             sh = self._font_h(fs)
-            self._draw_str(reset_s, w - pad_x - pct_w - 8 * s - rw,
-                           y + (lh - sh) / 2, fs, DIM_RGBA)
+            self._draw_str(reset_s,
+                           w - pad_x - pct_w - 8 * s - rw,
+                           y + (lh - sh) / 2,   # center the smaller text vertically
+                           fs, DIM_RGBA)
 
+        # Progress bar: track first, then filled portion on top.
         bar_y = y + lh + 3 * s
         _ns_color(*BAR_TRACK_RGBA).setFill()
         _fill_rrect(pad_x, bar_y, bar_w, bar_h, bar_r)
         if self._session_pct > 0:
+            # Enforce a minimum fill width equal to bar_h (a perfect circle) so
+            # the bar is always visible; clamp the fraction to 1.0 so it never
+            # overflows the track even if the API reports > 100 % usage.
             _ns_color(*_bar_color(self._session_pct)).setFill()
-            _fill_rrect(pad_x, bar_y, max(bar_w * min(self._session_pct, 1.0), bar_h), bar_h, bar_r)
+            _fill_rrect(pad_x, bar_y,
+                        max(bar_w * min(self._session_pct, 1.0), bar_h),
+                        bar_h, bar_r)
 
         # --- Weekly row ---
+        # Starts 10*s points below the bottom of the session progress bar.
         y2 = bar_y + bar_h + 10 * s
-        pct_w2 = self._str_w(f"{int(self._weekly_pct * 100)}%", fl)
+
         pct_s2 = f"{int(self._weekly_pct * 100)}%"
+        pct_w2 = self._str_w(pct_s2, fl)
+
         self._draw_str("Weekly", pad_x, y2, fl, TEXT_RGBA)
         self._draw_str(pct_s2, w - pad_x - pct_w2, y2, fl, TEXT_RGBA)
+
         reset_w2 = _format_reset_short(self._weekly_reset)
         if reset_w2:
             rw = self._str_w(reset_w2, fs)
             sh = self._font_h(fs)
-            self._draw_str(reset_w2, w - pad_x - pct_w2 - 8 * s - rw,
-                           y2 + (lh - sh) / 2, fs, DIM_RGBA)
+            self._draw_str(reset_w2,
+                           w - pad_x - pct_w2 - 8 * s - rw,
+                           y2 + (lh - sh) / 2,
+                           fs, DIM_RGBA)
 
         bar_y2 = y2 + lh + 3 * s
         _ns_color(*BAR_TRACK_RGBA).setFill()
         _fill_rrect(pad_x, bar_y2, bar_w, bar_h, bar_r)
         if self._weekly_pct > 0:
             _ns_color(*_bar_color(self._weekly_pct)).setFill()
-            _fill_rrect(pad_x, bar_y2, max(bar_w * min(self._weekly_pct, 1.0), bar_h), bar_h, bar_r)
+            _fill_rrect(pad_x, bar_y2,
+                        max(bar_w * min(self._weekly_pct, 1.0), bar_h),
+                        bar_h, bar_r)
 
     # ------------------------------------------------------------------ events
 
     def mouseDown_(self, event):
+        """Record the drag anchor when the user presses the mouse button.
+
+        NSEvent.mouseLocation() returns the cursor position in *screen*
+        coordinates (bottom-left origin, y upward — Quartz convention), which
+        is the same coordinate space used by NSWindow.frame().  Storing both
+        the screen anchor and the window's origin at drag start lets
+        mouseDragged_ compute a clean delta without accumulated floating-point
+        drift.
+        """
         loc = NSEvent.mouseLocation()
         self._drag_start_screen = (loc.x, loc.y)
         win = self.window()
@@ -253,13 +480,21 @@ class OSDView(NSView):
             self._drag_start_win = (origin.x, origin.y)
 
     def mouseUp_(self, event):
+        """Clear the drag anchor when the mouse button is released."""
         self._drag_start_screen = None
         self._drag_start_win = None
 
     def mouseDragged_(self, event):
+        """Move the window by the delta from the recorded drag anchor.
+
+        Using the *initial* anchor (rather than the previous event position)
+        avoids the subtle position drift that can occur when using
+        event.deltaX()/deltaY(), which accumulates sub-pixel rounding errors
+        across many small events.
+        """
         if not self._drag_start_screen or not self._drag_start_win:
             return
-        loc = NSEvent.mouseLocation()
+        loc = NSEvent.mouseLocation()  # current cursor in screen coordinates
         dx = loc.x - self._drag_start_screen[0]
         dy = loc.y - self._drag_start_screen[1]
         win = self.window()
@@ -270,6 +505,11 @@ class OSDView(NSView):
             ))
 
     def rightMouseDown_(self, event):
+        """Toggle between full and minimized (thin-bar) display modes.
+
+        Calls _resize_window to anchor the top-right corner while collapsing
+        or expanding the height, then triggers a redraw.
+        """
         self._minimized = not self._minimized
         win = self.window()
         if win:
@@ -277,9 +517,20 @@ class OSDView(NSView):
         self.setNeedsDisplay_(True)
 
     def scrollWheel_(self, event):
+        """Zoom the overlay in or out with the scroll wheel.
+
+        Each scroll tick changes _scale by SCALE_STEP (0.1), clamped to
+        [SCALE_MIN, SCALE_MAX].  The window is resized via _resize_window
+        (top-right anchor preserved), then the view is redrawn so all
+        scale-dependent measurements in drawRect_ take effect immediately.
+
+        Zoom is disabled in minimized mode to avoid confusing state where
+        the full-mode height after un-minimizing would not match the visual
+        thin bar.
+        """
         if self._minimized:
             return
-        delta = event.deltaY()
+        delta = event.deltaY()  # positive = scroll up = zoom in
         direction = 1 if delta > 0 else (-1 if delta < 0 else 0)
         if not direction:
             return
@@ -291,53 +542,124 @@ class OSDView(NSView):
 
 
 class UsageOverlay:
-    """Manages the macOS borderless floating OSD window."""
+    """Manages the macOS borderless floating OSD window.
+
+    Responsible for constructing the NSWindow / OSDView pair, configuring all
+    window attributes required for a always-on-top transparent HUD, and
+    exposing a small public API (show_all, hide, set_opacity, update) that the
+    platform-agnostic plugin core uses to control the overlay.
+    """
 
     def __init__(self, config=None):
+        """Create the NSWindow and OSDView.
+
+        Args:
+            config: Optional dict with keys:
+                osd_scale   — initial zoom multiplier (default 1.0).
+                osd_opacity — initial background alpha  (default 0.75).
+        """
         cfg = config or {}
-        scale = cfg.get("osd_scale", 1.0)
+        scale   = cfg.get("osd_scale",   1.0)
         opacity = cfg.get("osd_opacity", 0.75)
 
-        w = int(BASE_WIDTH * scale)
+        w = int(BASE_WIDTH  * scale)
         h = int(BASE_HEIGHT * scale)
 
-        # Position: top-right of main screen visible area
+        # Position the overlay in the top-right of the *visible* screen area.
+        # visibleFrame() excludes the menu bar and Dock, so the overlay does
+        # not spawn beneath them.  NSScreen coordinates use the Quartz system
+        # (bottom-left origin), so the top-right corner is at
+        # (origin.x + width, origin.y + height).
         sv = NSScreen.mainScreen().visibleFrame()
-        x = sv.origin.x + sv.size.width - w - OSD_MARGIN
-        y = sv.origin.y + sv.size.height - h - OSD_MARGIN
+        x  = sv.origin.x + sv.size.width  - w - OSD_MARGIN
+        y  = sv.origin.y + sv.size.height - h - OSD_MARGIN
 
+        # --- Window creation ---
+        # _BORDERLESS (style mask 0) means no title bar, no close/minimize
+        # buttons, and no resize handles — just a raw content area.
+        # NSBackingStoreBuffered uses an offscreen backing buffer that is
+        # composited onto the display; this is the only supported mode on
+        # modern macOS.
+        # defer=False forces the window's display resources to be created
+        # immediately rather than lazily on first show.
         self._win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect(x, y, w, h), _BORDERLESS, NSBackingStoreBuffered, False
         )
+
+        # Make the window fully transparent so OSDView's clear-color erase
+        # actually shows whatever is behind the window.
         self._win.setOpaque_(False)
         self._win.setBackgroundColor_(NSColor.clearColor())
+
+        # NSFloatingWindowLevel (~3) sits above normal application windows.
+        # Adding 1 ensures the overlay floats above other floating panels
+        # (e.g. color pickers, tool palettes) that also use NSFloatingWindowLevel.
         self._win.setLevel_(NSFloatingWindowLevel + 1)
+
+        # Apply the collection-behavior bitmask so the overlay appears on all
+        # Spaces and is excluded from window-cycling UI.
         if _COLLECTION:
             self._win.setCollectionBehavior_(_COLLECTION)
+
+        # Allow mouse events to reach OSDView (drag, right-click, scroll).
+        # setIgnoresMouseEvents_(False) is the default, but stated explicitly
+        # for clarity — a common pattern for overlay windows is to set it True
+        # to make them click-through, which we deliberately do NOT want here.
         self._win.setIgnoresMouseEvents_(False)
-        self._win.setHasShadow_(False)
-        self._win.setAcceptsMouseMovedEvents_(True)
+
+        self._win.setHasShadow_(False)               # no drop shadow; HUD aesthetic
+        self._win.setAcceptsMouseMovedEvents_(True)  # receive mouseMoved_ events if needed
+        # Prevent AppKit from releasing (deallocating) the window when it is
+        # closed.  Without this, orderOut_ would destroy the window object and
+        # a subsequent show_all() call would crash.
         self._win.setReleasedWhenClosed_(False)
 
+        # --- View setup ---
         self._view = OSDView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
-        self._view._scale = scale
+        self._view._scale   = scale
         self._view._opacity = opacity
+        # NSViewWidthSizable | NSViewHeightSizable makes the view track the
+        # window's content rect exactly when _resize_window changes the frame.
         self._view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
         self._win.setContentView_(self._view)
 
     def show_all(self):
+        """Make the overlay window visible on screen.
+
+        orderFront_(None) brings the window to the front of its window level
+        without making it the key or main window, so the currently focused
+        application retains focus.
+        """
         self._win.orderFront_(None)
 
     def hide(self):
+        """Remove the overlay window from the screen without destroying it.
+
+        orderOut_(None) hides the window but keeps it in memory; show_all()
+        can restore it without re-creating the NSWindow.
+        """
         self._win.orderOut_(None)
 
     def set_opacity(self, value: float):
+        """Set the background translucency of the overlay.
+
+        Args:
+            value: Desired alpha in [0, 1].  Clamped to [0.15, 1.0] so the
+                   overlay never becomes completely invisible.
+        """
         self._view._opacity = max(0.15, min(1.0, value))
         self._view.setNeedsDisplay_(True)
 
     def update(self, stats: UsageStats):
-        self._view._session_pct = stats.session_utilization
-        self._view._weekly_pct = stats.weekly_utilization
+        """Push new usage data into the view and request a redraw.
+
+        Args:
+            stats: A UsageStats dataclass with session_utilization,
+                   weekly_utilization, session_reset, and weekly_reset fields.
+                   Called periodically by the background poller.
+        """
+        self._view._session_pct   = stats.session_utilization
+        self._view._weekly_pct    = stats.weekly_utilization
         self._view._session_reset = stats.session_reset
-        self._view._weekly_reset = stats.weekly_reset
+        self._view._weekly_reset  = stats.weekly_reset
         self._view.setNeedsDisplay_(True)

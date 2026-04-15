@@ -19,15 +19,20 @@ from claude_usage.overlay import UsageOverlay
 
 ICON_PATH = os.path.join(os.path.dirname(__file__), "icons", "claude-tray.svg")
 
-# Colors matching Claude web dashboard
-BAR_BLUE = "#5B9BD5"
-BAR_TRACK = "#333340"
-BG_COLOR = "#1a1a2e"
-TEXT_PRIMARY = "#e0e0e8"
-TEXT_SECONDARY = "#8a8a9a"
-TEXT_DIM = "#555568"
-TEXT_LINK = "#6BA4D9"
-SEPARATOR_COLOR = "#2a2a38"
+# Colors matching Claude web dashboard.
+# Dark navy background keeps the popup from clashing with typical light desktops
+# while feeling consistent with Claude's own UI.
+# Blue fills (BAR_BLUE / TEXT_LINK) use the same hue as Claude's accent color.
+# TEXT_* values form a three-level hierarchy: primary (readable), secondary
+# (supporting detail), and dim (de-emphasised metadata such as timestamps).
+BAR_BLUE = "#5B9BD5"       # progress-bar fill — Claude accent blue
+BAR_TRACK = "#333340"      # progress-bar empty track — dark muted grey
+BG_COLOR = "#1a1a2e"       # window background — deep navy
+TEXT_PRIMARY = "#e0e0e8"   # labels and headings — near-white
+TEXT_SECONDARY = "#8a8a9a" # subtitles and supporting info — medium grey
+TEXT_DIM = "#555568"       # timestamps and low-priority text — dark grey
+TEXT_LINK = "#6BA4D9"      # active-session paths — lighter accent blue
+SEPARATOR_COLOR = "#2a2a38" # horizontal rule — slightly lighter than the background
 
 
 def _rounded_rect(cr, x, y, w, h, r):
@@ -77,6 +82,12 @@ def _format_session_duration(seconds: int) -> str:
     return f"{minutes}m"
 
 
+# GTK CSS applied application-wide via Gtk.StyleContext.add_provider_for_screen.
+# All color references resolve to the constants above, so the palette is defined
+# in one place.  Font sizes step down intentionally: 14 px headers → 13 px
+# metric labels → 12 px supporting text → 11 px metadata/dim.
+# .error-text uses a hard-coded red (#ef4444) that stands out against the dark
+# background without a named constant because it is only used for API errors.
 CSS = f"""
 window {{
     background-color: {BG_COLOR};
@@ -109,7 +120,7 @@ window {{
     font-size: 11px;
 }}
 .session-text {{
-    color: {TEXT_LINK};
+    color: {TEXT_LINK};   /* active-session paths use the lighter accent blue */
     font-size: 11px;
 }}
 .updated-text {{
@@ -117,7 +128,7 @@ window {{
     font-size: 11px;
 }}
 .error-text {{
-    color: #ef4444;
+    color: #ef4444;   /* vivid red — only used for API/collection error notices */
     font-size: 11px;
 }}
 separator {{
@@ -209,11 +220,14 @@ class UsagePopup(Gtk.Window):
         def draw_bar(widget, cr):
             w = widget.get_allocated_width()
             h = widget.get_allocated_height()
+            # Draw the empty track first, then paint the filled portion on top.
             r, g, b = _hex_to_rgb(BAR_TRACK)
             cr.set_source_rgb(r, g, b)
             _rounded_rect(cr, 0, 0, w, h, 6)
             cr.fill()
             if fraction > 0:
+                # Clamp to 100 % and enforce a minimum pill width equal to the
+                # bar height so the rounded caps always render correctly.
                 fill_w = max(w * min(fraction, 1.0), h)
                 r, g, b = _hex_to_rgb(BAR_BLUE)
                 cr.set_source_rgb(r, g, b)
@@ -238,6 +252,12 @@ class UsagePopup(Gtk.Window):
         self._content_box.pack_start(sep, False, False, 0)
 
     def update(self, stats: UsageStats):
+        """Rebuild the popup contents from the latest ``UsageStats``.
+
+        Destroys all existing child widgets and recreates them so that layout
+        reflects the current data.  Called from the GTK main thread each time
+        a background refresh completes.
+        """
         self._clear()
 
         self._add_section_header("Plan usage limits")
@@ -265,8 +285,11 @@ class UsagePopup(Gtk.Window):
 
         if stats.active_sessions:
             for sess in stats.active_sessions:
+                # startedAt is a JavaScript-style millisecond epoch; divide by
+                # 1000 to convert to the seconds expected by fromtimestamp.
                 started = datetime.fromtimestamp(sess.get("startedAt", 0) / 1000)
                 duration = datetime.now() - started
+                # Replace the home directory prefix with ~ for compact display.
                 cwd = sess.get("cwd", "?").replace(os.path.expanduser("~"), "~")
 
                 row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -306,12 +329,37 @@ class UsagePopup(Gtk.Window):
 
 
 class ClaudeUsageTray:
-    """System tray icon with menu and periodic refresh."""
+    """System tray indicator that displays Claude API usage.
+
+    Owns the AppIndicator icon, the right-click menu, the :class:`UsagePopup`
+    detail window, and the on-screen :class:`UsageOverlay`.  A GLib timer fires
+    every ``config["refresh_seconds"]`` seconds and triggers a background data
+    collection cycle.
+
+    Threading model
+    ---------------
+    Two boolean flags coordinate the background refresh cycle:
+
+    ``_alive``
+        Set to ``False`` only when the user chooses Quit.  Every callback that
+        touches GTK widgets checks this flag first so that nothing runs after
+        ``Gtk.main_quit()`` has been called and GTK's internal state is being
+        torn down.
+
+    ``_refreshing``
+        Acts as a single-flight guard: set to ``True`` the moment a worker
+        thread is spawned and cleared back to ``False`` inside
+        :meth:`_apply_stats` (which runs on the GTK main thread via
+        ``GLib.idle_add``).  This prevents overlapping collection runs if the
+        timer fires again before the previous one finishes.
+    """
 
     def __init__(self, config: dict):
         self.config = config
         self.stats = UsageStats()
+        # _alive guards all post-quit GTK access (see class docstring).
         self._alive = True
+        # _refreshing prevents concurrent collection runs (see class docstring).
         self._refreshing = False
 
         self.indicator = AppIndicator.Indicator.new(
@@ -370,11 +418,19 @@ class ClaudeUsageTray:
         self.overlay = UsageOverlay(config)
         self.overlay.show_all()
 
+        # Populate the UI immediately, then register the recurring timer.
         self._refresh_async()
-        GLib.timeout_add_seconds(config["refresh_seconds"], self._on_timer)
+        self._timer_id = GLib.timeout_add_seconds(config["refresh_seconds"], self._on_timer)
 
     def _refresh_async(self):
-        """Run data collection in a background thread to avoid blocking GTK."""
+        """Spawn a daemon thread to collect usage data without blocking the UI.
+
+        Returns immediately if a refresh is already in flight (``_refreshing``)
+        or the application is shutting down (``_alive`` is ``False``).  On
+        completion the worker re-enters the GTK main thread via
+        ``GLib.idle_add`` so that widget updates are always made from the
+        correct thread.
+        """
         if self._refreshing or not self._alive:
             return
         self._refreshing = True
@@ -384,13 +440,23 @@ class ClaudeUsageTray:
                 stats = collect_all(self.config)
             except Exception:
                 stats = UsageStats(rate_limit_error="Collection failed")
+            # Schedule the UI update on the GTK main thread; skip if we quit
+            # while the thread was running.
             if self._alive:
                 GLib.idle_add(self._apply_stats, stats)
 
         threading.Thread(target=_worker, daemon=True).start()
 
     def _apply_stats(self, stats):
-        """Apply collected stats to the UI (must run on GTK main thread)."""
+        """Push freshly collected stats into every UI surface.
+
+        Called exclusively from ``GLib.idle_add``, guaranteeing execution on
+        the GTK main thread.  Clears ``_refreshing`` so the next timer tick
+        can start a new collection run.
+
+        Returns ``False`` to tell GLib not to reschedule this idle callback.
+        """
+        # Clear the guard before any early return so a later refresh can proceed.
         self._refreshing = False
         if not self._alive:
             return False
@@ -401,6 +467,8 @@ class ClaudeUsageTray:
 
         self.mi_session.set_label(f"Session: {session_pct}% used")
         self.mi_week.set_label(f"Weekly: {week_pct}% used")
+        # The second argument to set_label is the accessible description shown
+        # to screen readers / the panel when the icon itself is not visible.
         self.indicator.set_label(f"{session_pct}%", "")
 
         self.popup.update(stats)
@@ -427,5 +495,8 @@ class ClaudeUsageTray:
         self.overlay.set_opacity(value)
 
     def _on_quit(self, _):
+        # Mark dead before removing the timer so any in-flight idle callback
+        # that fires during teardown sees _alive=False and exits cleanly.
         self._alive = False
+        GLib.source_remove(self._timer_id)
         Gtk.main_quit()

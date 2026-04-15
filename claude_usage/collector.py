@@ -34,13 +34,18 @@ class UsageStats:
 
 
 def parse_history(path: str) -> UsageStats:
-    """Parse ~/.claude/history.jsonl for message counts and session tracking."""
+    """Parse ~/.claude/history.jsonl for message counts and session tracking.
+
+    Counts messages and unique sessions for today and the rolling 7-day window.
+    Also builds an hourly message histogram for today.
+    """
     stats = UsageStats()
     if not os.path.isfile(path):
         return stats
 
     now = datetime.now()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Rolling 7-day window: include today plus the 6 previous calendar days
     week_start = today_start - timedelta(days=6)
 
     today_session_ids = set()
@@ -59,6 +64,7 @@ def parse_history(path: str) -> UsageStats:
             ts_ms = entry.get("timestamp", 0)
             if ts_ms <= 0:
                 continue
+            # history.jsonl stores timestamps in milliseconds
             dt = datetime.fromtimestamp(ts_ms / 1000)
             sid = entry.get("sessionId", "")
 
@@ -77,7 +83,12 @@ def parse_history(path: str) -> UsageStats:
 
 
 def _collect_tokens_single_pass(claude_dir: str, today_prefix: str, week_prefixes: list[str]) -> dict:
-    """Scan conversation JSONL files once, collecting tokens for both today and week."""
+    """Scan conversation JSONL files once, collecting tokens for both today and week.
+
+    A single filesystem pass avoids reading every file twice when the caller needs
+    both today and week totals. today_prefix is a YYYY-MM-DD string; week_prefixes
+    is the full list of 7 such strings (including today).
+    """
     result = {
         "today_output": 0, "week_output": 0,
         "today_by_model": {},
@@ -86,10 +97,12 @@ def _collect_tokens_single_pass(claude_dir: str, today_prefix: str, week_prefixe
     if not os.path.isdir(projects_dir):
         return result
 
+    # Resolve symlinks so glob patterns match the real on-disk layout
     projects_dir = os.path.realpath(projects_dir)
 
     for jsonl_path in glob.glob(os.path.join(projects_dir, "*", "*.jsonl")):
         parts = jsonl_path.split(os.sep)
+        # Subagent conversations share tokens with their parent; skip to avoid double-counting
         if "subagents" in parts:
             continue
         _parse_tokens_file(jsonl_path, today_prefix, week_prefixes, result)
@@ -98,7 +111,11 @@ def _collect_tokens_single_pass(claude_dir: str, today_prefix: str, week_prefixe
 
 
 def _parse_tokens_file(path: str, today_prefix: str, week_prefixes: list[str], result: dict):
-    """Extract token usage from a single conversation JSONL file."""
+    """Extract token usage from a single conversation JSONL file.
+
+    Mutates result in-place. Only processes 'assistant' entries because those
+    are the ones that carry the usage block with output_tokens.
+    """
     try:
         f = open(path)
     except OSError:
@@ -118,6 +135,7 @@ def _parse_tokens_file(path: str, today_prefix: str, week_prefixes: list[str], r
                 continue
 
             timestamp = entry.get("timestamp", "")
+            # Check today first; if true, week is automatically true — avoids iterating week_prefixes
             is_today = timestamp.startswith(today_prefix)
             is_week = is_today or any(timestamp.startswith(p) for p in week_prefixes)
             if not is_week:
@@ -139,9 +157,14 @@ def _parse_tokens_file(path: str, today_prefix: str, week_prefixes: list[str], r
                 result["today_by_model"][model] = result["today_by_model"].get(model, 0) + output_tokens
 
 
-# Keep old function name for test compatibility
+# Preserved for test compatibility — superseded by _collect_tokens_single_pass
 def collect_tokens_from_conversations(claude_dir: str, date_prefixes: list[str]) -> dict:
-    """Scan conversation JSONL files for token usage on given dates."""
+    """Scan conversation JSONL files for token usage on the given date prefixes.
+
+    Legacy entry point kept so existing tests don't break. New callers should
+    use _collect_tokens_single_pass which covers today and week in one pass.
+    Returns totals split by input/output and broken down per model.
+    """
     result = {"total_output": 0, "total_input": 0, "by_model": {}}
     projects_dir = os.path.join(claude_dir, "projects")
     if not os.path.isdir(projects_dir):
@@ -159,7 +182,10 @@ def collect_tokens_from_conversations(claude_dir: str, date_prefixes: list[str])
 
 
 def _parse_conversation_tokens(path: str, date_prefixes: list[str], result: dict):
-    """Extract token usage from a single conversation JSONL file."""
+    """Extract token usage from a single conversation JSONL file.
+
+    Mutates result in-place, accumulating input/output totals and per-model breakdowns.
+    """
     try:
         f = open(path)
     except OSError:
@@ -201,7 +227,12 @@ def _parse_conversation_tokens(path: str, date_prefixes: list[str], result: dict
 
 
 def get_active_sessions(claude_dir: str) -> list[dict]:
-    """Return list of active Claude sessions (PID still running)."""
+    """Return list of active Claude sessions whose recorded PID is still alive.
+
+    Uses os.kill(pid, 0) as a zero-signal probe: it raises ProcessLookupError
+    when the process is gone and PermissionError when it exists but is owned by
+    another user — both of which we treat as "running" from the user's perspective.
+    """
     sessions_dir = os.path.join(claude_dir, "sessions")
     if not os.path.isdir(sessions_dir):
         return []
@@ -217,19 +248,25 @@ def get_active_sessions(claude_dir: str) -> list[dict]:
             pid = sess.get("pid", 0)
             if pid <= 0:
                 continue
-            os.kill(pid, 0)
+            os.kill(pid, 0)  # signal 0: probe existence without killing
             active.append(sess)
         except PermissionError:
+            # Process exists but is owned by a different UID — still alive
             active.append(sess)
         except ProcessLookupError:
-            pass
+            pass  # PID no longer exists; session is stale
         except (json.JSONDecodeError, OSError):
             continue
     return active
 
 
 def _load_credentials(claude_dir: str) -> str | None:
-    """Load OAuth access token from credentials file or macOS Keychain."""
+    """Load the OAuth access token, trying the credentials file first and the macOS Keychain second.
+
+    The file-based path works on both Linux and macOS. The Keychain fallback
+    handles macOS installs where Claude Code stores credentials in the system
+    keychain rather than (or in addition to) the flat file.
+    """
     # 1. Try the credentials file (Linux + macOS)
     creds_path = os.path.join(claude_dir, ".credentials.json")
     if os.path.isfile(creds_path):
@@ -238,9 +275,9 @@ def _load_credentials(claude_dir: str) -> str | None:
                 creds = json.load(f)
             return creds["claudeAiOauth"]["accessToken"]
         except (json.JSONDecodeError, KeyError, OSError):
-            pass  # Fall through to Keychain on macOS
+            pass  # File exists but is unreadable or lacks the token key; try Keychain
 
-    # 2. Try macOS Keychain
+    # 2. Keychain fallback — macOS only; /usr/bin/security is the canonical CLI
     if sys.platform == "darwin":
         try:
             import subprocess
@@ -261,13 +298,19 @@ def _load_credentials(claude_dir: str) -> str | None:
 def fetch_rate_limits(claude_dir: str) -> dict:
     """Fetch rate limit data from Anthropic API using OAuth credentials.
 
-    Makes a minimal API call (1 token to haiku) and reads rate limit headers.
-    Uses urllib to keep credentials in-process (not exposed via /proc/cmdline).
+    Makes a minimal API call (max_tokens=1 to the cheapest model) purely to
+    receive response headers — the actual reply text is discarded. urllib is
+    used instead of subprocess/curl so the bearer token never appears in the
+    process argument list (which is visible in /proc/cmdline on Linux).
+
+    On HTTP 429, the rate-limit headers are still present on the error response,
+    so we parse them instead of treating the 429 as a fatal failure.
     """
     token = _load_credentials(claude_dir)
     if not token:
         return {"error": "No credentials found — run 'claude' to log in"}
 
+    # Cheapest model, smallest completion — we only care about the response headers
     body = json.dumps({
         "model": "claude-haiku-4-5-20251001",
         "max_tokens": 1,
@@ -292,6 +335,7 @@ def fetch_rate_limits(claude_dir: str) -> dict:
         if e.code == 401:
             return {"error": "Credentials expired — re-authenticate with 'claude'"}
         if e.code == 429:
+            # Rate-limit headers are still populated on 429 responses
             headers = {k.lower(): v for k, v in e.headers.items()}
             prefix = "anthropic-ratelimit-unified-"
             if any(k.startswith(prefix) for k in headers):
@@ -305,14 +349,20 @@ def fetch_rate_limits(claude_dir: str) -> dict:
 
 
 def _parse_rate_limit_headers(headers: dict) -> dict:
-    """Parse rate limit values from API response headers with safe type conversion."""
+    """Parse Anthropic unified rate-limit headers into typed values.
+
+    All header values arrive as strings and may be missing or malformed, so
+    every field goes through a safe converter with a sensible default.
+    """
     prefix = "anthropic-ratelimit-unified-"
     if not any(k.startswith(prefix) for k in headers):
         return {"error": "No rate limit headers in response"}
 
     def _safe_float(suffix, default=0.0):
+        """Return a clamped [0.0, 1.0] float, falling back to default on bad input."""
         try:
             val = float(headers.get(prefix + suffix, default))
+            # NaN/Inf can't be displayed or compared meaningfully
             if math.isnan(val) or math.isinf(val):
                 return default
             return max(0.0, min(val, 1.0))
@@ -320,9 +370,13 @@ def _parse_rate_limit_headers(headers: dict) -> dict:
             return default
 
     def _safe_int(suffix, default=0):
+        """Return a non-negative int, normalising millisecond timestamps to seconds."""
         try:
+            # float() first because the API may send "1234567890.0"
             val = int(float(headers.get(prefix + suffix, default)))
-            # Sanity: timestamps > year 2100 in seconds likely means milliseconds
+            # Guard against the API accidentally sending ms instead of s:
+            # 4_102_444_800 is 2100-01-01 00:00:00 UTC — no valid reset
+            # timestamp should exceed that in seconds.
             if suffix.endswith("-reset") and val > 4_102_444_800:
                 val = val // 1000
             return max(0, val)
@@ -340,13 +394,20 @@ def _parse_rate_limit_headers(headers: dict) -> dict:
 
 
 def collect_all(config: dict) -> UsageStats:
-    """Collect all usage stats from ~/.claude/ data sources and API."""
+    """Collect all usage stats from local ~/.claude/ files and the Anthropic API.
+
+    Combines history-based message/session counts, token totals from conversation
+    files, live session detection, and API-sourced rate-limit data into a single
+    UsageStats snapshot. A rate-limit API failure is non-fatal; the error is
+    recorded in stats.rate_limit_error and all other fields remain valid.
+    """
     claude_dir = config["claude_dir"]
     history_path = os.path.join(claude_dir, "history.jsonl")
 
     stats = parse_history(history_path)
 
-    # Single-pass token collection for both today and week
+    # Build date prefix strings used to filter conversation entries by timestamp.
+    # A single pass over the files collects both today and week totals at once.
     now = datetime.now()
     today_str = now.strftime("%Y-%m-%d")
     week_start = now - timedelta(days=6)
@@ -359,7 +420,6 @@ def collect_all(config: dict) -> UsageStats:
 
     stats.active_sessions = get_active_sessions(claude_dir)
 
-    # Fetch real rate limits from API
     rate_limits = fetch_rate_limits(claude_dir)
     if "error" in rate_limits:
         stats.rate_limit_error = rate_limits["error"]

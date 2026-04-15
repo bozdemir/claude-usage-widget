@@ -136,6 +136,17 @@ anthropic-ratelimit-unified-7d-reset: 1776690000
 
 These are the same values shown on the [claude.ai usage page](https://claude.ai/settings/usage). The widget also reads local data from `~/.claude/` for message counts, token usage per model, and active session tracking.
 
+### How the OSD Works
+
+The OSD is a transparent, click-through-capable borderless window rendered entirely via 2D drawing primitives:
+
+- **Linux** — A `gtk.Window` with `HINT_NOTIFICATION` type hint uses Cairo to draw rounded rectangles, progress bars, and text directly onto an RGBA surface. The compositor handles transparency; `INPUT_ONLY` event passthrough lets mouse clicks reach windows underneath except when the user is interacting with the OSD itself.
+- **macOS** — An `NSWindow` at `NSScreenSaverWindowLevel` with `NSWindowStyleMaskBorderless` and a transparent `NSView` subclass does the equivalent drawing via Quartz/AppKit (`NSBezierPath`, `NSColor`, `NSAttributedString`).
+
+**Scale and opacity system** — Both platforms store a float `scale` (range 0.6–2.0, default 1.0) and `opacity` (range 0.15–1.0, default 0.75) that are applied at draw time. Scale multiplies every pixel dimension (padding, font size, bar height, window size) before drawing so the entire widget resizes proportionally without re-layout. Opacity is used as the alpha channel of the background fill; bar and text elements are drawn at full alpha on top so they remain legible at low opacity.
+
+**Refresh cycle** — A background thread wakes every `refresh_seconds` (default 30), fires an API call, and posts the result back to the main thread via GLib `idle_add` (Linux) or `performSelectorOnMainThread` (macOS). The main thread then invalidates the OSD window, triggering a synchronous redraw. User interactions (scroll to resize, drag to move, right-click to minimize) update `scale`/position in-place and queue an immediate redraw without waiting for the next refresh tick.
+
 ## Troubleshooting
 
 ### Linux: OSD not visible
@@ -157,6 +168,16 @@ These are the same values shown on the [claude.ai usage page](https://claude.ai/
 - Make sure Claude Code CLI is installed and you're logged in (`claude` command works)
 - Linux: OAuth token is read from `~/.claude/.credentials.json`
 - macOS: OAuth token is read from Keychain (fallback to `~/.claude/.credentials.json`)
+
+## Contributing
+
+Contributions are welcome. A few guidelines:
+
+- **Bug reports** — Open an issue with your OS, Python version, and the full error output. If the OSD is invisible, include `xrandr` / `system_profiler SPDisplaysDataType` output.
+- **Pull requests** — Keep changes focused. One fix or feature per PR. Run the widget manually on the target platform before submitting.
+- **Platform parity** — Features that affect the OSD or tray should work on both Linux and macOS, or be clearly gated behind a platform check.
+- **No new dependencies** — Avoid adding Python packages beyond those already in `requirements-macos.txt` and the listed GTK stack. If a dependency is truly necessary, discuss it in an issue first.
+- **Code style** — Follow the existing conventions (no formatter is enforced; just match the surrounding code).
 
 ## License
 
