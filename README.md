@@ -48,7 +48,7 @@ sudo pacman -S python-gobject python-cairo gtk3 libappindicator-gtk3
 ### 2. Clone and run
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/claude-usage-widget.git
+git clone https://github.com/bozdemir/claude-usage-widget.git
 cd claude-usage-widget
 python3 main.py &
 ```
