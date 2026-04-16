@@ -62,6 +62,7 @@ except Exception:
     _DARK_APPEARANCE = None
 
 from claude_usage.collector import collect_all, UsageStats
+from claude_usage.notifier import UsageNotifier
 from claude_usage.overlay_macos import UsageOverlay
 
 ICON_PATH: str = os.path.join(os.path.dirname(__file__), "icons", "claude-tray.svg")
@@ -743,6 +744,7 @@ class ClaudeUsageTray(rumps.App):
         self.popup  = UsagePopup()
         self.overlay = UsageOverlay(config)
         self.overlay.show_all()
+        self.notifier = UsageNotifier(config)
 
         # Prime the pump: start the first data collection immediately so the
         # tray icon shows real data as soon as the app is ready.
@@ -862,6 +864,7 @@ class ClaudeUsageTray(rumps.App):
 
         self.popup.update(stats)
         self.overlay.update(stats)
+        self.notifier.check_stats(stats)
 
     # ------------------------------------------------------------------
     # Menu item action callbacks
