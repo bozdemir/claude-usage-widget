@@ -194,6 +194,11 @@ def _format_session_duration(seconds: int) -> str:
     return f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
 
 
+SPARK_H = 32
+SPARK_LABEL_H = 14
+SPARK_BLOCK_H = SPARK_H + SPARK_LABEL_H + 8  # bar + caption + bottom margin
+
+
 def _calc_popup_height(n_sessions: int) -> int:
     """Compute the total pixel height required for the popup content.
 
@@ -203,9 +208,9 @@ def _calc_popup_height(n_sessions: int) -> int:
 
     Sections (top to bottom):
       - PAD_TOP
-      - "Plan usage limits" header + usage row
+      - "Plan usage limits" header + usage row + sparkline
       - separator
-      - "Weekly limits" header + usage row
+      - "Weekly limits" header + usage row + sparkline
       - separator
       - "Active sessions" header + session rows (1-8, or placeholder)
       - separator
@@ -216,10 +221,12 @@ def _calc_popup_height(n_sessions: int) -> int:
     y += 26   # "Plan usage limits" header text height
     y += 12   # spacing below header
     y += 52   # usage row: label + progress bar (label_h + bar area + bottom margin)
+    y += SPARK_BLOCK_H  # session sparkline
     y += 25   # separator (1 px line + surrounding padding)
     y += 26   # "Weekly limits" header
     y += 12
     y += 52   # usage row
+    y += SPARK_BLOCK_H  # weekly sparkline
     y += 25   # separator
     y += 26   # "Active sessions" header
     y += 12
@@ -303,6 +310,8 @@ class PopupView(NSView):
             stats.session_utilization,
             y, w, bar_w,
         )
+        y = self._sparkline(stats.session_history, "Last 5 hours",
+                            PAD_X, y, w - 2 * PAD_X)
         y = self._draw_separator(y)
 
         # ---- Section 2: Weekly limits ----
@@ -313,6 +322,8 @@ class PopupView(NSView):
             stats.weekly_utilization,
             y, w, bar_w,
         )
+        y = self._sparkline(stats.weekly_history, "Last 7 days",
+                            PAD_X, y, w - 2 * PAD_X)
         y = self._draw_separator(y)
 
         # ---- Section 3: Active sessions ----
@@ -449,6 +460,42 @@ class PopupView(NSView):
                   y + (row_h - pct_h) / 2, f_pct, _SEC)
 
         return y + row_h + 16   # 16 pts of bottom padding after the row
+
+    @objc.python_method
+    def _sparkline(
+        self,
+        buckets: list[float],
+        label: str,
+        x: float,
+        y: float,
+        w: float,
+    ) -> float:
+        """Draw a vertical-bar sparkline with a caption below; return new y.
+
+        Each bucket fills a thin vertical bar whose height scales with its
+        utilization (0.0-1.0). Empty buckets are skipped. Coordinates use the
+        view's flipped convention (origin top-left).
+        """
+        h = SPARK_H
+        _ns_color(*_TRACK).setFill()
+        _fill_rrect(x, y, w, h, 4)
+
+        if buckets:
+            n = len(buckets)
+            gap = 1.0
+            bar_w = max(1.0, (w - (n - 1) * gap) / n)
+            for i, val in enumerate(buckets):
+                if val <= 0:
+                    continue
+                bx = x + i * (bar_w + gap)
+                bh = max(1.0, h * min(float(val), 1.0))
+                # Flipped coords: bottom of bar = y + h, top = y + (h - bh)
+                _ns_color(*_BAR).setFill()
+                NSBezierPath.fillRect_(NSMakeRect(bx, y + (h - bh), bar_w, bh))
+
+        f = _sys_font(10)
+        _draw_str(label, x, y + h + 2, f, _DIM)
+        return y + SPARK_BLOCK_H
 
     @objc.python_method
     def _draw_separator(self, y: float) -> float:
