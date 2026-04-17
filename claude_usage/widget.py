@@ -17,6 +17,7 @@ from gi.repository import Gtk, GLib, Gdk, Pango  # type: ignore[attr-defined]
 from gi.repository import AyatanaAppIndicator3 as AppIndicator  # type: ignore[attr-defined]
 
 from claude_usage.collector import collect_all, UsageStats
+from claude_usage.notifier import UsageNotifier
 from claude_usage.overlay import UsageOverlay
 
 if TYPE_CHECKING:
@@ -275,6 +276,50 @@ class UsagePopup(Gtk.Window):
 
         self._content_box.pack_start(row, False, False, 0)
 
+    def _add_sparkline(self, buckets: list[float], label: str) -> None:
+        """Append a vertical-bar sparkline with a caption underneath.
+
+        Each bucket is drawn as a thin vertical bar whose height is proportional
+        to its utilization (0.0-1.0). Empty buckets are skipped.
+        """
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        box.set_margin_bottom(12)
+
+        area = Gtk.DrawingArea()
+        area.set_size_request(-1, 32)
+
+        def draw(widget: Gtk.Widget, cr: cairo.Context) -> None:
+            w = widget.get_allocated_width()
+            h = widget.get_allocated_height()
+            r, g, b = _hex_to_rgb(BAR_TRACK)
+            cr.set_source_rgb(r, g, b)
+            _rounded_rect(cr, 0, 0, w, h, 4)
+            cr.fill()
+            if not buckets:
+                return
+            n = len(buckets)
+            gap = 1.0
+            bar_w = max(1.0, (w - (n - 1) * gap) / n)
+            r, g, b = _hex_to_rgb(BAR_BLUE)
+            cr.set_source_rgb(r, g, b)
+            for i, val in enumerate(buckets):
+                if val <= 0:
+                    continue
+                bx = i * (bar_w + gap)
+                bh = max(1.0, h * min(float(val), 1.0))
+                cr.rectangle(bx, h - bh, bar_w, bh)
+            cr.fill()
+
+        area.connect("draw", draw)
+        box.pack_start(area, False, False, 0)
+
+        lbl = Gtk.Label(label=label)
+        lbl.get_style_context().add_class("dim-text")
+        lbl.set_halign(Gtk.Align.START)
+        box.pack_start(lbl, False, False, 0)
+
+        self._content_box.pack_start(box, False, False, 0)
+
     def _add_separator(self) -> None:
         """Append a styled horizontal separator."""
         sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
@@ -297,6 +342,7 @@ class UsagePopup(Gtk.Window):
             _format_reset_duration(stats.session_reset),
             stats.session_utilization,
         )
+        self._add_sparkline(stats.session_history, "Last 5 hours")
 
         self._add_separator()
 
@@ -306,6 +352,7 @@ class UsagePopup(Gtk.Window):
             _format_reset_day(stats.weekly_reset),
             stats.weekly_utilization,
         )
+        self._add_sparkline(stats.weekly_history, "Last 7 days")
 
         self._add_separator()
 
@@ -454,6 +501,7 @@ class ClaudeUsageTray:
         self.popup: UsagePopup = UsagePopup(config)
         self.overlay: UsageOverlay = UsageOverlay(config)
         self.overlay.show_all()
+        self.notifier = UsageNotifier(config)
 
         # Populate the UI immediately, then register the recurring timer.
         self._refresh_async()
@@ -512,6 +560,7 @@ class ClaudeUsageTray:
 
         self.popup.update(stats)
         self.overlay.update(stats)
+        self.notifier.check_stats(stats)
         return False  # remove from idle queue
 
     def _on_timer(self) -> bool:

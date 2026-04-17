@@ -47,6 +47,8 @@ DEFAULT_CONFIG: Config = {
     # 1.0 = default size; increase for HiDPI displays where the overlay appears
     # too small, or decrease to make it less intrusive.
     "osd_scale": 1.0,
+    "notifications_enabled": True,
+    "notify_thresholds": [0.75, 0.90],
 }
 
 

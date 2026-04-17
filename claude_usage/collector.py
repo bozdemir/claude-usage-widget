@@ -13,6 +13,15 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from claude_usage.history import aggregate, append_sample, load_samples, prune
+
+HISTORY_FILENAME = "usage-history.jsonl"
+HISTORY_KEEP_DAYS = 8
+SESSION_WINDOW_SECONDS = 5 * 3600
+SESSION_BUCKETS = 30
+WEEKLY_WINDOW_SECONDS = 7 * 86400
+WEEKLY_BUCKETS = 28
+
 
 @dataclass
 class UsageStats:
@@ -35,6 +44,8 @@ class UsageStats:
     overage_status: str = ""  # "rejected" or "allowed"
     fallback_status: str = ""  # "available" or ""
     rate_limit_error: str = ""  # error message if API call fails
+    session_history: list = field(default_factory=list)  # bucketed sparkline (oldest first)
+    weekly_history: list = field(default_factory=list)
 
 
 def parse_history(path: str) -> UsageStats:
@@ -454,6 +465,9 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
     stats.active_sessions = get_active_sessions(claude_dir)
 
     rate_limits = fetch_rate_limits(claude_dir)
+    history_path = os.path.join(claude_dir, HISTORY_FILENAME)
+    now_ts = datetime.now().timestamp()
+
     if "error" in rate_limits:
         stats.rate_limit_error = rate_limits["error"]
     else:
@@ -463,5 +477,20 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
         stats.weekly_reset = rate_limits["weekly_reset"]
         stats.overage_status = rate_limits["overage_status"]
         stats.fallback_status = rate_limits["fallback_status"]
+        try:
+            append_sample(history_path, now_ts, stats.session_utilization, stats.weekly_utilization)
+            prune(history_path, keep_seconds=HISTORY_KEEP_DAYS * 86400, now=now_ts)
+        except OSError:
+            pass
+
+    samples = load_samples(history_path, since_ts=now_ts - WEEKLY_WINDOW_SECONDS)
+    stats.session_history = aggregate(
+        samples, "session", now=now_ts,
+        window_seconds=SESSION_WINDOW_SECONDS, n_buckets=SESSION_BUCKETS,
+    )
+    stats.weekly_history = aggregate(
+        samples, "weekly", now=now_ts,
+        window_seconds=WEEKLY_WINDOW_SECONDS, n_buckets=WEEKLY_BUCKETS,
+    )
 
     return stats
