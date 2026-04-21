@@ -62,6 +62,7 @@ except Exception:
     _DARK_APPEARANCE = None
 
 from claude_usage.collector import collect_all, UsageStats
+from claude_usage.forecast import format_forecast
 from claude_usage.notifier import UsageNotifier
 from claude_usage.overlay_macos import UsageOverlay
 
@@ -199,7 +200,7 @@ SPARK_LABEL_H = 14
 SPARK_BLOCK_H = SPARK_H + SPARK_LABEL_H + 8  # bar + caption + bottom margin
 
 
-def _calc_popup_height(n_sessions: int) -> int:
+def _calc_popup_height(n_sessions: int, stats: UsageStats | None = None) -> int:
     """Compute the total pixel height required for the popup content.
 
     The popup has a fixed width (POPUP_W) but a variable height that depends
@@ -208,10 +209,12 @@ def _calc_popup_height(n_sessions: int) -> int:
 
     Sections (top to bottom):
       - PAD_TOP
-      - "Plan usage limits" header + usage row + sparkline
+      - "Plan usage limits" header + usage row + sparkline (+ optional forecast)
       - separator
-      - "Weekly limits" header + usage row + sparkline
+      - "Weekly limits" header + usage row + sparkline (+ optional forecast)
       - separator
+      - Optional "Cost (today)" section (only if today_cost > 0)
+      - Optional "Top projects today" section (only if any projects)
       - "Active sessions" header + session rows (1-8, or placeholder)
       - separator
       - footer
@@ -222,12 +225,38 @@ def _calc_popup_height(n_sessions: int) -> int:
     y += 12   # spacing below header
     y += 52   # usage row: label + progress bar (label_h + bar area + bottom margin)
     y += SPARK_BLOCK_H  # session sparkline
+    # Optional forecast line under session sparkline
+    if stats is not None and format_forecast(stats.session_forecast):
+        y += 20
     y += 25   # separator (1 px line + surrounding padding)
     y += 26   # "Weekly limits" header
     y += 12
     y += 52   # usage row
     y += SPARK_BLOCK_H  # weekly sparkline
+    # Optional forecast line under weekly sparkline
+    if stats is not None and format_forecast(stats.weekly_forecast):
+        y += 20
     y += 25   # separator
+
+    # Optional "Cost (today)" section
+    if stats is not None and stats.today_cost > 0:
+        y += 26   # section header
+        y += 12   # spacing below header
+        y += 22   # primary cost line
+        if stats.cache_savings > 0:
+            y += 20   # dim savings line
+        y += 10   # section bottom padding
+        y += 25   # separator
+
+    # Optional "Top projects today" section
+    if stats is not None and stats.today_by_project:
+        n_projects = min(len(stats.today_by_project), 5)
+        y += 26   # section header
+        y += 12   # spacing below header
+        y += n_projects * 22
+        y += 10   # section bottom padding
+        y += 25   # separator
+
     y += 26   # "Active sessions" header
     y += 12
     rows = max(1, min(n_sessions, 8))  # at least 1 row ("No active sessions")
@@ -312,6 +341,12 @@ class PopupView(NSView):
         )
         y = self._sparkline(stats.session_history, "Last 5 hours",
                             PAD_X, y, w - 2 * PAD_X)
+        # Optional forecast line under the session sparkline
+        session_forecast_text = format_forecast(stats.session_forecast)
+        if session_forecast_text:
+            f_forecast = _sys_font(11)
+            _draw_str(session_forecast_text, PAD_X, y, f_forecast, _DIM)
+            y += 20
         y = self._draw_separator(y)
 
         # ---- Section 2: Weekly limits ----
@@ -324,7 +359,35 @@ class PopupView(NSView):
         )
         y = self._sparkline(stats.weekly_history, "Last 7 days",
                             PAD_X, y, w - 2 * PAD_X)
+        # Optional forecast line under the weekly sparkline
+        weekly_forecast_text = format_forecast(stats.weekly_forecast)
+        if weekly_forecast_text:
+            f_forecast = _sys_font(11)
+            _draw_str(weekly_forecast_text, PAD_X, y, f_forecast, _DIM)
+            y += 20
         y = self._draw_separator(y)
+
+        # ---- Optional: Cost (today) ----
+        if stats.today_cost > 0:
+            y = self._section_header("Cost (today)", y, w)
+            f_cost = _sys_font(13, bold=True)
+            _draw_str(f"${stats.today_cost:.2f}", PAD_X, y, f_cost, _PRI)
+            y += _str_size("X", f_cost).height + 8
+            if stats.cache_savings > 0:
+                f_dim = _sys_font(11)
+                _draw_str(f"${stats.cache_savings:.2f} saved by cache",
+                          PAD_X, y, f_dim, _DIM)
+                y += 20
+            y += 10
+            y = self._draw_separator(y)
+
+        # ---- Optional: Top projects today ----
+        if stats.today_by_project:
+            y = self._section_header("Top projects today", y, w)
+            for name, tokens in list(stats.today_by_project.items())[:5]:
+                y = self._project_row(name, tokens, y, w)
+            y += 10
+            y = self._draw_separator(y)
 
         # ---- Section 3: Active sessions ----
         n = len(stats.active_sessions)
@@ -552,6 +615,53 @@ class PopupView(NSView):
         _draw_str(cwd, PAD_X, y, f, _LINK)
         return y + _str_size("X", f).height + 8   # fixed-height row advance
 
+    @objc.python_method
+    def _project_row(self, name: str, tokens: int, y: float, w: float) -> float:
+        """Draw one top-project row: compact project name left, token count right.
+
+        The project name is compacted: any leading dashes are stripped and the
+        path is shortened to its last two components.  Token counts are
+        abbreviated with a "k" suffix when >= 1000.
+
+        Returns y advanced past the row (font height + 8 pts padding).
+        """
+        f = _sys_font(11)
+
+        # Strip leading dashes (common in collector project keys) and shorten
+        # to the last two path components for readability.
+        compact = name.lstrip("-")
+        parts = [p for p in compact.split("/") if p]
+        if len(parts) > 2:
+            compact = "/".join(parts[-2:])
+        elif parts:
+            compact = "/".join(parts)
+        if not compact:
+            compact = name or "?"
+
+        # Format the token count: "12.3k" for >= 1000, else plain integer.
+        try:
+            tok_int = int(tokens)
+        except (TypeError, ValueError):
+            tok_int = 0
+        if tok_int >= 1000:
+            tok_text = f"{tok_int / 1000:.1f}k tokens"
+        else:
+            tok_text = f"{tok_int} tokens"
+
+        # Right-align the token count first so we know the available width for
+        # the project name.
+        tok_sz = _str_size(tok_text, f)
+        _draw_str(tok_text, w - PAD_X - tok_sz.width, y, f, _DIM)
+
+        # Truncate the project name from the front if it would overflow.
+        max_name_w = w - 2 * PAD_X - tok_sz.width - 16
+        display = compact
+        while display and _str_size(display, f).width > max_name_w and len(display) > 3:
+            display = "…" + display[max(1, len(display) - 30):]
+
+        _draw_str(display, PAD_X, y, f, _LINK)
+        return y + _str_size("X", f).height + 8
+
 
 # ---------------------------------------------------------------------------
 # NSObject window delegate — intercepts the close button
@@ -656,9 +766,10 @@ class UsagePopup:
         """
         self._view._stats = stats
 
-        # Compute the new height from the number of active sessions.
+        # Compute the new height from the number of active sessions and the
+        # optional cost/project sections.
         n = len(stats.active_sessions)
-        new_h = _calc_popup_height(n)
+        new_h = _calc_popup_height(n, stats)
 
         frame = self._win.frame()
         # Calculate where the top edge currently is (bottom-left origin system).

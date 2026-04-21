@@ -17,8 +17,10 @@ from gi.repository import Gtk, GLib, Gdk, Pango  # type: ignore[attr-defined]
 from gi.repository import AyatanaAppIndicator3 as AppIndicator  # type: ignore[attr-defined]
 
 from claude_usage.collector import collect_all, UsageStats
+from claude_usage.forecast import format_forecast
 from claude_usage.notifier import UsageNotifier
 from claude_usage.overlay import UsageOverlay
+from claude_usage.themes import get_theme
 
 if TYPE_CHECKING:
     import cairo
@@ -26,20 +28,63 @@ if TYPE_CHECKING:
 
 ICON_PATH = os.path.join(os.path.dirname(__file__), "icons", "claude-tray.svg")
 
-# Colors matching Claude web dashboard.
-# Dark navy background keeps the popup from clashing with typical light desktops
-# while feeling consistent with Claude's own UI.
-# Blue fills (BAR_BLUE / TEXT_LINK) use the same hue as Claude's accent color.
-# TEXT_* values form a three-level hierarchy: primary (readable), secondary
-# (supporting detail), and dim (de-emphasised metadata such as timestamps).
-BAR_BLUE = "#5B9BD5"       # progress-bar fill — Claude accent blue
-BAR_TRACK = "#333340"      # progress-bar empty track — dark muted grey
-BG_COLOR = "#1a1a2e"       # window background — deep navy
-TEXT_PRIMARY = "#e0e0e8"   # labels and headings — near-white
-TEXT_SECONDARY = "#8a8a9a" # subtitles and supporting info — medium grey
-TEXT_DIM = "#555568"       # timestamps and low-priority text — dark grey
-TEXT_LINK = "#6BA4D9"      # active-session paths — lighter accent blue
-SEPARATOR_COLOR = "#2a2a38" # horizontal rule — slightly lighter than the background
+
+def _build_css(theme: dict[str, str]) -> bytes:
+    """Render the application-wide CSS string from a theme color dict.
+
+    All named color roles resolve to the given theme, so swapping themes
+    regenerates the stylesheet with a single call.  Font sizes step down
+    intentionally: 14 px headers → 13 px metric labels → 12 px supporting
+    text → 11 px metadata/dim.
+    """
+    return f"""
+window {{
+    background-color: {theme["bg"]};
+}}
+.section-header {{
+    color: {theme["text_primary"]};
+    font-size: 14px;
+    font-weight: bold;
+}}
+.section-right {{
+    color: {theme["text_secondary"]};
+    font-size: 12px;
+    font-style: italic;
+}}
+.metric-label {{
+    color: {theme["text_primary"]};
+    font-size: 13px;
+    font-weight: bold;
+}}
+.metric-sub {{
+    color: {theme["text_secondary"]};
+    font-size: 11px;
+}}
+.pct-label {{
+    color: {theme["text_secondary"]};
+    font-size: 12px;
+}}
+.dim-text {{
+    color: {theme["text_dim"]};
+    font-size: 11px;
+}}
+.session-text {{
+    color: {theme["text_link"]};
+    font-size: 11px;
+}}
+.updated-text {{
+    color: {theme["text_dim"]};
+    font-size: 11px;
+}}
+.error-text {{
+    color: {theme["error"]};
+    font-size: 11px;
+}}
+separator {{
+    background-color: {theme["separator"]};
+    min-height: 1px;
+}}
+""".encode()
 
 
 def _rounded_rect(
@@ -102,62 +147,6 @@ def _format_session_duration(total_seconds: int) -> str:
     return f"{minutes}m"
 
 
-# GTK CSS applied application-wide via Gtk.StyleContext.add_provider_for_screen.
-# All color references resolve to the constants above, so the palette is defined
-# in one place.  Font sizes step down intentionally: 14 px headers → 13 px
-# metric labels → 12 px supporting text → 11 px metadata/dim.
-# .error-text uses a hard-coded red (#ef4444) that stands out against the dark
-# background without a named constant because it is only used for API errors.
-CSS = f"""
-window {{
-    background-color: {BG_COLOR};
-}}
-.section-header {{
-    color: {TEXT_PRIMARY};
-    font-size: 14px;
-    font-weight: bold;
-}}
-.section-right {{
-    color: {TEXT_SECONDARY};
-    font-size: 12px;
-    font-style: italic;
-}}
-.metric-label {{
-    color: {TEXT_PRIMARY};
-    font-size: 13px;
-    font-weight: bold;
-}}
-.metric-sub {{
-    color: {TEXT_SECONDARY};
-    font-size: 11px;
-}}
-.pct-label {{
-    color: {TEXT_SECONDARY};
-    font-size: 12px;
-}}
-.dim-text {{
-    color: {TEXT_DIM};
-    font-size: 11px;
-}}
-.session-text {{
-    color: {TEXT_LINK};   /* active-session paths use the lighter accent blue */
-    font-size: 11px;
-}}
-.updated-text {{
-    color: {TEXT_DIM};
-    font-size: 11px;
-}}
-.error-text {{
-    color: #ef4444;   /* vivid red — only used for API/collection error notices */
-    font-size: 11px;
-}}
-separator {{
-    background-color: {SEPARATOR_COLOR};
-    min-height: 1px;
-}}
-""".encode()
-
-
 class UsagePopup(Gtk.Window):
     """Detailed popup window showing usage bars, sessions, and model breakdown."""
 
@@ -166,6 +155,13 @@ class UsagePopup(Gtk.Window):
     def __init__(self, config: dict[str, object]) -> None:
         super().__init__(title="Claude Usage", type=Gtk.WindowType.TOPLEVEL)
         self.config = config
+        # Resolve the theme once per popup instance. Drawing callbacks and
+        # anything that needs raw color values (Cairo fills, etc.) read from
+        # self._theme directly so that a single config value controls both
+        # CSS and custom-drawn widgets.
+        self._theme: dict[str, str] = get_theme(
+            str(config.get("theme", "default"))
+        )
         self.set_default_size(520, -1)
         self.set_resizable(False)
         self.set_decorated(True)
@@ -178,7 +174,7 @@ class UsagePopup(Gtk.Window):
         # UsagePopup instances are created (normally just one).
         if not UsagePopup._css_loaded:
             css = Gtk.CssProvider()
-            css.load_from_data(CSS)
+            css.load_from_data(_build_css(self._theme))
             Gtk.StyleContext.add_provider_for_screen(
                 Gdk.Screen.get_default(),
                 css,
@@ -248,11 +244,13 @@ class UsagePopup(Gtk.Window):
         bar.set_size_request(200, 12)
         bar.set_valign(Gtk.Align.CENTER)
 
+        theme = self._theme
+
         def _draw_bar(widget: Gtk.DrawingArea, cr: cairo.Context) -> None:
             w = widget.get_allocated_width()
             h = widget.get_allocated_height()
             # Draw the empty track first, then paint the filled portion on top.
-            tr, tg, tb = _hex_to_rgb(BAR_TRACK)
+            tr, tg, tb = _hex_to_rgb(theme["bar_track"])
             cr.set_source_rgb(tr, tg, tb)
             _rounded_rect(cr, 0, 0, w, h, 6)
             cr.fill()
@@ -260,7 +258,7 @@ class UsagePopup(Gtk.Window):
                 # Clamp to 100% and enforce a minimum pill width equal to the
                 # bar height so the rounded caps always render correctly.
                 fill_w = max(w * min(fraction, 1.0), h)
-                fr, fg, fb = _hex_to_rgb(BAR_BLUE)
+                fr, fg, fb = _hex_to_rgb(theme["bar_blue"])
                 cr.set_source_rgb(fr, fg, fb)
                 _rounded_rect(cr, 0, 0, fill_w, h, 6)
                 cr.fill()
@@ -288,10 +286,12 @@ class UsagePopup(Gtk.Window):
         area = Gtk.DrawingArea()
         area.set_size_request(-1, 32)
 
+        theme = self._theme
+
         def draw(widget: Gtk.Widget, cr: cairo.Context) -> None:
             w = widget.get_allocated_width()
             h = widget.get_allocated_height()
-            r, g, b = _hex_to_rgb(BAR_TRACK)
+            r, g, b = _hex_to_rgb(theme["bar_track"])
             cr.set_source_rgb(r, g, b)
             _rounded_rect(cr, 0, 0, w, h, 4)
             cr.fill()
@@ -300,7 +300,7 @@ class UsagePopup(Gtk.Window):
             n = len(buckets)
             gap = 1.0
             bar_w = max(1.0, (w - (n - 1) * gap) / n)
-            r, g, b = _hex_to_rgb(BAR_BLUE)
+            r, g, b = _hex_to_rgb(theme["bar_blue"])
             cr.set_source_rgb(r, g, b)
             for i, val in enumerate(buckets):
                 if val <= 0:
@@ -319,6 +319,22 @@ class UsagePopup(Gtk.Window):
         box.pack_start(lbl, False, False, 0)
 
         self._content_box.pack_start(box, False, False, 0)
+
+    def _add_dim_line(self, text: str, bottom_margin: int = 8) -> None:
+        """Append a single left-aligned line styled with ``.dim-text``."""
+        lbl = Gtk.Label(label=text)
+        lbl.get_style_context().add_class("dim-text")
+        lbl.set_halign(Gtk.Align.START)
+        lbl.set_margin_bottom(bottom_margin)
+        self._content_box.pack_start(lbl, False, False, 0)
+
+    def _add_metric_line(self, text: str, bottom_margin: int = 2) -> None:
+        """Append a single left-aligned line styled with ``.metric-label``."""
+        lbl = Gtk.Label(label=text)
+        lbl.get_style_context().add_class("metric-label")
+        lbl.set_halign(Gtk.Align.START)
+        lbl.set_margin_bottom(bottom_margin)
+        self._content_box.pack_start(lbl, False, False, 0)
 
     def _add_separator(self) -> None:
         """Append a styled horizontal separator."""
@@ -342,6 +358,9 @@ class UsagePopup(Gtk.Window):
             _format_reset_duration(stats.session_reset),
             stats.session_utilization,
         )
+        session_forecast = format_forecast(stats.session_forecast)
+        if session_forecast:
+            self._add_dim_line(session_forecast)
         self._add_sparkline(stats.session_history, "Last 5 hours")
 
         self._add_separator()
@@ -352,9 +371,43 @@ class UsagePopup(Gtk.Window):
             _format_reset_day(stats.weekly_reset),
             stats.weekly_utilization,
         )
+        weekly_forecast = format_forecast(stats.weekly_forecast)
+        if weekly_forecast:
+            self._add_dim_line(weekly_forecast)
         self._add_sparkline(stats.weekly_history, "Last 7 days")
 
         self._add_separator()
+
+        # Cost + top-projects block — only rendered when there is data for today.
+        today_cost = float(getattr(stats, "today_cost", 0.0) or 0.0)
+        cache_savings = float(getattr(stats, "cache_savings", 0.0) or 0.0)
+        today_projects = getattr(stats, "today_by_project", {}) or {}
+
+        if today_cost > 0:
+            self._add_section_header("Cost (today)")
+            self._add_metric_line(f"${today_cost:.2f}")
+            self._add_dim_line(f"${cache_savings:.2f} saved by cache", bottom_margin=12)
+            self._add_separator()
+
+        if today_projects:
+            self._add_section_header("Top projects today")
+            # today_projects may be a plain dict or an ordered mapping of
+            # (project -> tokens). Show the top 5 by tokens descending.
+            try:
+                items = sorted(
+                    today_projects.items(), key=lambda kv: kv[1], reverse=True
+                )
+            except (TypeError, AttributeError):
+                items = list(today_projects.items()) if hasattr(today_projects, "items") else []
+            for name, tokens in items[:5]:
+                try:
+                    tokens_int = int(tokens)
+                except (TypeError, ValueError):
+                    tokens_int = 0
+                # Express in thousands for compactness (matches "XXXk tokens").
+                k = tokens_int // 1000
+                self._add_dim_line(f"{name}: {k}k tokens", bottom_margin=4)
+            self._add_separator()
 
         self._add_section_header(
             "Active sessions",

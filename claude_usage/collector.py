@@ -13,6 +13,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from claude_usage import forecast, pricing
 from claude_usage.history import aggregate, append_sample, load_samples, prune
 
 HISTORY_FILENAME = "usage-history.jsonl"
@@ -46,6 +47,17 @@ class UsageStats:
     rate_limit_error: str = ""  # error message if API call fails
     session_history: list = field(default_factory=list)  # bucketed sparkline (oldest first)
     weekly_history: list = field(default_factory=list)
+    # Cost estimates (USD) derived from per-model token breakdowns
+    today_cost: float = 0.0
+    week_cost: float = 0.0
+    cache_savings: float = 0.0  # $ saved this week via prompt caching
+    # {model: {"input": N, "output": N, "cache_read": N, "cache_creation": N}}
+    today_by_model_detailed: dict = field(default_factory=dict)
+    # {project_name: output_tokens} -- trimmed to the top N projects by tokens
+    today_by_project: dict = field(default_factory=dict)
+    # Forecast dicts produced by forecast.forecast_time_to_limit
+    session_forecast: dict = field(default_factory=dict)
+    weekly_forecast: dict = field(default_factory=dict)
 
 
 def parse_history(path: str) -> UsageStats:
@@ -112,6 +124,11 @@ def _collect_tokens_single_pass(
         "today_output": 0,
         "week_output": 0,
         "today_by_model": {},
+        # Full per-model breakdowns (input/output/cache_read/cache_creation)
+        "today_by_model_detailed": {},
+        "week_by_model_detailed": {},
+        # Today's output tokens grouped by the immediate parent directory name
+        "today_by_project": {},
     }
     projects_dir = os.path.join(claude_dir, "projects")
     if not os.path.isdir(projects_dir):
@@ -146,6 +163,10 @@ def _parse_tokens_file(
     except OSError:
         return
 
+    # Project name = name of the immediate parent directory under projects/
+    # (e.g. "-home-user-my-project"). Used for per-project token breakdowns.
+    project_name = os.path.basename(os.path.dirname(path))
+
     with f:
         for line in f:
             line = line.strip()
@@ -171,14 +192,37 @@ def _parse_tokens_file(
                 continue
 
             usage = msg.get("usage", {})
-            output_tokens = usage.get("output_tokens", 0)
+            output_tokens = usage.get("output_tokens", 0) or 0
+            input_tokens = usage.get("input_tokens", 0) or 0
+            cache_read = usage.get("cache_read_input_tokens", 0) or 0
+            cache_creation = usage.get("cache_creation_input_tokens", 0) or 0
             model = msg.get("model", "unknown")
 
             result["week_output"] += output_tokens
 
+            week_bucket = result["week_by_model_detailed"].setdefault(
+                model, {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0},
+            )
+            week_bucket["input"] += input_tokens
+            week_bucket["output"] += output_tokens
+            week_bucket["cache_read"] += cache_read
+            week_bucket["cache_creation"] += cache_creation
+
             if is_today:
                 result["today_output"] += output_tokens
                 result["today_by_model"][model] = result["today_by_model"].get(model, 0) + output_tokens
+
+                today_bucket = result["today_by_model_detailed"].setdefault(
+                    model, {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0},
+                )
+                today_bucket["input"] += input_tokens
+                today_bucket["output"] += output_tokens
+                today_bucket["cache_read"] += cache_read
+                today_bucket["cache_creation"] += cache_creation
+
+                result["today_by_project"][project_name] = (
+                    result["today_by_project"].get(project_name, 0) + output_tokens
+                )
 
 
 # Preserved for test compatibility -- superseded by _collect_tokens_single_pass
@@ -461,6 +505,21 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
     stats.today_tokens = tokens["today_output"]
     stats.week_tokens = tokens["week_output"]
     stats.today_model_tokens = tokens["today_by_model"]
+    stats.today_by_model_detailed = tokens.get("today_by_model_detailed", {})
+
+    # Per-project breakdown: keep only the top 10 projects by output tokens,
+    # preserving descending order so callers can iterate directly.
+    project_totals = tokens.get("today_by_project", {})
+    top_projects = sorted(project_totals.items(), key=lambda kv: kv[1], reverse=True)[:10]
+    stats.today_by_project = dict(top_projects)
+
+    # Cost estimates via pricing module. A single call covers today + week so
+    # the pricing table is walked twice rather than per-model per-request.
+    today_cost_summary = pricing.calculate_stats_cost(stats.today_by_model_detailed)
+    week_cost_summary = pricing.calculate_stats_cost(tokens.get("week_by_model_detailed", {}))
+    stats.today_cost = float(today_cost_summary.get("total", 0.0))
+    stats.week_cost = float(week_cost_summary.get("total", 0.0))
+    stats.cache_savings = float(week_cost_summary.get("cache_savings", 0.0))
 
     stats.active_sessions = get_active_sessions(claude_dir)
 
@@ -491,6 +550,17 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
     stats.weekly_history = aggregate(
         samples, "weekly", now=now_ts,
         window_seconds=WEEKLY_WINDOW_SECONDS, n_buckets=WEEKLY_BUCKETS,
+    )
+
+    # Burn-rate forecasts: project when utilization will hit 100% at the current rate.
+    # Requires at least 2 samples in the window; falls back to an empty dict otherwise.
+    session_rate = forecast.calculate_burn_rate(samples, "session")
+    weekly_rate = forecast.calculate_burn_rate(samples, "weekly")
+    stats.session_forecast = forecast.forecast_time_to_limit(
+        stats.session_utilization, session_rate, stats.session_reset,
+    )
+    stats.weekly_forecast = forecast.forecast_time_to_limit(
+        stats.weekly_utilization, weekly_rate, stats.weekly_reset,
     )
 
     return stats

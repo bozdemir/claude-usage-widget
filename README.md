@@ -18,6 +18,10 @@ A desktop widget that displays your Claude Code usage limits in real time. Shows
 - **Draggable** -- left-click and drag to reposition the OSD
 - **Minimizable** -- right-click the OSD to collapse it to a thin progress bar
 - **Active sessions** -- shows running Claude Code sessions with project paths and durations
+- **Cost estimation** -- widget shows estimated $ spent today and cache savings using model pricing
+- **Usage forecasting** -- burn rate calculation shows "at this rate you'll hit the limit in Xh Ym"
+- **Per-project breakdown** -- top 5 projects by token usage today
+- **Themes** -- 5 built-in themes (default, catppuccin-mocha, dracula, nord, gruvbox-dark), set via `"theme": "dracula"` in `config.json`
 
 ## Requirements
 
@@ -122,8 +126,27 @@ cp config.json.example config.json
 | `daily_token_limit` | `5000000` | Daily token limit for local tracking |
 | `weekly_token_limit` | `25000000` | Weekly token limit for local tracking |
 | `claude_dir` | `~/.claude` | Path to the Claude Code data directory |
+| `theme` | `default` | Color theme for the OSD and popup. One of `default`, `catppuccin-mocha`, `dracula`, `nord`, `gruvbox-dark` |
 
 Keys omitted from `config.json` fall back to built-in defaults. `claude_dir` is not included in the example file because the default is correct for most setups.
+
+## Themes
+
+The widget ships with 5 built-in color themes. Select one by adding `"theme": "<name>"` to your `config.json`:
+
+```json
+{
+    "theme": "dracula"
+}
+```
+
+Available themes:
+
+- **default** -- the original widget palette _(screenshots welcome)_
+- **catppuccin-mocha** -- soft pastel dark theme _(screenshots welcome)_
+- **dracula** -- classic purple-and-pink dark theme _(screenshots welcome)_
+- **nord** -- cool arctic blue palette _(screenshots welcome)_
+- **gruvbox-dark** -- warm retro-style dark theme _(screenshots welcome)_
 
 ## How It Works
 
