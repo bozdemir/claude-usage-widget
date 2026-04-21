@@ -188,6 +188,23 @@ def _format_reset_day(reset_ts: float) -> str:
     return datetime.fromtimestamp(reset_ts).strftime("Resets %a %I:%M %p")
 
 
+def _format_tokens(n: int) -> str:
+    """Format a token count compactly: 1.2M / 5.4K / 123."""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return str(int(n))
+
+
+def _short_model_name(model: str) -> str:
+    """Strip 'claude-' prefix and any trailing date suffix."""
+    m = model.removeprefix("claude-")
+    if len(m) >= 9 and m[-9:-8] == "-" and m[-8:].isdigit():
+        m = m[:-9]
+    return m
+
+
 def _format_session_duration(seconds: int) -> str:
     """Return a compact elapsed-time string like "2h 5m" or "47m"."""
     hours, rem = divmod(seconds, 3600)
@@ -238,14 +255,22 @@ def _calc_popup_height(n_sessions: int, stats: UsageStats | None = None) -> int:
         y += 20
     y += 25   # separator
 
-    # Optional "Cost (today)" section
+    # Optional "Cost (today)" section (with per-model breakdown)
     if stats is not None and stats.today_cost > 0:
+        sub = (getattr(stats, "subscription_type", "") or "").lower()
         y += 26   # section header
         y += 12   # spacing below header
         y += 22   # primary cost line
+        if sub in ("pro", "max", "team", "enterprise"):
+            y += 16   # subscriber subtitle
         if stats.cache_savings > 0:
-            y += 20   # dim savings line
-        y += 10   # section bottom padding
+            y += 18   # dim savings line
+        # Per-model breakdown: 1 totals line + up to 4 model rows
+        by_model = getattr(stats, "today_by_model_detailed", {}) or {}
+        if by_model:
+            y += 16   # totals line
+            y += min(len(by_model), 4) * 15   # per-model rows
+        y += 8    # section bottom padding
         y += 25   # separator
 
     # Optional "Top projects today" section
@@ -367,8 +392,10 @@ class PopupView(NSView):
             y += 20
         y = self._draw_separator(y)
 
-        # ---- Optional: Cost (today) ----
+        # ---- Optional: Cost (today) with per-model breakdown ----
         if stats.today_cost > 0:
+            from claude_usage.pricing import calculate_cost
+
             sub = (getattr(stats, "subscription_type", "") or "").lower()
             is_subscriber = sub in ("pro", "max", "team", "enterprise")
             if is_subscriber:
@@ -378,17 +405,54 @@ class PopupView(NSView):
             y = self._section_header(header, y, w)
             f_cost = _sys_font(13, bold=True)
             _draw_str(f"${stats.today_cost:.2f}", PAD_X, y, f_cost, _PRI)
-            y += _str_size("X", f_cost).height + 8
+            y += _str_size("X", f_cost).height + 6
             f_dim = _sys_font(11)
             if is_subscriber:
                 _draw_str("Included in your plan; no per-token billing",
                           PAD_X, y, f_dim, _DIM)
-                y += 18
+                y += 16
             if stats.cache_savings > 0:
                 _draw_str(f"${stats.cache_savings:.2f} saved by cache",
                           PAD_X, y, f_dim, _DIM)
-                y += 20
-            y += 10
+                y += 18
+
+            # --- Transparency: per-model token breakdown with per-model cost ---
+            by_model = getattr(stats, "today_by_model_detailed", {}) or {}
+            if by_model:
+                total_in = total_out = total_cr = 0
+                rows = []
+                for model, counts in by_model.items():
+                    in_t = int(counts.get("input", 0) or 0)
+                    out_t = int(counts.get("output", 0) or 0)
+                    cr_t = int(counts.get("cache_read", 0) or 0)
+                    cc_t = int(counts.get("cache_creation", 0) or 0)
+                    total_in += in_t
+                    total_out += out_t
+                    total_cr += cr_t
+                    bk = calculate_cost(model, in_t, out_t, cr_t, cc_t)
+                    rows.append((_short_model_name(model), in_t, out_t, cr_t, bk["total"]))
+                rows.sort(key=lambda r: r[4], reverse=True)
+
+                _draw_str(
+                    f"Tokens: {_format_tokens(total_in)} in • "
+                    f"{_format_tokens(total_out)} out • "
+                    f"{_format_tokens(total_cr)} cache hits",
+                    PAD_X, y, f_dim, _DIM,
+                )
+                y += 16
+
+                for name, in_t, out_t, cr_t, cost in rows:
+                    if cost < 0.01:
+                        continue
+                    line = (
+                        f"  {name}: ${cost:.2f}  "
+                        f"({_format_tokens(in_t)} in / {_format_tokens(out_t)} out"
+                        + (f" / {_format_tokens(cr_t)} cache" if cr_t > 0 else "")
+                        + ")"
+                    )
+                    _draw_str(line, PAD_X, y, f_dim, _DIM)
+                    y += 15
+            y += 8
             y = self._draw_separator(y)
 
         # ---- Optional: Top projects today ----

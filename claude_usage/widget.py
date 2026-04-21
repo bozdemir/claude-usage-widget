@@ -147,6 +147,24 @@ def _format_session_duration(total_seconds: int) -> str:
     return f"{minutes}m"
 
 
+def _format_tokens(n: int) -> str:
+    """Format a token count compactly: 1234567 -> '1.2M', 5400 -> '5.4K'."""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return str(int(n))
+
+
+def _short_model_name(model: str) -> str:
+    """Strip claude- prefix and date suffix for compact display."""
+    m = model.removeprefix("claude-")
+    # Drop trailing date like "-20251001"
+    if len(m) >= 9 and m[-9:-8] == "-" and m[-8:].isdigit():
+        m = m[:-9]
+    return m
+
+
 class UsagePopup(Gtk.Window):
     """Detailed popup window showing usage bars, sessions, and model breakdown."""
 
@@ -383,6 +401,7 @@ class UsagePopup(Gtk.Window):
         cache_savings = float(getattr(stats, "cache_savings", 0.0) or 0.0)
         today_projects = getattr(stats, "today_by_project", {}) or {}
         sub_type = getattr(stats, "subscription_type", "") or ""
+        by_model = getattr(stats, "today_by_model_detailed", {}) or {}
 
         if today_cost > 0:
             # On flat-fee subscriptions (Pro/Max) the user does NOT pay per
@@ -400,7 +419,57 @@ class UsagePopup(Gtk.Window):
             if subtitle:
                 self._add_dim_line(subtitle, bottom_margin=2)
             if cache_savings > 0:
-                self._add_dim_line(f"${cache_savings:.2f} saved by cache", bottom_margin=12)
+                self._add_dim_line(
+                    f"${cache_savings:.2f} saved by cache",
+                    bottom_margin=8,
+                )
+
+            # --- Per-model breakdown: show the full math ---
+            if by_model:
+                from claude_usage.pricing import calculate_cost
+
+                total_input = 0
+                total_output = 0
+                total_cache_read = 0
+                total_cache_creation = 0
+
+                # Sort models by cost descending (computed on the fly)
+                model_rows = []
+                for model, counts in by_model.items():
+                    in_t = int(counts.get("input", 0) or 0)
+                    out_t = int(counts.get("output", 0) or 0)
+                    cr_t = int(counts.get("cache_read", 0) or 0)
+                    cc_t = int(counts.get("cache_creation", 0) or 0)
+                    total_input += in_t
+                    total_output += out_t
+                    total_cache_read += cr_t
+                    total_cache_creation += cc_t
+                    breakdown = calculate_cost(model, in_t, out_t, cr_t, cc_t)
+                    model_rows.append(
+                        (_short_model_name(model), in_t, out_t, cr_t, cc_t, breakdown["total"])
+                    )
+                model_rows.sort(key=lambda r: r[5], reverse=True)
+
+                # Total tokens line
+                self._add_dim_line(
+                    f"Tokens: {_format_tokens(total_input)} in • "
+                    f"{_format_tokens(total_output)} out • "
+                    f"{_format_tokens(total_cache_read)} cache hits",
+                    bottom_margin=6,
+                )
+
+                # Per-model rows
+                for name, in_t, out_t, cr_t, cc_t, cost in model_rows:
+                    if cost < 0.01:
+                        continue
+                    self._add_dim_line(
+                        f"  {name}: ${cost:.2f}  "
+                        f"({_format_tokens(in_t)} in / {_format_tokens(out_t)} out"
+                        + (f" / {_format_tokens(cr_t)} cache" if cr_t > 0 else "")
+                        + ")",
+                        bottom_margin=2,
+                    )
+                self._add_dim_line("", bottom_margin=8)
             else:
                 self._add_dim_line("", bottom_margin=12)
             self._add_separator()
