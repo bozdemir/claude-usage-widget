@@ -25,6 +25,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--once", action="store_true", help="Collect once and print JSON.")
     p.add_argument("--field", metavar="NAME", default=None,
                    help="Print a single UsageStats field by name.")
+    p.add_argument("--export", choices=("csv", "json"), default=None,
+                   help="Export history as CSV or JSON to stdout.")
+    p.add_argument("--days", type=int, default=30,
+                   help="Look-back window for --export (default: 30).")
     return p
 
 
@@ -47,6 +51,14 @@ def run_cli(argv: Sequence[str]) -> int:
 
     if args.version:
         print(__version__)
+        return 0
+
+    if args.export:
+        from claude_usage.exporter import export_history
+        config = load_config(_default_config_path())
+        history_path = os.path.join(config["claude_dir"], "usage-history.jsonl")
+        count = export_history(history_path, fmt=args.export, days=args.days, out=sys.stdout)
+        print(f"# exported {count} samples", file=sys.stderr)
         return 0
 
     if args.json or args.once or args.field:
