@@ -234,7 +234,9 @@ class UsagePopup(QWidget):
         self.setWindowTitle("Claude Usage")
         self.setFixedWidth(POPUP_WIDTH)
         self.setMinimumHeight(360)
-        self.setWindowFlags(Qt.Tool | Qt.WindowStaysOnTopHint)
+        # Qt.Dialog + CustomizeWindowHint gives us a proper resizable popup
+        # with a close button but without the Tool-window title bar quirks.
+        self.setWindowFlags(Qt.Dialog | Qt.WindowStaysOnTopHint | Qt.WindowCloseButtonHint)
 
         # Style sheet — applied once per instance.
         self.setStyleSheet(self._build_qss())
@@ -358,11 +360,16 @@ class UsagePopup(QWidget):
 
     def _add_separator(self) -> None:
         from PySide6.QtWidgets import QFrame
+        # Spacer above the hairline
+        self._layout.addSpacing(6)
         sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(f"QFrame {{ background-color: {self._theme['separator']}; max-height: 1px; min-height: 1px; border: none; }}")
-        sep.setContentsMargins(0, 4, 0, 14)
+        sep.setFixedHeight(1)
+        sep.setStyleSheet(
+            f"background-color: {self._theme['separator']}; border: none;"
+        )
         self._layout.addWidget(sep)
+        # Spacer below the hairline
+        self._layout.addSpacing(14)
 
     # --------------------------------------------------------------- update
 
