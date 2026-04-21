@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .playwright-mcp/
 docs/superpowers/
+docs/plans/
 config.json
 _gi_fix/
 
