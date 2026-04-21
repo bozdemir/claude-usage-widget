@@ -121,10 +121,15 @@ def _main_linux() -> None:
 
 def main() -> None:
     """Top-level dispatcher: restore SIGINT and route to the right platform."""
+    # CLI flags take precedence over the GUI. run_cli returns -1 when the
+    # user did not pass any CLI-specific flag, in which case we fall through
+    # to the platform GUI entry point below.
+    from claude_usage.cli import run_cli
+    rc = run_cli(sys.argv[1:])
+    if rc >= 0:
+        sys.exit(rc)
+
     # Restore the default SIGINT handler so Ctrl-C kills the process cleanly.
-    # Python replaces it with a KeyboardInterrupt-raising handler by default,
-    # but GTK's main loop can suppress that, leaving no way to quit from the
-    # terminal without this line.
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     if sys.platform == "darwin":
