@@ -357,6 +357,50 @@ class UsagePopup(Gtk.Window):
 
         self._content_box.pack_start(box, False, False, 0)
 
+    def _add_heatmap(self, buckets: list[float], label: str) -> None:
+        """Draw a single-row heatmap strip with a caption underneath.
+
+        Each bucket is one cell whose alpha scales with its utilization
+        (0.0 -- 1.0).  Empty cells remain the dim track color.
+        """
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        box.set_margin_bottom(12)
+
+        area = Gtk.DrawingArea()
+        area.set_size_request(-1, 18)
+
+        theme = self._theme
+
+        def draw(widget: Gtk.Widget, cr: cairo.Context) -> None:
+            w = widget.get_allocated_width()
+            h = widget.get_allocated_height()
+            tr_r, tr_g, tr_b = _hex_to_rgb(theme["bar_track"])
+            cr.set_source_rgb(tr_r, tr_g, tr_b)
+            cr.rectangle(0, 0, w, h)
+            cr.fill()
+            n = len(buckets)
+            if n == 0:
+                return
+            cell_w = w / n
+            br, bg, bb = _hex_to_rgb(theme["bar_blue"])
+            for i, v in enumerate(buckets):
+                if v <= 0:
+                    continue
+                alpha = min(float(v), 1.0)
+                cr.set_source_rgba(br, bg, bb, alpha)
+                cr.rectangle(i * cell_w, 0, cell_w, h)
+                cr.fill()
+
+        area.connect("draw", draw)
+        box.pack_start(area, False, False, 0)
+
+        cap = Gtk.Label(label=label)
+        cap.get_style_context().add_class("dim-text")
+        cap.set_halign(Gtk.Align.START)
+        box.pack_start(cap, False, False, 0)
+
+        self._content_box.pack_start(box, False, False, 0)
+
     def _add_dim_line(self, text: str, bottom_margin: int = 8) -> None:
         """Append a single left-aligned line styled with ``.dim-text``."""
         lbl = Gtk.Label(label=text)
@@ -413,7 +457,19 @@ class UsagePopup(Gtk.Window):
             self._add_dim_line(weekly_forecast)
         self._add_sparkline(stats.weekly_history, "Last 7 days")
 
+        # 90-day heatmap, rendered only when there's data in the window.
+        heatmap = getattr(stats, "daily_heatmap", []) or []
+        if any(v > 0 for v in heatmap):
+            self._add_heatmap(heatmap, "Last 90 days")
+
         self._add_separator()
+
+        # Anomaly banner — shown only when today is statistically unusual.
+        anomaly = getattr(stats, "anomaly", None)
+        if anomaly is not None and getattr(anomaly, "is_anomaly", False):
+            self._add_section_header("⚠ Unusual activity")
+            self._add_dim_line(anomaly.message, bottom_margin=8)
+            self._add_separator()
 
         # Cost + top-projects block — only rendered when there is data for today.
         today_cost = float(getattr(stats, "today_cost", 0.0) or 0.0)
@@ -530,6 +586,14 @@ class UsagePopup(Gtk.Window):
                     f"{_prettify_project_name(name)}: {_format_tokens(tokens_int)} tokens",
                     bottom_margin=4,
                 )
+            self._add_separator()
+
+        # Cost optimisation tips — at most 3 short actionable strings.
+        tips = getattr(stats, "tips", []) or []
+        if tips:
+            self._add_section_header("💡 Tips")
+            for tip in tips:
+                self._add_dim_line(tip, bottom_margin=4)
             self._add_separator()
 
         self._add_section_header(

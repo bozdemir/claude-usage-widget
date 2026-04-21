@@ -268,7 +268,18 @@ def _calc_popup_height(n_sessions: int, stats: UsageStats | None = None) -> int:
     # Optional forecast line under weekly sparkline
     if stats is not None and format_forecast(stats.weekly_forecast):
         y += 20
+
+    # Optional 90-day heatmap (18 px cell + 4 gap + 18 caption)
+    if stats is not None and any(v > 0 for v in (getattr(stats, "daily_heatmap", []) or [])):
+        y += 40
+
     y += 25   # separator
+
+    # Optional anomaly banner
+    if (stats is not None
+            and getattr(stats, "anomaly", None) is not None
+            and getattr(stats.anomaly, "is_anomaly", False)):
+        y += 26 + 20 + 25  # header + message + separator
 
     # Optional "Cost (today)" section (with per-model breakdown)
     if stats is not None and stats.today_cost > 0:
@@ -296,6 +307,12 @@ def _calc_popup_height(n_sessions: int, stats: UsageStats | None = None) -> int:
         y += n_projects * 22
         y += 10   # section bottom padding
         y += 25   # separator
+
+    # Optional "Tips" section (cost optimisation)
+    if stats is not None and getattr(stats, "tips", None):
+        y += 26 + 12                         # header + spacing
+        y += len(stats.tips) * 18            # tip lines
+        y += 4 + 25                          # padding + separator
 
     y += 26   # "Active sessions" header
     y += 12
@@ -405,7 +422,35 @@ class PopupView(NSView):
             f_forecast = _sys_font(11)
             _draw_str(weekly_forecast_text, PAD_X, y, f_forecast, _DIM)
             y += 20
+
+        # ---- 90-day heatmap (only when non-empty) ----
+        heatmap = getattr(stats, "daily_heatmap", []) or []
+        if any(v > 0 for v in heatmap):
+            n = len(heatmap)
+            cell_h = 18
+            cell_w = (w - 2 * PAD_X) / max(n, 1)
+            _ns_color(*_TRACK).setFill()
+            NSBezierPath.fillRect_(NSMakeRect(PAD_X, y, w - 2 * PAD_X, cell_h))
+            br, bg, bb, _ba = _BAR
+            for i, v in enumerate(heatmap):
+                if v <= 0:
+                    continue
+                alpha = min(float(v), 1.0)
+                _ns_color(br, bg, bb, alpha).setFill()
+                NSBezierPath.fillRect_(NSMakeRect(PAD_X + i * cell_w, y, cell_w, cell_h))
+            y += cell_h + 4
+            _draw_str("Last 90 days", PAD_X, y, _sys_font(10), _DIM)
+            y += 18
+
         y = self._draw_separator(y)
+
+        # ---- Anomaly banner (only when flagged) ----
+        anomaly = getattr(stats, "anomaly", None)
+        if anomaly is not None and getattr(anomaly, "is_anomaly", False):
+            y = self._section_header("⚠ Unusual activity", y, w)
+            _draw_str(anomaly.message, PAD_X, y, _sys_font(11), _DIM)
+            y += 20
+            y = self._draw_separator(y)
 
         # ---- Optional: Cost (today) with per-model breakdown ----
         if stats.today_cost > 0:
@@ -476,6 +521,17 @@ class PopupView(NSView):
             for name, tokens in list(stats.today_by_project.items())[:5]:
                 y = self._project_row(name, tokens, y, w)
             y += 10
+            y = self._draw_separator(y)
+
+        # ---- Tips (cost optimisation) ----
+        tips = getattr(stats, "tips", []) or []
+        if tips:
+            y = self._section_header("💡 Tips", y, w)
+            f_dim = _sys_font(11)
+            for tip in tips:
+                _draw_str(tip, PAD_X, y, f_dim, _DIM)
+                y += 18
+            y += 4
             y = self._draw_separator(y)
 
         # ---- Section 3: Active sessions ----
