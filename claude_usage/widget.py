@@ -735,8 +735,26 @@ class ClaudeUsageTray:
         mi_quit.connect("activate", self._on_quit)
         menu.append(mi_quit)
 
+        # Update-available banner (initially hidden; populated by the
+        # background version check below).
+        self.mi_update = Gtk.MenuItem(label="")
+        self.mi_update.set_sensitive(False)
+        self.mi_update.set_visible(False)
+        menu.insert(self.mi_update, 0)
+
         menu.show_all()
+        self.mi_update.hide()
         self.indicator.set_menu(menu)
+
+        # Non-blocking GitHub version check
+        def _check_update() -> None:
+            from claude_usage import __version__ as _v
+            from claude_usage.updater import check_latest_version
+            tag, available = check_latest_version(_v)
+            if available and tag:
+                GLib.idle_add(self._apply_update_label, tag)
+
+        threading.Thread(target=_check_update, daemon=True).start()
 
         self.popup: UsagePopup = UsagePopup(config)
         self.overlay: UsageOverlay = UsageOverlay(config)
@@ -862,6 +880,13 @@ class ClaudeUsageTray:
     def _on_set_opacity(self, _widget: Gtk.MenuItem, value: float) -> None:
         """Set the OSD overlay opacity from the submenu selection."""
         self.overlay.set_opacity(value)
+
+    def _apply_update_label(self, tag: str) -> bool:
+        """Show the 'Update available' menu item (called from GTK main thread)."""
+        self.mi_update.set_label(f"Update available: {tag}")
+        self.mi_update.set_visible(True)
+        self.mi_update.show()
+        return False  # don't repeat idle_add
 
     def _on_quit(self, _widget: Gtk.MenuItem) -> None:
         """Shut down the application cleanly."""
