@@ -445,14 +445,13 @@ class UsagePopup(Gtk.Window):
 
             # --- Per-model breakdown: show the full math ---
             if by_model:
-                from claude_usage.pricing import calculate_cost
+                from claude_usage.pricing import calculate_cost, MODEL_PRICING
 
                 total_input = 0
                 total_output = 0
                 total_cache_read = 0
                 total_cache_creation = 0
 
-                # Sort models by cost descending (computed on the fly)
                 model_rows = []
                 for model, counts in by_model.items():
                     in_t = int(counts.get("input", 0) or 0)
@@ -465,29 +464,48 @@ class UsagePopup(Gtk.Window):
                     total_cache_creation += cc_t
                     breakdown = calculate_cost(model, in_t, out_t, cr_t, cc_t)
                     model_rows.append(
-                        (_short_model_name(model), in_t, out_t, cr_t, cc_t, breakdown["total"])
+                        (_short_model_name(model), model, in_t, out_t, cr_t, cc_t, breakdown)
                     )
-                model_rows.sort(key=lambda r: r[5], reverse=True)
+                model_rows.sort(key=lambda r: r[6]["total"], reverse=True)
 
-                # Total tokens line
+                # Total tokens line — now includes cache_creation
                 self._add_dim_line(
                     f"Tokens: {_format_tokens(total_input)} in • "
                     f"{_format_tokens(total_output)} out • "
-                    f"{_format_tokens(total_cache_read)} cache hits",
+                    f"{_format_tokens(total_cache_read)} cache read • "
+                    f"{_format_tokens(total_cache_creation)} cache write",
                     bottom_margin=6,
                 )
 
-                # Per-model rows
-                for name, in_t, out_t, cr_t, cc_t, cost in model_rows:
-                    if cost < 0.01:
+                # Per-model rows with full line-item breakdown
+                for short, model, in_t, out_t, cr_t, cc_t, bk in model_rows:
+                    if bk["total"] < 0.01:
                         continue
+                    rates = MODEL_PRICING.get(model, MODEL_PRICING["claude-sonnet-4-6"])
                     self._add_dim_line(
-                        f"  {name}: ${cost:.2f}  "
-                        f"({_format_tokens(in_t)} in / {_format_tokens(out_t)} out"
-                        + (f" / {_format_tokens(cr_t)} cache" if cr_t > 0 else "")
-                        + ")",
-                        bottom_margin=2,
+                        f"  {short}: ${bk['total']:.2f} total",
+                        bottom_margin=1,
                     )
+                    if in_t > 0:
+                        self._add_dim_line(
+                            f"     input:  {_format_tokens(in_t):>7} × ${rates['input']:.2f}/M = ${bk['input']:.2f}",
+                            bottom_margin=1,
+                        )
+                    if out_t > 0:
+                        self._add_dim_line(
+                            f"     output: {_format_tokens(out_t):>7} × ${rates['output']:.2f}/M = ${bk['output']:.2f}",
+                            bottom_margin=1,
+                        )
+                    if cr_t > 0:
+                        self._add_dim_line(
+                            f"     cache read:  {_format_tokens(cr_t):>7} × ${rates['cache_read']:.2f}/M = ${bk['cache_read']:.2f}",
+                            bottom_margin=1,
+                        )
+                    if cc_t > 0:
+                        self._add_dim_line(
+                            f"     cache write: {_format_tokens(cc_t):>7} × ${rates['cache_creation']:.2f}/M = ${bk['cache_creation']:.2f}",
+                            bottom_margin=2,
+                        )
                 self._add_dim_line("", bottom_margin=8)
             else:
                 self._add_dim_line("", bottom_margin=12)
