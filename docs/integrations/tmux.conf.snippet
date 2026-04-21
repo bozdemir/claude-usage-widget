@@ -1,0 +1,6 @@
+# Append to ~/.tmux.conf and reload with `tmux source-file ~/.tmux.conf`.
+# Requires claude-usage on PATH.
+
+set -g status-interval 15
+set -g status-right-length 80
+set -g status-right '#(claude-usage --field session_utilization | awk "{printf \"C:%d%%\", \$1*100}") | %H:%M'

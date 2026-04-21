@@ -1,0 +1,9 @@
+{
+    "custom/claude": {
+        "format": "C:{}",
+        "interval": 30,
+        "exec": "claude-usage --field session_utilization | awk '{printf \"%d%%\", $1*100}'",
+        "tooltip": true,
+        "exec-if": "command -v claude-usage"
+    }
+}

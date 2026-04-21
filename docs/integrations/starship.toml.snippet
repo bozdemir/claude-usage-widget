@@ -1,0 +1,7 @@
+# Add to ~/.config/starship.toml.
+
+[custom.claude_usage]
+command = 'claude-usage --field session_utilization | awk "{printf \"C:%d%%\", \$1*100}"'
+when = 'command -v claude-usage'
+format = '[$output]($style) '
+style = 'bold blue'
