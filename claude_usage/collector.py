@@ -16,6 +16,7 @@ from urllib.request import Request, urlopen
 from claude_usage import forecast, pricing
 from claude_usage.analytics import AnomalyReport, detect_anomaly, generate_tips
 from claude_usage.history import aggregate, append_sample, load_samples, prune
+from claude_usage.trends import daily_heatmap, hourly_histogram, monthly_summary
 
 HISTORY_FILENAME = "usage-history.jsonl"
 HISTORY_KEEP_DAYS = 90  # keep 90 days for trend/anomaly analysis
@@ -68,6 +69,10 @@ class UsageStats:
     anomaly: AnomalyReport = field(default_factory=AnomalyReport)
     # Cost optimisation tips (0-3 short strings)
     tips: list[str] = field(default_factory=list)
+    # Long-range trends
+    daily_heatmap: list = field(default_factory=list)       # 90-day peaks (newest last)
+    monthly_summary: list = field(default_factory=list)     # last 6 months
+    hourly_histogram: list = field(default_factory=list)    # 24 buckets
 
 
 def parse_history(path: str) -> UsageStats:
@@ -588,6 +593,11 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
         week_cost=stats.week_cost,
         cache_savings=stats.cache_savings,
     )
+
+    # Long-range trend aggregations for the popup UI.
+    stats.daily_heatmap = daily_heatmap(samples, now=now_ts, n_days=90)
+    stats.monthly_summary = monthly_summary(samples, now=now_ts, n_months=6)
+    stats.hourly_histogram = hourly_histogram(samples, now=now_ts)
 
     # Burn-rate forecasts: project when utilization will hit 100% at the current rate.
     # Requires at least 2 samples in the window; falls back to an empty dict otherwise.
