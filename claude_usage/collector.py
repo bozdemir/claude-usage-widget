@@ -14,7 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from claude_usage import forecast, pricing
-from claude_usage.analytics import AnomalyReport, detect_anomaly
+from claude_usage.analytics import AnomalyReport, detect_anomaly, generate_tips
 from claude_usage.history import aggregate, append_sample, load_samples, prune
 
 HISTORY_FILENAME = "usage-history.jsonl"
@@ -66,6 +66,8 @@ class UsageStats:
     weekly_forecast: dict = field(default_factory=dict)
     # Anomaly detection over the 90-day baseline
     anomaly: AnomalyReport = field(default_factory=AnomalyReport)
+    # Cost optimisation tips (0-3 short strings)
+    tips: list[str] = field(default_factory=list)
 
 
 def parse_history(path: str) -> UsageStats:
@@ -579,6 +581,13 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
     # Anomaly detection — compares today's session utilization against the
     # per-day peaks over prior days (requires >= 7 days of history).
     stats.anomaly = detect_anomaly(samples, today_usage=stats.session_utilization)
+
+    # Cost optimisation tips (up to 3 short actionable suggestions).
+    stats.tips = generate_tips(
+        by_model=stats.today_by_model_detailed,
+        week_cost=stats.week_cost,
+        cache_savings=stats.cache_savings,
+    )
 
     # Burn-rate forecasts: project when utilization will hit 100% at the current rate.
     # Requires at least 2 samples in the window; falls back to an empty dict otherwise.

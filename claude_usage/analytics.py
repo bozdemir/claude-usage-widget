@@ -77,3 +77,73 @@ def detect_anomaly(
             f"{int(today_usage * 100)}% vs {int(rep.baseline * 100)}% typical."
         )
     return rep
+
+
+# ---------------------------------------------------------------------------
+# Cost optimisation tips
+# ---------------------------------------------------------------------------
+
+LOW_CACHE_HIT_RATE = 0.60   # below this, suggest improving caching
+OPUS_HEAVY_THRESHOLD = 0.80  # above this share of output from opus, suggest sonnet
+
+
+def _cache_hit_rate(counts: dict) -> float:
+    """Return cache_read / (cache_read + input) for one model's counts."""
+    cr = float(counts.get("cache_read", 0) or 0)
+    in_t = float(counts.get("input", 0) or 0)
+    denom = cr + in_t
+    return cr / denom if denom > 0 else 0.0
+
+
+def generate_tips(
+    by_model: dict,
+    week_cost: float,
+    cache_savings: float,
+) -> list[str]:
+    """Return 0-3 short actionable tips based on the week's usage profile."""
+    tips: list[str] = []
+    if not by_model:
+        return tips
+
+    total_output = sum(
+        float(c.get("output", 0) or 0) for c in by_model.values()
+    )
+
+    # Tip 1: cache hit rate
+    hit_rates = [
+        _cache_hit_rate(c) for c in by_model.values()
+        if float(c.get("input", 0) or 0) + float(c.get("cache_read", 0) or 0) > 10_000
+    ]
+    if hit_rates:
+        avg_hit = sum(hit_rates) / len(hit_rates)
+        if avg_hit < LOW_CACHE_HIT_RATE and week_cost > 0:
+            potential = week_cost * (0.85 - avg_hit) * 0.9
+            if potential >= 1.0:
+                tips.append(
+                    f"Cache hit rate is {int(avg_hit * 100)}%. "
+                    f"Raising to ~85% could save ~${potential:.0f}/week."
+                )
+
+    # Tip 2: model mix
+    if total_output > 100_000:
+        opus_output = sum(
+            float(c.get("output", 0) or 0)
+            for m, c in by_model.items() if "opus" in m
+        )
+        opus_share = opus_output / total_output if total_output else 0.0
+        if opus_share >= OPUS_HEAVY_THRESHOLD and week_cost > 20.0:
+            potential = week_cost * 0.70 * (opus_share - 0.5) * 0.4
+            if potential >= 1.0:
+                tips.append(
+                    f"Opus handles {int(opus_share * 100)}% of your output. "
+                    f"Shifting easy tasks to Sonnet could save ~${potential:.0f}/week."
+                )
+
+    # Tip 3: celebrate savings
+    if cache_savings > 0 and week_cost > 0 and cache_savings >= week_cost * 2:
+        tips.append(
+            f"Cache already saves ${cache_savings:.0f}/week — "
+            f"{cache_savings / max(week_cost, 1):.1f}x your bill. Keep it up."
+        )
+
+    return tips[:3]
