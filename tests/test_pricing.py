@@ -21,10 +21,10 @@ def _approx(value: float, expected: float) -> bool:
 class TestMODEL_PRICING:
     def test_opus_4_6_rates(self):
         p = MODEL_PRICING["claude-opus-4-6"]
-        assert p["input"] == 15.0
-        assert p["output"] == 75.0
-        assert p["cache_read"] == 1.50
-        assert p["cache_creation"] == 18.75
+        assert p["input"] == 5.0
+        assert p["output"] == 25.0
+        assert p["cache_read"] == 0.50
+        assert p["cache_creation"] == 6.25
 
     def test_opus_4_7_matches_4_6(self):
         assert MODEL_PRICING["claude-opus-4-7"] == MODEL_PRICING["claude-opus-4-6"]
@@ -47,15 +47,15 @@ class TestMODEL_PRICING:
 class TestCalculateCostKnownModels:
     def test_opus_million_tokens_input_only(self):
         result = calculate_cost("claude-opus-4-6", 1_000_000, 0)
-        assert _approx(result["input"], 15.0)
+        assert _approx(result["input"], 5.0)
         assert _approx(result["output"], 0.0)
-        assert _approx(result["total"], 15.0)
+        assert _approx(result["total"], 5.0)
         assert _approx(result["cache_savings"], 0.0)
 
     def test_opus_million_tokens_output_only(self):
         result = calculate_cost("claude-opus-4-6", 0, 1_000_000)
-        assert _approx(result["output"], 75.0)
-        assert _approx(result["total"], 75.0)
+        assert _approx(result["output"], 25.0)
+        assert _approx(result["total"], 25.0)
 
     def test_sonnet_mixed_usage(self):
         # 500k input, 200k output, 100k cache_read, 50k cache_creation
@@ -128,10 +128,10 @@ class TestCalculateCostZero:
 
 class TestCacheSavings:
     def test_opus_cache_savings(self):
-        # Reading 1M tokens from cache on opus: paid 1.50, would've paid 15.
+        # Reading 1M tokens from cache on opus: paid 0.50, would've paid 5.00.
         result = calculate_cost("claude-opus-4-6", 0, 0, cache_read=1_000_000)
-        assert _approx(result["cache_read"], 1.50)
-        assert _approx(result["cache_savings"], 15.0 - 1.50)
+        assert _approx(result["cache_read"], 0.50)
+        assert _approx(result["cache_savings"], 5.0 - 0.50)
 
     def test_sonnet_cache_savings(self):
         result = calculate_cost(
@@ -146,7 +146,7 @@ class TestCacheSavings:
             "claude-opus-4-6", 0, 0, cache_read=0, cache_creation=1_000_000
         )
         assert _approx(result["cache_savings"], 0.0)
-        assert _approx(result["cache_creation"], 18.75)
+        assert _approx(result["cache_creation"], 6.25)
 
     def test_zero_cache_read_zero_savings(self):
         result = calculate_cost("claude-opus-4-6", 1_000_000, 1_000_000)
@@ -181,9 +181,9 @@ class TestCalculateStatsCost:
             "claude-sonnet-4-6": {"input": 1_000_000, "output": 0},
         }
         stats = calculate_stats_cost(breakdown)
-        # opus: $15, sonnet: $3 => $18 total input
-        assert _approx(stats["input"], 18.0)
-        assert _approx(stats["total"], 18.0)
+        # opus: $5, sonnet: $3 => $8 total input
+        assert _approx(stats["input"], 8.0)
+        assert _approx(stats["total"], 8.0)
         assert set(stats["by_model"].keys()) == {
             "claude-opus-4-6",
             "claude-sonnet-4-6",
@@ -201,7 +201,7 @@ class TestCalculateStatsCost:
         stats = calculate_stats_cost(
             {"claude-opus-4-6": {"input": 1_000_000, "output": None}}
         )
-        assert _approx(stats["total"], 15.0)
+        assert _approx(stats["total"], 5.0)
 
     def test_aggregates_cache_savings(self):
         breakdown = {
@@ -219,8 +219,8 @@ class TestCalculateStatsCost:
             },
         }
         stats = calculate_stats_cost(breakdown)
-        # opus savings: 15 - 1.5 = 13.5 ; sonnet: 3 - 0.3 = 2.7 ; total 16.2
-        assert _approx(stats["cache_savings"], 16.2)
+        # opus savings: 5.0 - 0.5 = 4.5 ; sonnet: 3 - 0.3 = 2.7 ; total 7.2
+        assert _approx(stats["cache_savings"], 7.2)
 
     def test_unknown_model_in_breakdown_does_not_crash(self):
         with warnings.catch_warnings():

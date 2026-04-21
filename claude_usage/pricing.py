@@ -1,10 +1,14 @@
 """Pure-function module for Claude API cost estimation.
 
-Prices are expressed as USD per million tokens. Values are approximate and
-reflect public Anthropic pricing as of early 2026. The module has no side
-effects aside from emitting a ``warnings.warn`` when callers request an unknown
-model (in which case we silently fall back to Sonnet pricing so billing never
-crashes a running collector).
+Prices are expressed as USD per million tokens. Values reflect public
+Anthropic pricing as of April 2026 (verify at https://www.anthropic.com/pricing).
+The module has no side effects aside from emitting a ``warnings.warn`` when
+callers request an unknown model (in which case we silently fall back to
+Sonnet pricing so billing never crashes a running collector).
+
+Cache rates follow the standard Anthropic formula:
+    cache_read     = input_rate × 0.1   (10% of input cost for reads)
+    cache_creation = input_rate × 1.25  (25% markup for cache writes)
 """
 
 from __future__ import annotations
@@ -13,25 +17,31 @@ import warnings
 from typing import Dict, Mapping
 
 # Prices are USD per 1,000,000 tokens.
+# Source: https://www.anthropic.com/pricing (April 2026)
 MODEL_PRICING: Dict[str, Dict[str, float]] = {
-    "claude-opus-4-6": {
-        "input": 15.0,
-        "output": 75.0,
-        "cache_read": 1.50,
-        "cache_creation": 18.75,
-    },
+    # Opus 4.7 (April 2026): $5 input, $25 output — consistent across
+    # Anthropic API, Bedrock, Vertex AI, and Foundry.
     "claude-opus-4-7": {
-        "input": 15.0,
-        "output": 75.0,
-        "cache_read": 1.50,
-        "cache_creation": 18.75,
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.50,
+        "cache_creation": 6.25,
     },
+    # Opus 4.6 uses the same pricing tier as 4.7.
+    "claude-opus-4-6": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.50,
+        "cache_creation": 6.25,
+    },
+    # Sonnet 4.6: $3 input, $15 output (standard mid-tier pricing).
     "claude-sonnet-4-6": {
         "input": 3.0,
         "output": 15.0,
         "cache_read": 0.30,
         "cache_creation": 3.75,
     },
+    # Haiku 4.5: $1 input, $5 output (entry-tier pricing).
     "claude-haiku-4-5-20251001": {
         "input": 1.0,
         "output": 5.0,
