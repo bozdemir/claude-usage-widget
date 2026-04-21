@@ -81,9 +81,103 @@ def run_cli(argv: Sequence[str]) -> int:
     return -1
 
 
+def _launch_gui() -> None:
+    """Launch the platform-appropriate GUI (GTK3 on Linux, AppKit on macOS)."""
+    import signal
+
+    # CLI entry is usually invoked by a console script shim (`claude-usage`),
+    # so restore the default SIGINT handler so Ctrl-C kills the GUI cleanly.
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+    if sys.platform == "darwin":
+        from claude_usage.widget_macos import ClaudeUsageTray  # noqa: WPS433
+        config = load_config(_default_config_path())
+        app = ClaudeUsageTray(config)
+        app.run()
+        return
+
+    if sys.platform.startswith("linux"):
+        # Force XWayland; native Wayland doesn't support the override-redirect
+        # tricks needed for our borderless OSD overlay.
+        os.environ.setdefault("GDK_BACKEND", "x11")
+        _ensure_gi_cairo_linux()
+
+        import gi
+        gi.require_version("Gtk", "3.0")
+        from gi.repository import Gtk  # type: ignore[attr-defined]
+        from claude_usage.widget import ClaudeUsageTray
+
+        config = load_config(_default_config_path())
+        _tray = ClaudeUsageTray(config)  # noqa: F841 — tray owns its lifecycle
+        Gtk.main()
+        return
+
+    print(f"ERROR: Unsupported platform: {sys.platform}", file=sys.stderr)
+    sys.exit(1)
+
+
+def _ensure_gi_cairo_linux() -> None:
+    """Try system gi-cairo first, then GNOME snap fallback, else warn."""
+    import gi  # noqa: WPS433
+
+    try:
+        gi.require_foreign("cairo")
+        return
+    except Exception:
+        pass
+
+    import glob as _glob
+    import importlib.util
+
+    ver = f"{sys.version_info.major}{sys.version_info.minor}"
+    snap_so_list = sorted(
+        _glob.glob(
+            f"/snap/gnome-*/*/usr/lib/python3/dist-packages/gi/"
+            f"_gi_cairo.cpython-{ver}*.so"
+        ),
+        reverse=True,
+    )
+    for snap_so in snap_so_list:
+        try:
+            spec = importlib.util.spec_from_file_location("gi._gi_cairo", snap_so)
+            if spec is None or spec.loader is None:
+                continue
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules["gi._gi_cairo"] = mod
+            spec.loader.exec_module(mod)
+            return
+        except Exception:
+            continue
+
+    print(
+        "WARNING: python3-gi-cairo not found. OSD overlay may not render.\n"
+        "  Ubuntu/Debian: sudo apt install python3-gi-cairo\n"
+        "  Fedora:        sudo dnf install python3-gobject-cairo\n"
+        "  Arch:          sudo pacman -S python-gobject\n",
+        file=sys.stderr,
+    )
+
+
 def main() -> int:
-    """Entry point for the ``claude-usage`` console script."""
-    return run_cli(sys.argv[1:])
+    """Entry point for the ``claude-usage`` console script.
+
+    Dispatches CLI flags first; if none were given, launches the GUI and
+    returns once the GUI exits.
+    """
+    if sys.version_info < (3, 10):
+        print(
+            "ERROR: Python 3.10+ is required (collector.py uses str|None syntax).",
+            file=sys.stderr,
+        )
+        return 1
+
+    rc = run_cli(sys.argv[1:])
+    if rc >= 0:
+        return rc
+
+    # No CLI flag — fall through to the GUI.
+    _launch_gui()
+    return 0
 
 
 if __name__ == "__main__":
