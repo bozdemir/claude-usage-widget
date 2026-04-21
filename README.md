@@ -1,112 +1,83 @@
 # Claude Usage Widget
 
-A desktop widget that displays your Claude Code usage limits in real time. Shows session and weekly utilization percentages fetched from the Anthropic API, with an always-on-top OSD overlay and a system tray / menu bar icon.
+A cross-platform desktop widget that displays your Claude Code usage limits in real time. Always-on-top OSD overlay showing session and weekly utilization — built with PySide6 (Qt), so a single `pip install` works on Linux, macOS, and Windows.
 
-![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)
 ![Python](https://img.shields.io/badge/python-3.10+-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
 ## Features
 
-- **Real API data** -- fetches rate-limit utilization from `anthropic-ratelimit-unified-*` response headers
-- **OSD overlay** -- transparent, borderless widget in the corner of your screen showing session and weekly usage bars with reset countdowns
-- **System tray / menu bar** -- quick-glance usage info and a detailed popup window
-- **Cross-platform** -- native GTK3 on Linux, native AppKit/rumps on macOS
-- **Auto-refresh** -- updates every 30 seconds (configurable)
-- **Resizable** -- scroll wheel to scale the OSD up or down (0.6x--2.0x)
-- **Opacity control** -- adjustable OSD transparency via the tray / menu bar
-- **Draggable** -- left-click and drag to reposition the OSD
-- **Minimizable** -- right-click the OSD to collapse it to a thin progress bar
-- **Active sessions** -- shows running Claude Code sessions with project paths and durations
-- **Cost estimation** -- widget shows estimated $ spent today and cache savings using model pricing
-- **Usage forecasting** -- burn rate calculation shows "at this rate you'll hit the limit in Xh Ym"
+- **Single `pip install`** -- no `apt`/`brew`/system libraries required, Qt is bundled
+- **Real API data** -- rate-limit utilisation read straight from `anthropic-ratelimit-unified-*` response headers
+- **OSD overlay** -- transparent, frameless, always-on-top; left-click opens the details popup, right-click shows a context menu
+- **Detail popup** -- usage bars, forecast, 5h/7d sparklines, 90-day heatmap, per-model cost breakdown, top projects, active sessions
+- **Auto-refresh** -- every 30 seconds by default, fully configurable
+- **Resizable** -- scroll wheel on the OSD (0.6x -- 2.0x)
+- **Draggable** -- left-click drag on the OSD
+- **Cost estimation** -- USD equivalent per model, cache savings, pay-as-you-go comparison for flat-fee subscribers
+- **Usage forecasting** -- burn-rate prediction: "At current rate: 2h 30m to limit"
 - **Per-project breakdown** -- top 5 projects by token usage today
-- **Themes** -- 5 built-in themes (default, catppuccin-mocha, dracula, nord, gruvbox-dark), set via `"theme": "dracula"` in `config.json`
+- **Anomaly detection** -- flags days whose utilisation exceeds the 7/90-day baseline
+- **Cost optimisation tips** -- suggests cache-hit-rate improvements and model-mix changes
+- **Themes** -- default, catppuccin-mocha, dracula, nord, gruvbox-dark
+- **Threshold notifications** -- native desktop notifications on crossing 75% / 90%
+- **Webhooks** -- optional POST to Slack / Discord / custom URLs on threshold, daily, or anomaly events
+- **Localhost JSON API** -- optional `http://127.0.0.1:8765/usage` for tmux / polybar / waybar integrations
+- **CLI mode** -- `--json`, `--field`, `--export csv` for scripts and status bars
 
 ## Requirements
 
 - Python 3.10+
-- Claude Code CLI installed and authenticated (OAuth)
-
-### Linux
-
-- GTK3, python3-gi, python3-gi-cairo, python3-cairo
-- `gir1.2-ayatanaappindicator3-0.1` (system tray)
-
-### macOS
-
-- `rumps` and `pyobjc-framework-Cocoa` (installed automatically via `requirements-macos.txt`)
+- Claude Code CLI installed and authenticated (OAuth) — the widget reads the same token from `~/.claude/.credentials.json` (or macOS Keychain)
 
 ## Installation
 
-### Linux (pip — recommended)
+### Any platform (pip — recommended)
 
 ```bash
-# 1. Install system GTK stack (one-time)
-sudo apt install python3-gi python3-gi-cairo python3-cairo \
-     gir1.2-ayatanaappindicator3-0.1 gir1.2-notify-0.7   # Ubuntu/Debian
-# Fedora: sudo dnf install python3-gobject python3-gobject-cairo libappindicator-gtk3 libnotify
-# Arch:   sudo pacman -S python-gobject python-cairo libappindicator-gtk3 libnotify
-
-# 2. Install the widget itself
 pip install --user --upgrade claude-usage-widget
-
-# 3. Run
-claude-usage            # launches tray + OSD
-claude-usage --version
+claude-usage              # launches the OSD overlay
+claude-usage --version    # 0.3.0
 ```
 
-GNOME users also need the [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/) for the tray icon.
+That's it — no `apt`, no `brew`, no PyGObject, no rumps. PySide6 ships Qt in the wheel, so the widget is fully self-contained.
 
-### Linux (from source)
+### macOS (Homebrew — optional)
 
-```bash
-git clone https://github.com/bozdemir/claude-usage-widget.git
-cd claude-usage-widget
-python3 main.py &
-
-# Autostart on login (optional)
-./install.sh
-```
-
-### macOS (Homebrew — recommended)
+If you prefer `brew` over `pip`:
 
 ```bash
 brew tap bozdemir/tap
 brew install claude-usage-widget
-claude-usage            # launches menu bar + OSD
-claude-usage --version
 ```
 
-### macOS (from source)
+### From source
 
 ```bash
 git clone https://github.com/bozdemir/claude-usage-widget.git
 cd claude-usage-widget
-pip3 install -r requirements-macos.txt
+pip install -e .
 python3 main.py
-
-# Autostart on login (optional) -- installs a Launch Agent
-./install-macos.sh
 ```
 
 ## Usage
 
-### OSD Overlay Controls
+### OSD overlay controls
 
-| Action | Effect |
-|--------|--------|
-| **Scroll up / down** | Resize (0.6x--2.0x) |
+| Action              | Effect |
+|---------------------|--------|
+| **Left-click**      | Open the details popup |
 | **Left-click drag** | Move the OSD |
-| **Right-click** | Minimize / restore |
+| **Right-click**     | Open context menu (Details, Refresh, Opacity, Minimize, Quit) |
+| **Scroll up / down**| Resize (0.6x -- 2.0x) |
 
-### System Tray / Menu Bar
+### Context menu (right-click OSD)
 
-- **Session / Weekly** -- current usage percentages
-- **Details...** -- opens a detailed popup with usage bars and active sessions
+- **Details…** -- open the detail popup
 - **Refresh** -- force an immediate data refresh
-- **OSD Overlay** -- toggle the OSD on or off
-- **OSD Opacity** -- set OSD transparency (100% / 75% / 50% / 25%)
+- **OSD Opacity** -- 100% / 75% / 50% / 25%
+- **Minimize / Restore** -- collapse the OSD to a thin progress strip
 - **Quit** -- exit the widget
 
 ## Configuration
@@ -174,55 +145,41 @@ anthropic-ratelimit-unified-7d-reset: 1776690000
 
 These are the same values shown on the [claude.ai usage page](https://claude.ai/settings/usage). The widget also reads local data from `~/.claude/` for message counts, token usage per model, and active session tracking.
 
-### How the OSD Works
+### How the OSD works
 
-The OSD is a transparent, borderless window rendered entirely via 2D drawing primitives:
+Qt's `QWidget` with `FramelessWindowHint | Tool | WindowStaysOnTopHint` plus `WA_TranslucentBackground` gives us a transparent, borderless floating window that behaves identically on X11, XWayland, native Wayland, macOS, and Windows. All drawing goes through `QPainter` (`drawRoundedRect`, `drawText`), so there's a single code path with no platform shims.
 
-- **Linux** -- a `Gtk.Window` with the `NOTIFICATION` type hint uses Cairo to draw rounded rectangles, progress bars, and text onto an RGBA surface. The compositor handles transparency; `set_accept_focus(False)` prevents the overlay from stealing keyboard focus.
-- **macOS** -- an `NSWindow` at `NSFloatingWindowLevel` with `NSWindowStyleMaskBorderless` and a transparent `NSView` subclass does the equivalent drawing via AppKit (`NSBezierPath`, `NSColor`, `NSAttributedString`).
+**Scale and opacity** -- the overlay stores a `scale` (0.6 -- 2.0, default 1.0) and `opacity` (0.15 -- 1.0, default 0.75). Scale multiplies every pixel dimension before drawing, so the widget resizes proportionally. Opacity is the alpha channel of the background fill only; bar and text remain at full alpha so they stay legible at low opacity.
 
-**Scale and opacity** -- Both platforms store a float `scale` (0.6--2.0, default 1.0) and `opacity` (0.15--1.0, default 0.75) that are applied at draw time. Scale multiplies every pixel dimension (padding, font size, bar height, window size) before drawing, so the entire widget resizes proportionally without re-layout. Opacity is used as the alpha channel of the background fill; bar and text elements are drawn at full alpha on top so they remain legible at low opacity.
-
-**Refresh cycle** -- A background thread wakes every `refresh_seconds` (default 30), makes an API call, and posts the result back to the main thread via `GLib.idle_add` (Linux) or a `rumps.Timer`-drained queue (macOS). The main thread then invalidates the OSD window, triggering a synchronous redraw. User interactions (scroll to resize, drag to move, right-click to minimize) update scale and position in place and queue an immediate redraw without waiting for the next refresh tick.
+**Refresh cycle** -- a daemon thread wakes every `refresh_seconds` (default 30), performs the API call, and emits a Qt signal back to the GUI thread (`Signal(object)`). The GUI thread then updates the OSD and the popup together. User interactions (scroll, drag, right-click) update in place and request an immediate repaint.
 
 ## Troubleshooting
 
-### Linux: OSD not visible
-- Ensure XWayland is available. The widget forces `GDK_BACKEND=x11` for reliable borderless windows.
-- Check if the process is running: `ps aux | grep main.py`
+### OSD not visible
+- Check if the process is running: `ps aux | grep claude-usage` (Linux/macOS) or the Task Manager (Windows).
+- Try launching from a terminal: `claude-usage` — any startup error prints to stderr.
 
-### Linux: no system tray icon
-- Install `gir1.2-ayatanaappindicator3-0.1`.
-- On GNOME, you may need the [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/).
-
-### Linux: Cairo errors (`Couldn't find foreign struct converter`)
-- Install `python3-gi-cairo`: `sudo apt install python3-gi-cairo`
-
-### Linux: `ImportError: cannot import name '_gi' from partially initialized module 'gi'`
-This usually means a broken user-level PyGObject install is shadowing the system package. Fix:
+### Linux: notifications don't appear
+The widget shoots notifications via `notify-send`. Install it if missing:
 ```bash
-pip uninstall -y PyGObject pycairo
-sudo apt install --reinstall python3-gi python3-gi-cairo gir1.2-ayatanaappindicator3-0.1
+sudo apt install libnotify-bin    # Ubuntu/Debian
+sudo dnf install libnotify        # Fedora
+sudo pacman -S libnotify          # Arch
 ```
 
-### macOS: no menu bar icon
-- Make sure `rumps` is installed: `pip3 install rumps`
-- If using a virtualenv, ensure `pyobjc-framework-Cocoa` is also installed.
-
 ### API authentication fails
-- Make sure the Claude Code CLI is installed and you are logged in (the `claude` command should work).
-- Linux: the OAuth token is read from `~/.claude/.credentials.json`.
+- Make sure the Claude Code CLI is installed and you are logged in (the `claude` command should work in a terminal).
+- Linux / Windows: the OAuth token is read from `~/.claude/.credentials.json`.
 - macOS: the OAuth token is read from the Keychain, with a fallback to `~/.claude/.credentials.json`.
 
 ## Contributing
 
 Contributions are welcome. A few guidelines:
 
-- **Bug reports** -- open an issue with your OS, Python version, and the full error output. If the OSD is invisible, include `xrandr` or `system_profiler SPDisplaysDataType` output.
-- **Pull requests** -- keep changes focused. One fix or feature per PR. Run the widget manually on the target platform before submitting.
-- **Platform parity** -- features that affect the OSD or tray should work on both Linux and macOS, or be clearly gated behind a platform check.
-- **No new dependencies** -- avoid adding Python packages beyond those already in `requirements-macos.txt` and the listed GTK stack. If a dependency is truly necessary, discuss it in an issue first.
-- **Code style** -- follow the existing conventions. No formatter is enforced; just match the surrounding code.
+- **Bug reports** — open an issue with your OS, Python version, and the full error output.
+- **Pull requests** — keep changes focused. One fix or feature per PR. Run the widget manually before submitting.
+- **No new runtime dependencies** — PySide6-Essentials is the only runtime dep. Everything else uses the Python stdlib and platform-native CLIs.
+- **Code style** — follow the existing conventions. No formatter is enforced; just match the surrounding code.
 
 ## License
 

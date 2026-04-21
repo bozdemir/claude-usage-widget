@@ -1,154 +1,63 @@
-"""System tray icon and detailed popup window."""
+"""Detailed popup window + application orchestrator (PySide6).
+
+No system-tray icon: the :class:`ClaudeUsageApp` wires the OSD overlay to a
+context menu (right-click) and a detail popup (left-click).  All background
+data collection runs in a daemon thread and posts results back to the GUI
+via a thread-safe signal.
+"""
 
 from __future__ import annotations
 
-import math
 import os
+import sys
 import threading
+import warnings
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import Any
 
-import gi
+from PySide6.QtCore import (
+    QObject,
+    QPoint,
+    QPointF,
+    QRectF,
+    QTimer,
+    Qt,
+    Signal,
+    Slot,
+)
+from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPaintEvent
+from PySide6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QMenu,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
-gi.require_version("Gtk", "3.0")
-gi.require_version("AyatanaAppIndicator3", "0.1")
-
-from gi.repository import Gtk, GLib, Gdk, Pango  # type: ignore[attr-defined]
-from gi.repository import AyatanaAppIndicator3 as AppIndicator  # type: ignore[attr-defined]
-
-from claude_usage.collector import collect_all, UsageStats
+from claude_usage.collector import UsageStats, collect_all
 from claude_usage.forecast import format_forecast
 from claude_usage.notifier import UsageNotifier
-from claude_usage.overlay import UsageOverlay
+from claude_usage.overlay import UsageOverlay, _hex_to_qcolor
+from claude_usage.pricing import MODEL_PRICING, calculate_cost
 from claude_usage.themes import get_theme
 
-if TYPE_CHECKING:
-    import cairo
+
+# ---------------------------------------------------------------------------
+# Layout constants
+# ---------------------------------------------------------------------------
+POPUP_WIDTH = 520
+POPUP_PAD = 24
+HEATMAP_HEIGHT = 18
+SPARKLINE_HEIGHT = 32
 
 
-ICON_PATH = os.path.join(os.path.dirname(__file__), "icons", "claude-tray.svg")
-
-
-def _build_css(theme: dict[str, str]) -> bytes:
-    """Render the application-wide CSS string from a theme color dict.
-
-    All named color roles resolve to the given theme, so swapping themes
-    regenerates the stylesheet with a single call.  Font sizes step down
-    intentionally: 14 px headers → 13 px metric labels → 12 px supporting
-    text → 11 px metadata/dim.
-    """
-    return f"""
-window {{
-    background-color: {theme["bg"]};
-}}
-.section-header {{
-    color: {theme["text_primary"]};
-    font-size: 14px;
-    font-weight: bold;
-}}
-.section-right {{
-    color: {theme["text_secondary"]};
-    font-size: 12px;
-    font-style: italic;
-}}
-.metric-label {{
-    color: {theme["text_primary"]};
-    font-size: 13px;
-    font-weight: bold;
-}}
-.metric-sub {{
-    color: {theme["text_secondary"]};
-    font-size: 11px;
-}}
-.pct-label {{
-    color: {theme["text_secondary"]};
-    font-size: 12px;
-}}
-.dim-text {{
-    color: {theme["text_dim"]};
-    font-size: 11px;
-}}
-.session-text {{
-    color: {theme["text_link"]};
-    font-size: 11px;
-}}
-.updated-text {{
-    color: {theme["text_dim"]};
-    font-size: 11px;
-}}
-.error-text {{
-    color: {theme["error"]};
-    font-size: 11px;
-}}
-separator {{
-    background-color: {theme["separator"]};
-    min-height: 1px;
-}}
-""".encode()
-
-
-def _rounded_rect(
-    cr: cairo.Context,
-    x: float,
-    y: float,
-    w: float,
-    h: float,
-    r: float,
-) -> None:
-    """Trace a rounded-rectangle path onto Cairo context *cr*."""
-    r = min(r, w / 2, h / 2)
-    if r < 0.5:
-        cr.rectangle(x, y, w, h)
-        return
-    cr.new_sub_path()
-    cr.arc(x + w - r, y + r, r, -math.pi / 2, 0)
-    cr.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
-    cr.arc(x + r, y + h - r, r, math.pi / 2, math.pi)
-    cr.arc(x + r, y + r, r, math.pi, 3 * math.pi / 2)
-    cr.close_path()
-
-
-def _hex_to_rgb(hex_color: str) -> tuple[float, float, float]:
-    """Convert a ``#RRGGBB`` hex string to an ``(r, g, b)`` float triple."""
-    hex_color = hex_color.lstrip("#")
-    r = int(hex_color[0:2], 16) / 255.0
-    g = int(hex_color[2:4], 16) / 255.0
-    b = int(hex_color[4:6], 16) / 255.0
-    return (r, g, b)
-
-
-def _format_reset_duration(reset_ts: int) -> str:
-    """Format reset timestamp as 'Resets in X hr Y min'."""
-    if reset_ts <= 0:
-        return ""
-    remaining = int(reset_ts - datetime.now().timestamp())
-    if remaining <= 0:
-        return "Resets soon"
-    hours, remainder = divmod(remaining, 3600)
-    minutes = remainder // 60
-    if hours > 0:
-        return f"Resets in {hours} hr {minutes} min"
-    return f"Resets in {minutes} min"
-
-
-def _format_reset_day(reset_ts: int) -> str:
-    """Format reset timestamp as 'Resets Mon 4:00 PM'."""
-    if reset_ts <= 0:
-        return ""
-    return datetime.fromtimestamp(reset_ts).strftime("Resets %a %I:%M %p")
-
-
-def _format_session_duration(total_seconds: int) -> str:
-    """Format a duration in seconds as ``Xh Ym`` or ``Ym``."""
-    hours, remainder = divmod(total_seconds, 3600)
-    minutes = remainder // 60
-    if hours > 0:
-        return f"{hours}h {minutes}m"
-    return f"{minutes}m"
-
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _format_tokens(n: int) -> str:
-    """Format a token count compactly: 1234567 -> '1.2M', 5400 -> '5.4K'."""
+    """Format a token count compactly: ``1234567 -> '1.2M'``, ``5400 -> '5.4K'``."""
     if n >= 1_000_000:
         return f"{n / 1_000_000:.1f}M"
     if n >= 1_000:
@@ -157,616 +66,521 @@ def _format_tokens(n: int) -> str:
 
 
 def _short_model_name(model: str) -> str:
-    """Strip claude- prefix and date suffix for compact display."""
+    """Strip ``claude-`` prefix and trailing date for compact display."""
     m = model.removeprefix("claude-")
-    # Drop trailing date like "-20251001"
     if len(m) >= 9 and m[-9:-8] == "-" and m[-8:].isdigit():
         m = m[:-9]
     return m
 
 
 def _prettify_project_name(name: str) -> str:
-    """Convert Claude Code's dashed path format back to a readable path.
-
-    Claude stores project dirs as "-home-user-project-name" (absolute path with
-    slashes replaced by dashes). Because project names themselves may contain
-    dashes, we match against the dashed home directory prefix instead of
-    naively replacing all dashes.
-    """
+    """Convert Claude Code's dashed path (``-home-user-proj``) to ``~/proj``."""
     if not name:
         return "?"
-    home_dashed = os.path.expanduser("~").replace("/", "-")  # e.g. "-home-burak"
+    home_dashed = os.path.expanduser("~").replace("/", "-")
     if name == home_dashed:
         return "~"
     if name.startswith(home_dashed + "-"):
-        # Strip home prefix; rest is the project folder name (dashes preserved)
         return "~/" + name[len(home_dashed) + 1:]
     return name
 
 
-class UsagePopup(Gtk.Window):
-    """Detailed popup window showing usage bars, sessions, and model breakdown."""
+def _format_reset_duration(reset_ts: int) -> str:
+    """``'Resets in 3 hr 28 min'`` / ``'Resets in 45 min'`` / ``''``."""
+    if reset_ts <= 0:
+        return ""
+    remaining = int(reset_ts - datetime.now().timestamp())
+    if remaining <= 0:
+        return "Resets soon"
+    hours, rem = divmod(remaining, 3600)
+    minutes = rem // 60
+    if hours > 0:
+        return f"Resets in {hours} hr {minutes} min"
+    return f"Resets in {minutes} min"
 
-    _css_loaded: bool = False
 
-    def __init__(self, config: dict[str, object]) -> None:
-        super().__init__(title="Claude Usage", type=Gtk.WindowType.TOPLEVEL)
-        self.config = config
-        # Resolve the theme once per popup instance. Drawing callbacks and
-        # anything that needs raw color values (Cairo fills, etc.) read from
-        # self._theme directly so that a single config value controls both
-        # CSS and custom-drawn widgets.
-        self._theme: dict[str, str] = get_theme(
-            str(config.get("theme", "default"))
-        )
-        self.set_default_size(520, -1)
-        self.set_resizable(False)
-        self.set_decorated(True)
-        self.set_keep_above(True)
-        self.set_type_hint(Gdk.WindowTypeHint.UTILITY)
-        self.set_position(Gtk.WindowPosition.MOUSE)
-        self.connect("delete-event", self._on_delete)
+def _format_reset_day(reset_ts: int) -> str:
+    """``'Resets Mon 04:00 PM'`` / ``''``."""
+    if reset_ts <= 0:
+        return ""
+    return datetime.fromtimestamp(reset_ts).strftime("Resets %a %I:%M %p")
 
-        # Install the application-wide CSS exactly once, no matter how many
-        # UsagePopup instances are created (normally just one).
-        if not UsagePopup._css_loaded:
-            css = Gtk.CssProvider()
-            css.load_from_data(_build_css(self._theme))
-            Gtk.StyleContext.add_provider_for_screen(
-                Gdk.Screen.get_default(),
-                css,
-                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
-            )
-            UsagePopup._css_loaded = True
 
-        self._main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        self._main_box.set_margin_top(20)
-        self._main_box.set_margin_bottom(20)
-        self._main_box.set_margin_start(24)
-        self._main_box.set_margin_end(24)
-        self.add(self._main_box)
+def _format_session_duration(total_seconds: int) -> str:
+    hours, rem = divmod(total_seconds, 3600)
+    minutes = rem // 60
+    return f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
 
-        self._content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        self._main_box.pack_start(self._content_box, False, False, 0)
 
-    def _on_delete(self, widget: Gtk.Widget, event: Gdk.Event) -> bool:
-        """Hide instead of destroying so the window can be re-shown later."""
-        self.hide()
-        return True
+# ---------------------------------------------------------------------------
+# Custom-painted atomic widgets
+# ---------------------------------------------------------------------------
 
-    def _clear(self) -> None:
-        """Destroy all child widgets inside the content box."""
-        for child in self._content_box.get_children():
-            child.destroy()
+class _ProgressBar(QWidget):
+    """Thin rounded bar, fill colour depends on utilisation."""
 
-    def _add_section_header(self, title: str, right_text: str = "") -> None:
-        """Append a bold section heading with an optional right-aligned subtitle."""
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        box.set_margin_bottom(12)
+    def __init__(self, theme: dict[str, str], height: int = 12) -> None:
+        super().__init__()
+        self._theme = theme
+        self._fraction = 0.0
+        self.setFixedHeight(height)
 
-        lbl = Gtk.Label(label=title)
-        lbl.get_style_context().add_class("section-header")
-        lbl.set_halign(Gtk.Align.START)
-        box.pack_start(lbl, True, True, 0)
+    def set_fraction(self, value: float) -> None:
+        self._fraction = max(0.0, min(1.0, float(value)))
+        self.update()
 
-        if right_text:
-            right_lbl = Gtk.Label(label=right_text)
-            right_lbl.get_style_context().add_class("section-right")
-            box.pack_end(right_lbl, False, False, 0)
+    def set_theme(self, theme: dict[str, str]) -> None:
+        self._theme = theme
+        self.update()
 
-        self._content_box.pack_start(box, False, False, 0)
+    def paintEvent(self, event: QPaintEvent) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        r = h / 2
+
+        p.setPen(Qt.NoPen)
+        p.setBrush(_hex_to_qcolor(self._theme["bar_track"]))
+        p.drawRoundedRect(QRectF(0, 0, w, h), r, r)
+
+        if self._fraction > 0:
+            fill_w = max(w * self._fraction, h)
+            p.setBrush(_hex_to_qcolor(self._theme["bar_blue"]))
+            p.drawRoundedRect(QRectF(0, 0, fill_w, h), r, r)
+
+
+class _Sparkline(QWidget):
+    """Vertical-bar sparkline of per-bucket utilisation values."""
+
+    def __init__(self, theme: dict[str, str]) -> None:
+        super().__init__()
+        self._theme = theme
+        self._buckets: list[float] = []
+        self.setFixedHeight(SPARKLINE_HEIGHT)
+
+    def set_buckets(self, buckets: list[float]) -> None:
+        self._buckets = list(buckets or [])
+        self.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+
+        p.setPen(Qt.NoPen)
+        p.setBrush(_hex_to_qcolor(self._theme["bar_track"]))
+        p.drawRoundedRect(QRectF(0, 0, w, h), 4, 4)
+
+        if not self._buckets:
+            return
+        n = len(self._buckets)
+        gap = 1.0
+        bar_w = max(1.0, (w - (n - 1) * gap) / n)
+        fill = _hex_to_qcolor(self._theme["bar_blue"])
+        p.setBrush(fill)
+        for i, v in enumerate(self._buckets):
+            if v <= 0:
+                continue
+            bx = i * (bar_w + gap)
+            bh = max(1.0, h * min(float(v), 1.0))
+            p.drawRect(QRectF(bx, h - bh, bar_w, bh))
+
+
+class _Heatmap(QWidget):
+    """Single-row heatmap strip (e.g. 90 daily cells)."""
+
+    def __init__(self, theme: dict[str, str]) -> None:
+        super().__init__()
+        self._theme = theme
+        self._buckets: list[float] = []
+        self.setFixedHeight(HEATMAP_HEIGHT)
+
+    def set_buckets(self, buckets: list[float]) -> None:
+        self._buckets = list(buckets or [])
+        self.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        p = QPainter(self)
+        w, h = self.width(), self.height()
+        p.setPen(Qt.NoPen)
+        p.setBrush(_hex_to_qcolor(self._theme["bar_track"]))
+        p.drawRect(QRectF(0, 0, w, h))
+
+        n = len(self._buckets)
+        if n == 0:
+            return
+        cell_w = w / n
+        base = self._theme["bar_blue"]
+        for i, v in enumerate(self._buckets):
+            if v <= 0:
+                continue
+            alpha = max(0.0, min(1.0, float(v)))
+            p.setBrush(_hex_to_qcolor(base, alpha))
+            p.drawRect(QRectF(i * cell_w, 0, cell_w, h))
+
+
+# ---------------------------------------------------------------------------
+# Detail popup
+# ---------------------------------------------------------------------------
+
+class UsagePopup(QWidget):
+    """Scrollable detail window showing all :class:`UsageStats` fields."""
+
+    def __init__(self, config: dict[str, Any]) -> None:
+        super().__init__()
+        self._config = config
+        self._theme = get_theme(str(config.get("theme", "default")))
+
+        self.setWindowTitle("Claude Usage")
+        self.setFixedWidth(POPUP_WIDTH)
+        self.setMinimumHeight(360)
+        self.setWindowFlags(Qt.Tool | Qt.WindowStaysOnTopHint)
+
+        # Style sheet — applied once per instance.
+        self.setStyleSheet(self._build_qss())
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+
+        self._scroll = QScrollArea(self)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setFrameShape(QScrollArea.NoFrame)
+        root.addWidget(self._scroll)
+
+        # Content container.  We rebuild its layout on every update().
+        self._content = QWidget()
+        self._content.setObjectName("popupRoot")
+        self._layout = QVBoxLayout(self._content)
+        self._layout.setContentsMargins(POPUP_PAD, POPUP_PAD, POPUP_PAD, POPUP_PAD)
+        self._layout.setSpacing(0)
+        self._scroll.setWidget(self._content)
+
+    # ------------------------------------------------------------------ QSS
+
+    def _build_qss(self) -> str:
+        t = self._theme
+        return f"""
+            QWidget#popupRoot, QScrollArea {{ background-color: {t['bg']}; }}
+            QLabel {{ color: {t['text_primary']}; }}
+            QLabel[role="header"] {{ font-size: 14px; font-weight: bold; color: {t['text_primary']}; }}
+            QLabel[role="sub"]    {{ font-size: 11px; color: {t['text_secondary']}; }}
+            QLabel[role="dim"]    {{ font-size: 11px; color: {t['text_dim']}; }}
+            QLabel[role="metric"] {{ font-size: 13px; font-weight: bold; color: {t['text_primary']}; }}
+            QLabel[role="pct"]    {{ font-size: 12px; color: {t['text_secondary']}; }}
+            QLabel[role="link"]   {{ font-size: 11px; color: {t['text_link']}; }}
+            QLabel[role="error"]  {{ font-size: 11px; color: {t['error']}; }}
+        """
+
+    # -------------------------------------------------------------- helpers
+
+    def _clear_layout(self) -> None:
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _label(self, text: str, role: str = "") -> QLabel:
+        lbl = QLabel(text)
+        lbl.setWordWrap(True)
+        if role:
+            lbl.setProperty("role", role)
+        return lbl
+
+    def _add_section_header(self, title: str, right: str = "") -> None:
+        from PySide6.QtWidgets import QHBoxLayout, QFrame
+
+        row = QFrame()
+        row.setStyleSheet("QFrame { background: transparent; }")
+        hl = QHBoxLayout(row)
+        hl.setContentsMargins(0, 0, 0, 10)
+
+        title_lbl = self._label(title, "header")
+        hl.addWidget(title_lbl, 1, Qt.AlignLeft)
+
+        if right:
+            right_lbl = self._label(right, "sub")
+            hl.addWidget(right_lbl, 0, Qt.AlignRight)
+
+        self._layout.addWidget(row)
 
     def _add_usage_row(self, label: str, subtitle: str, fraction: float) -> None:
-        """Add a row: Label [====bar====] XX% used."""
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
-        row.set_margin_bottom(16)
+        from PySide6.QtWidgets import QHBoxLayout, QFrame
 
-        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        left.set_size_request(140, -1)
+        row = QFrame()
+        row.setStyleSheet("QFrame { background: transparent; }")
+        hl = QHBoxLayout(row)
+        hl.setContentsMargins(0, 0, 0, 14)
+        hl.setSpacing(12)
 
-        name_lbl = Gtk.Label(label=label)
-        name_lbl.get_style_context().add_class("metric-label")
-        name_lbl.set_halign(Gtk.Align.START)
-        left.pack_start(name_lbl, False, False, 0)
-
+        # Left: label + subtitle
+        left = QWidget()
+        left.setFixedWidth(140)
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(2)
+        name = self._label(label, "metric")
+        left_layout.addWidget(name)
         if subtitle:
-            sub_lbl = Gtk.Label(label=subtitle)
-            sub_lbl.get_style_context().add_class("metric-sub")
-            sub_lbl.set_halign(Gtk.Align.START)
-            left.pack_start(sub_lbl, False, False, 0)
+            left_layout.addWidget(self._label(subtitle, "sub"))
+        hl.addWidget(left)
 
-        row.pack_start(left, False, False, 0)
+        # Middle: bar
+        bar = _ProgressBar(self._theme, height=12)
+        bar.set_fraction(fraction)
+        hl.addWidget(bar, 1)
 
-        bar = Gtk.DrawingArea()
-        bar.set_size_request(200, 12)
-        bar.set_valign(Gtk.Align.CENTER)
+        # Right: percentage
+        pct = self._label(f"{min(int(fraction * 100), 100)}% used", "pct")
+        pct.setFixedWidth(72)
+        pct.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        hl.addWidget(pct)
 
-        theme = self._theme
+        self._layout.addWidget(row)
 
-        def _draw_bar(widget: Gtk.DrawingArea, cr: cairo.Context) -> None:
-            w = widget.get_allocated_width()
-            h = widget.get_allocated_height()
-            # Draw the empty track first, then paint the filled portion on top.
-            tr, tg, tb = _hex_to_rgb(theme["bar_track"])
-            cr.set_source_rgb(tr, tg, tb)
-            _rounded_rect(cr, 0, 0, w, h, 6)
-            cr.fill()
-            if fraction > 0:
-                # Clamp to 100% and enforce a minimum pill width equal to the
-                # bar height so the rounded caps always render correctly.
-                fill_w = max(w * min(fraction, 1.0), h)
-                fr, fg, fb = _hex_to_rgb(theme["bar_blue"])
-                cr.set_source_rgb(fr, fg, fb)
-                _rounded_rect(cr, 0, 0, fill_w, h, 6)
-                cr.fill()
+    def _add_dim_line(self, text: str, role: str = "dim", margin_bottom: int = 6) -> None:
+        lbl = self._label(text, role)
+        lbl.setContentsMargins(0, 0, 0, margin_bottom)
+        self._layout.addWidget(lbl)
 
-        bar.connect("draw", _draw_bar)
-        row.pack_start(bar, True, True, 0)
+    def _add_sparkline(self, buckets: list[float], caption: str) -> None:
+        sp = _Sparkline(self._theme)
+        sp.set_buckets(buckets)
+        self._layout.addWidget(sp)
+        self._add_dim_line(caption, margin_bottom=12)
 
-        pct_lbl = Gtk.Label(label=f"{min(int(fraction * 100), 100)}% used")
-        pct_lbl.get_style_context().add_class("pct-label")
-        pct_lbl.set_size_request(72, -1)
-        pct_lbl.set_halign(Gtk.Align.END)
-        row.pack_end(pct_lbl, False, False, 0)
-
-        self._content_box.pack_start(row, False, False, 0)
-
-    def _add_sparkline(self, buckets: list[float], label: str) -> None:
-        """Append a vertical-bar sparkline with a caption underneath.
-
-        Each bucket is drawn as a thin vertical bar whose height is proportional
-        to its utilization (0.0-1.0). Empty buckets are skipped.
-        """
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        box.set_margin_bottom(12)
-
-        area = Gtk.DrawingArea()
-        area.set_size_request(-1, 32)
-
-        theme = self._theme
-
-        def draw(widget: Gtk.Widget, cr: cairo.Context) -> None:
-            w = widget.get_allocated_width()
-            h = widget.get_allocated_height()
-            r, g, b = _hex_to_rgb(theme["bar_track"])
-            cr.set_source_rgb(r, g, b)
-            _rounded_rect(cr, 0, 0, w, h, 4)
-            cr.fill()
-            if not buckets:
-                return
-            n = len(buckets)
-            gap = 1.0
-            bar_w = max(1.0, (w - (n - 1) * gap) / n)
-            r, g, b = _hex_to_rgb(theme["bar_blue"])
-            cr.set_source_rgb(r, g, b)
-            for i, val in enumerate(buckets):
-                if val <= 0:
-                    continue
-                bx = i * (bar_w + gap)
-                bh = max(1.0, h * min(float(val), 1.0))
-                cr.rectangle(bx, h - bh, bar_w, bh)
-            cr.fill()
-
-        area.connect("draw", draw)
-        box.pack_start(area, False, False, 0)
-
-        lbl = Gtk.Label(label=label)
-        lbl.get_style_context().add_class("dim-text")
-        lbl.set_halign(Gtk.Align.START)
-        box.pack_start(lbl, False, False, 0)
-
-        self._content_box.pack_start(box, False, False, 0)
-
-    def _add_heatmap(self, buckets: list[float], label: str) -> None:
-        """Draw a single-row heatmap strip with a caption underneath.
-
-        Each bucket is one cell whose alpha scales with its utilization
-        (0.0 -- 1.0).  Empty cells remain the dim track color.
-        """
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        box.set_margin_bottom(12)
-
-        area = Gtk.DrawingArea()
-        area.set_size_request(-1, 18)
-
-        theme = self._theme
-
-        def draw(widget: Gtk.Widget, cr: cairo.Context) -> None:
-            w = widget.get_allocated_width()
-            h = widget.get_allocated_height()
-            tr_r, tr_g, tr_b = _hex_to_rgb(theme["bar_track"])
-            cr.set_source_rgb(tr_r, tr_g, tr_b)
-            cr.rectangle(0, 0, w, h)
-            cr.fill()
-            n = len(buckets)
-            if n == 0:
-                return
-            cell_w = w / n
-            br, bg, bb = _hex_to_rgb(theme["bar_blue"])
-            for i, v in enumerate(buckets):
-                if v <= 0:
-                    continue
-                alpha = min(float(v), 1.0)
-                cr.set_source_rgba(br, bg, bb, alpha)
-                cr.rectangle(i * cell_w, 0, cell_w, h)
-                cr.fill()
-
-        area.connect("draw", draw)
-        box.pack_start(area, False, False, 0)
-
-        cap = Gtk.Label(label=label)
-        cap.get_style_context().add_class("dim-text")
-        cap.set_halign(Gtk.Align.START)
-        box.pack_start(cap, False, False, 0)
-
-        self._content_box.pack_start(box, False, False, 0)
-
-    def _add_dim_line(self, text: str, bottom_margin: int = 8) -> None:
-        """Append a single left-aligned line styled with ``.dim-text``."""
-        lbl = Gtk.Label(label=text)
-        lbl.get_style_context().add_class("dim-text")
-        lbl.set_halign(Gtk.Align.START)
-        lbl.set_margin_bottom(bottom_margin)
-        self._content_box.pack_start(lbl, False, False, 0)
-
-    def _add_metric_line(self, text: str, bottom_margin: int = 2) -> None:
-        """Append a single left-aligned line styled with ``.metric-label``."""
-        lbl = Gtk.Label(label=text)
-        lbl.get_style_context().add_class("metric-label")
-        lbl.set_halign(Gtk.Align.START)
-        lbl.set_margin_bottom(bottom_margin)
-        self._content_box.pack_start(lbl, False, False, 0)
+    def _add_heatmap(self, buckets: list[float], caption: str) -> None:
+        hm = _Heatmap(self._theme)
+        hm.set_buckets(buckets)
+        self._layout.addWidget(hm)
+        self._add_dim_line(caption, margin_bottom=12)
 
     def _add_separator(self) -> None:
-        """Append a styled horizontal separator."""
-        sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
-        sep.set_margin_top(4)
-        sep.set_margin_bottom(16)
-        self._content_box.pack_start(sep, False, False, 0)
+        from PySide6.QtWidgets import QFrame
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet(f"QFrame {{ background-color: {self._theme['separator']}; max-height: 1px; min-height: 1px; border: none; }}")
+        sep.setContentsMargins(0, 4, 0, 14)
+        self._layout.addWidget(sep)
 
-    def update(self, stats: UsageStats) -> None:
-        """Rebuild the popup contents from the latest ``UsageStats``.
+    # --------------------------------------------------------------- update
 
-        Destroys all existing child widgets and recreates them so that layout
-        reflects the current data.  Called from the GTK main thread each time
-        a background refresh completes.
-        """
-        self._clear()
+    def apply_config(self, config: dict[str, Any]) -> None:
+        """Re-read theme/opacity in case the user changed it at runtime."""
+        self._config = config
+        self._theme = get_theme(str(config.get("theme", "default")))
+        self.setStyleSheet(self._build_qss())
 
+    @Slot(object)
+    def update_stats(self, stats: UsageStats) -> None:
+        """Rebuild the popup contents from *stats*."""
+        self._clear_layout()
+
+        # --- Plan usage limits ---
         self._add_section_header("Plan usage limits")
         self._add_usage_row(
             "Current session",
             _format_reset_duration(stats.session_reset),
             stats.session_utilization,
         )
-        session_forecast = format_forecast(stats.session_forecast)
-        if session_forecast:
-            self._add_dim_line(session_forecast)
+        s_fc = format_forecast(stats.session_forecast)
+        if s_fc:
+            self._add_dim_line(s_fc)
         self._add_sparkline(stats.session_history, "Last 5 hours")
-
         self._add_separator()
 
+        # --- Weekly limits ---
         self._add_section_header("Weekly limits")
         self._add_usage_row(
             "All models",
             _format_reset_day(stats.weekly_reset),
             stats.weekly_utilization,
         )
-        weekly_forecast = format_forecast(stats.weekly_forecast)
-        if weekly_forecast:
-            self._add_dim_line(weekly_forecast)
+        w_fc = format_forecast(stats.weekly_forecast)
+        if w_fc:
+            self._add_dim_line(w_fc)
         self._add_sparkline(stats.weekly_history, "Last 7 days")
 
-        # 90-day heatmap, rendered only when there's data in the window.
+        # 90-day heatmap
         heatmap = getattr(stats, "daily_heatmap", []) or []
         if any(v > 0 for v in heatmap):
             self._add_heatmap(heatmap, "Last 90 days")
-
         self._add_separator()
 
-        # Anomaly banner — shown only when today is statistically unusual.
+        # --- Anomaly banner ---
         anomaly = getattr(stats, "anomaly", None)
         if anomaly is not None and getattr(anomaly, "is_anomaly", False):
             self._add_section_header("⚠ Unusual activity")
-            self._add_dim_line(anomaly.message, bottom_margin=8)
+            self._add_dim_line(anomaly.message, margin_bottom=12)
             self._add_separator()
 
-        # Cost + top-projects block — only rendered when there is data for today.
-        today_cost = float(getattr(stats, "today_cost", 0.0) or 0.0)
-        cache_savings = float(getattr(stats, "cache_savings", 0.0) or 0.0)
-        today_projects = getattr(stats, "today_by_project", {}) or {}
-        sub_type = getattr(stats, "subscription_type", "") or ""
-        by_model = getattr(stats, "today_by_model_detailed", {}) or {}
+        # --- Cost / API-equivalent value ---
+        self._render_cost_section(stats)
 
-        if today_cost > 0:
-            # On flat-fee subscriptions (Pro/Max) the user does NOT pay per
-            # token — this figure represents the pay-as-you-go API equivalent.
-            is_subscriber = sub_type.lower() in ("pro", "max", "team", "enterprise")
-            if is_subscriber:
-                header = f"API-equivalent value (today) — {sub_type.capitalize()} plan"
-                subtitle = "Included in your plan; no per-token billing"
-            else:
-                header = "Cost (today)"
-                subtitle = ""
+        # --- Top projects ---
+        self._render_top_projects(stats)
 
-            self._add_section_header(header)
-            self._add_metric_line(f"${today_cost:.2f}")
-            if subtitle:
-                self._add_dim_line(subtitle, bottom_margin=2)
-            if cache_savings > 0:
-                self._add_dim_line(
-                    f"${cache_savings:.2f} saved by cache",
-                    bottom_margin=8,
-                )
-
-            # --- Per-model breakdown: show the full math ---
-            if by_model:
-                from claude_usage.pricing import calculate_cost, MODEL_PRICING
-
-                total_input = 0
-                total_output = 0
-                total_cache_read = 0
-                total_cache_creation = 0
-
-                model_rows = []
-                for model, counts in by_model.items():
-                    in_t = int(counts.get("input", 0) or 0)
-                    out_t = int(counts.get("output", 0) or 0)
-                    cr_t = int(counts.get("cache_read", 0) or 0)
-                    cc_t = int(counts.get("cache_creation", 0) or 0)
-                    total_input += in_t
-                    total_output += out_t
-                    total_cache_read += cr_t
-                    total_cache_creation += cc_t
-                    breakdown = calculate_cost(model, in_t, out_t, cr_t, cc_t)
-                    model_rows.append(
-                        (_short_model_name(model), model, in_t, out_t, cr_t, cc_t, breakdown)
-                    )
-                model_rows.sort(key=lambda r: r[6]["total"], reverse=True)
-
-                # Total tokens line — now includes cache_creation
-                self._add_dim_line(
-                    f"Tokens: {_format_tokens(total_input)} in • "
-                    f"{_format_tokens(total_output)} out • "
-                    f"{_format_tokens(total_cache_read)} cache read • "
-                    f"{_format_tokens(total_cache_creation)} cache write",
-                    bottom_margin=6,
-                )
-
-                # Per-model rows with full line-item breakdown
-                for short, model, in_t, out_t, cr_t, cc_t, bk in model_rows:
-                    if bk["total"] < 0.01:
-                        continue
-                    rates = MODEL_PRICING.get(model, MODEL_PRICING["claude-sonnet-4-6"])
-                    self._add_dim_line(
-                        f"  {short}: ${bk['total']:.2f} total",
-                        bottom_margin=1,
-                    )
-                    if in_t > 0:
-                        self._add_dim_line(
-                            f"     input:  {_format_tokens(in_t):>7} × ${rates['input']:.2f}/M = ${bk['input']:.2f}",
-                            bottom_margin=1,
-                        )
-                    if out_t > 0:
-                        self._add_dim_line(
-                            f"     output: {_format_tokens(out_t):>7} × ${rates['output']:.2f}/M = ${bk['output']:.2f}",
-                            bottom_margin=1,
-                        )
-                    if cr_t > 0:
-                        self._add_dim_line(
-                            f"     cache read:  {_format_tokens(cr_t):>7} × ${rates['cache_read']:.2f}/M = ${bk['cache_read']:.2f}",
-                            bottom_margin=1,
-                        )
-                    if cc_t > 0:
-                        self._add_dim_line(
-                            f"     cache write: {_format_tokens(cc_t):>7} × ${rates['cache_creation']:.2f}/M = ${bk['cache_creation']:.2f}",
-                            bottom_margin=2,
-                        )
-                self._add_dim_line("", bottom_margin=8)
-            else:
-                self._add_dim_line("", bottom_margin=12)
-            self._add_separator()
-
-        if today_projects:
-            self._add_section_header("Top projects today")
-            # today_projects may be a plain dict or an ordered mapping of
-            # (project -> tokens). Show the top 5 by tokens descending.
-            try:
-                items = sorted(
-                    today_projects.items(), key=lambda kv: kv[1], reverse=True
-                )
-            except (TypeError, AttributeError):
-                items = list(today_projects.items()) if hasattr(today_projects, "items") else []
-            for name, tokens in items[:5]:
-                try:
-                    tokens_int = int(tokens)
-                except (TypeError, ValueError):
-                    tokens_int = 0
-                self._add_dim_line(
-                    f"{_prettify_project_name(name)}: {_format_tokens(tokens_int)} tokens",
-                    bottom_margin=4,
-                )
-            self._add_separator()
-
-        # Cost optimisation tips — at most 3 short actionable strings.
+        # --- Tips ---
         tips = getattr(stats, "tips", []) or []
         if tips:
             self._add_section_header("💡 Tips")
             for tip in tips:
-                self._add_dim_line(tip, bottom_margin=4)
+                self._add_dim_line(tip, margin_bottom=6)
             self._add_separator()
 
+        # --- Active sessions ---
+        self._render_active_sessions(stats)
+
+        # --- Footer ---
+        self._render_footer(stats)
+
+    # ------------------------------------------------------------ sections
+
+    def _render_cost_section(self, stats: UsageStats) -> None:
+        today_cost = float(getattr(stats, "today_cost", 0.0) or 0.0)
+        if today_cost <= 0:
+            return
+
+        cache_savings = float(getattr(stats, "cache_savings", 0.0) or 0.0)
+        sub = (getattr(stats, "subscription_type", "") or "").lower()
+        is_subscriber = sub in ("pro", "max", "team", "enterprise")
+
+        header = (
+            f"API-equivalent value (today) — {sub.capitalize()} plan"
+            if is_subscriber else "Cost (today)"
+        )
+        self._add_section_header(header)
+        self._add_dim_line(f"${today_cost:.2f}", role="metric", margin_bottom=4)
+        if is_subscriber:
+            self._add_dim_line("Included in your plan; no per-token billing", margin_bottom=4)
+        if cache_savings > 0:
+            self._add_dim_line(f"${cache_savings:.2f} saved by cache", margin_bottom=8)
+
+        by_model = getattr(stats, "today_by_model_detailed", {}) or {}
+        if by_model:
+            self._render_per_model_breakdown(by_model)
+
+        self._add_separator()
+
+    def _render_per_model_breakdown(self, by_model: dict) -> None:
+        total_in = total_out = total_cr = total_cc = 0
+        rows = []
+        for model, counts in by_model.items():
+            in_t = int(counts.get("input", 0) or 0)
+            out_t = int(counts.get("output", 0) or 0)
+            cr_t = int(counts.get("cache_read", 0) or 0)
+            cc_t = int(counts.get("cache_creation", 0) or 0)
+            total_in += in_t
+            total_out += out_t
+            total_cr += cr_t
+            total_cc += cc_t
+            bk = calculate_cost(model, in_t, out_t, cr_t, cc_t)
+            rows.append((_short_model_name(model), model, in_t, out_t, cr_t, cc_t, bk))
+        rows.sort(key=lambda r: r[6]["total"], reverse=True)
+
+        self._add_dim_line(
+            f"Tokens: {_format_tokens(total_in)} in • "
+            f"{_format_tokens(total_out)} out • "
+            f"{_format_tokens(total_cr)} cache read • "
+            f"{_format_tokens(total_cc)} cache write",
+            margin_bottom=6,
+        )
+
+        for short, model, in_t, out_t, cr_t, cc_t, bk in rows:
+            if bk["total"] < 0.01:
+                continue
+            rates = MODEL_PRICING.get(model, MODEL_PRICING["claude-sonnet-4-6"])
+            self._add_dim_line(f"  {short}: ${bk['total']:.2f} total", margin_bottom=2)
+            if in_t > 0:
+                self._add_dim_line(
+                    f"     input:  {_format_tokens(in_t):>7} × ${rates['input']:.2f}/M = ${bk['input']:.2f}",
+                    margin_bottom=2,
+                )
+            if out_t > 0:
+                self._add_dim_line(
+                    f"     output: {_format_tokens(out_t):>7} × ${rates['output']:.2f}/M = ${bk['output']:.2f}",
+                    margin_bottom=2,
+                )
+            if cr_t > 0:
+                self._add_dim_line(
+                    f"     cache read:  {_format_tokens(cr_t):>7} × ${rates['cache_read']:.2f}/M = ${bk['cache_read']:.2f}",
+                    margin_bottom=2,
+                )
+            if cc_t > 0:
+                self._add_dim_line(
+                    f"     cache write: {_format_tokens(cc_t):>7} × ${rates['cache_creation']:.2f}/M = ${bk['cache_creation']:.2f}",
+                    margin_bottom=4,
+                )
+
+    def _render_top_projects(self, stats: UsageStats) -> None:
+        projects = getattr(stats, "today_by_project", {}) or {}
+        if not projects:
+            return
+        self._add_section_header("Top projects today")
+        items = sorted(projects.items(), key=lambda kv: kv[1], reverse=True)
+        for name, tokens in items[:5]:
+            try:
+                tok = int(tokens)
+            except (TypeError, ValueError):
+                tok = 0
+            self._add_dim_line(
+                f"{_prettify_project_name(name)}: {_format_tokens(tok)} tokens",
+                margin_bottom=4,
+            )
+        self._add_separator()
+
+    def _render_active_sessions(self, stats: UsageStats) -> None:
         self._add_section_header(
             "Active sessions",
             f"{len(stats.active_sessions)} running",
         )
-
         if stats.active_sessions:
             for sess in stats.active_sessions:
-                # startedAt is a JavaScript-style millisecond epoch; divide by
-                # 1000 to convert to the seconds expected by fromtimestamp.
                 started = datetime.fromtimestamp(sess.get("startedAt", 0) / 1000)
                 duration = datetime.now() - started
-                # Replace the home directory prefix with ~ for compact display.
-                cwd: str = sess.get("cwd", "?").replace(
-                    os.path.expanduser("~"), "~"
-                )
-
-                sess_row = Gtk.Box(
-                    orientation=Gtk.Orientation.HORIZONTAL, spacing=8
-                )
-                sess_row.set_margin_bottom(6)
-
-                path_lbl = Gtk.Label(label=cwd)
-                path_lbl.get_style_context().add_class("session-text")
-                path_lbl.set_halign(Gtk.Align.START)
-                path_lbl.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
-                sess_row.pack_start(path_lbl, True, True, 0)
-
-                dur_lbl = Gtk.Label(
-                    label=_format_session_duration(int(duration.total_seconds()))
-                )
-                dur_lbl.get_style_context().add_class("dim-text")
-                sess_row.pack_end(dur_lbl, False, False, 0)
-
-                self._content_box.pack_start(sess_row, False, False, 0)
+                cwd = sess.get("cwd", "?").replace(os.path.expanduser("~"), "~")
+                dur = _format_session_duration(int(duration.total_seconds()))
+                self._add_dim_line(f"{cwd}    {dur}", role="link", margin_bottom=4)
         else:
-            empty_lbl = Gtk.Label(label="No active sessions")
-            empty_lbl.get_style_context().add_class("dim-text")
-            empty_lbl.set_halign(Gtk.Align.START)
-            self._content_box.pack_start(empty_lbl, False, False, 0)
+            self._add_dim_line("No active sessions", margin_bottom=4)
 
+    def _render_footer(self, stats: UsageStats) -> None:
         self._add_separator()
-
-        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        updated_lbl = Gtk.Label(label="Last updated: just now")
-        updated_lbl.get_style_context().add_class("updated-text")
-        footer.pack_start(updated_lbl, True, True, 0)
-
+        self._add_dim_line("Last updated: just now", margin_bottom=0)
         if stats.rate_limit_error:
-            err_lbl = Gtk.Label(label=f"API: {stats.rate_limit_error}")
-            err_lbl.get_style_context().add_class("error-text")
-            footer.pack_end(err_lbl, False, False, 0)
-
-        self._content_box.pack_start(footer, False, False, 0)
-        self._content_box.show_all()
+            self._add_dim_line(f"API: {stats.rate_limit_error}", role="error", margin_bottom=0)
 
 
-class ClaudeUsageTray:
-    """System tray indicator that displays Claude API usage.
+# ---------------------------------------------------------------------------
+# Application orchestrator
+# ---------------------------------------------------------------------------
 
-    Owns the AppIndicator icon, the right-click menu, the :class:`UsagePopup`
-    detail window, and the on-screen :class:`UsageOverlay`.  A GLib timer fires
-    every ``config["refresh_seconds"]`` seconds and triggers a background data
-    collection cycle.
+class ClaudeUsageApp(QObject):
+    """Wires OSD, popup, timer, refresh thread, webhooks, and notifier."""
 
-    Threading model
-    ---------------
-    Two boolean flags coordinate the background refresh cycle:
+    # Emitted on the GUI thread once background collection completes.
+    stats_ready = Signal(object)
 
-    ``_alive``
-        Set to ``False`` only when the user chooses Quit.  Every callback that
-        touches GTK widgets checks this flag first so that nothing runs after
-        ``Gtk.main_quit()`` has been called and GTK's internal state is being
-        torn down.
-
-    ``_refreshing``
-        Acts as a single-flight guard: set to ``True`` the moment a worker
-        thread is spawned and cleared back to ``False`` inside
-        :meth:`_apply_stats` (which runs on the GTK main thread via
-        ``GLib.idle_add``).  This prevents overlapping collection runs if the
-        timer fires again before the previous one finishes.
-    """
-
-    def __init__(self, config: dict[str, object]) -> None:
+    def __init__(self, config: dict[str, Any]) -> None:
+        super().__init__()
         self.config = config
-        self.stats: UsageStats = UsageStats()
-        # _alive guards all post-quit GTK access (see class docstring).
-        self._alive: bool = True
-        # _refreshing prevents concurrent collection runs (see class docstring).
-        self._refreshing: bool = False
-
-        self.indicator = AppIndicator.Indicator.new(
-            "claude-usage",
-            os.path.abspath(ICON_PATH),
-            AppIndicator.IndicatorCategory.APPLICATION_STATUS,
-        )
-        self.indicator.set_status(AppIndicator.IndicatorStatus.ACTIVE)
-
-        menu = Gtk.Menu()
-
-        self.mi_session = Gtk.MenuItem(label="Session: ...")
-        self.mi_session.set_sensitive(False)
-        menu.append(self.mi_session)
-
-        self.mi_week = Gtk.MenuItem(label="Weekly: ...")
-        self.mi_week.set_sensitive(False)
-        menu.append(self.mi_week)
-
-        menu.append(Gtk.SeparatorMenuItem())
-
-        mi_details = Gtk.MenuItem(label="Details...")
-        mi_details.connect("activate", self._on_show_details)
-        menu.append(mi_details)
-
-        mi_refresh = Gtk.MenuItem(label="Refresh")
-        mi_refresh.connect("activate", lambda _w: self._refresh_async())
-        menu.append(mi_refresh)
-
-        menu.append(Gtk.SeparatorMenuItem())
-
-        self.mi_osd = Gtk.CheckMenuItem(label="OSD Overlay")
-        self.mi_osd.set_active(True)
-        self.mi_osd.connect("toggled", self._on_toggle_osd)
-        menu.append(self.mi_osd)
-
-        opacity_item = Gtk.MenuItem(label="OSD Opacity")
-        opacity_menu = Gtk.Menu()
-        for pct in (100, 75, 50, 25):
-            mi = Gtk.MenuItem(label=f"{pct}%")
-            mi.connect("activate", self._on_set_opacity, pct / 100.0)
-            opacity_menu.append(mi)
-        opacity_item.set_submenu(opacity_menu)
-        menu.append(opacity_item)
-
-        menu.append(Gtk.SeparatorMenuItem())
-
-        mi_quit = Gtk.MenuItem(label="Quit")
-        mi_quit.connect("activate", self._on_quit)
-        menu.append(mi_quit)
-
-        # Update-available banner (initially hidden; populated by the
-        # background version check below).
-        self.mi_update = Gtk.MenuItem(label="")
-        self.mi_update.set_sensitive(False)
-        self.mi_update.set_visible(False)
-        menu.insert(self.mi_update, 0)
-
-        menu.show_all()
-        self.mi_update.hide()
-        self.indicator.set_menu(menu)
-
-        # Non-blocking GitHub version check
-        def _check_update() -> None:
-            from claude_usage import __version__ as _v
-            from claude_usage.updater import check_latest_version
-            tag, available = check_latest_version(_v)
-            if available and tag:
-                GLib.idle_add(self._apply_update_label, tag)
-
-        threading.Thread(target=_check_update, daemon=True).start()
-
-        self.popup: UsagePopup = UsagePopup(config)
-        self.overlay: UsageOverlay = UsageOverlay(config)
-        self.overlay.show_all()
-
-        # Webhook dispatcher — fires on threshold / daily / anomaly events.
-        from claude_usage.webhooks import WebhookDispatcher
-        self._webhooks = WebhookDispatcher(config.get("webhooks", {}))
+        self.stats = UsageStats()
+        self._alive = True
+        self._refreshing = False
         self._last_daily_report_date: str = ""
 
-        # Notifier must be constructed after _webhooks so its on_threshold
-        # callback can dispatch to the webhook.
+        # UI components
+        self.overlay = UsageOverlay(config)
+        self.popup = UsagePopup(config)
+
+        # Context menu shown on right-click of the OSD.
+        self._context_menu = QMenu()
+        self._build_context_menu()
+
+        # Webhook dispatcher + notifier
+        from claude_usage.webhooks import WebhookDispatcher
+        self._webhooks = WebhookDispatcher(config.get("webhooks", {}))
         self.notifier = UsageNotifier(
             config,
             on_threshold=lambda scope, t: self._webhooks.fire(
@@ -774,7 +588,7 @@ class ClaudeUsageTray:
             ),
         )
 
-        # Optional: start localhost JSON API server for shell integrations.
+        # Optional: localhost JSON API server
         self._api_server = None
         if config.get("api_server_enabled"):
             from claude_usage.api_server import UsageAPIServer
@@ -785,21 +599,60 @@ class ClaudeUsageTray:
             )
             self._api_server.start()
 
-        # Populate the UI immediately, then register the recurring timer.
+        # --- Wire signals ---
+        self.overlay.clicked.connect(self._on_overlay_click)
+        self.overlay.rightClicked.connect(self._on_overlay_right_click)
+        self.stats_ready.connect(self._apply_stats)
+
+        # Show the overlay and kick off the first refresh.
+        self.overlay.show()
         self._refresh_async()
-        self._timer_id: int = GLib.timeout_add_seconds(
-            config["refresh_seconds"], self._on_timer
-        )
+
+        # Periodic refresh timer (runs on the GUI thread).
+        refresh_secs = int(config.get("refresh_seconds", 30))
+        self._timer = QTimer()
+        self._timer.setInterval(refresh_secs * 1000)
+        self._timer.timeout.connect(self._refresh_async)
+        self._timer.start()
+
+        # One-shot GitHub release check.
+        self._latest_tag: str | None = None
+        threading.Thread(target=self._check_update, daemon=True).start()
+
+    # ----------------------------------------------------------- menu build
+
+    def _build_context_menu(self) -> None:
+        m = self._context_menu
+
+        act_details = QAction("Details…", m)
+        act_details.triggered.connect(self._show_popup)
+        m.addAction(act_details)
+
+        act_refresh = QAction("Refresh", m)
+        act_refresh.triggered.connect(self._refresh_async)
+        m.addAction(act_refresh)
+
+        m.addSeparator()
+
+        opacity_menu = m.addMenu("OSD Opacity")
+        for pct in (100, 75, 50, 25):
+            a = QAction(f"{pct}%", opacity_menu)
+            a.triggered.connect(lambda _checked=False, v=pct / 100.0: self.overlay.set_opacity(v))
+            opacity_menu.addAction(a)
+
+        act_minimize = QAction("Minimize / Restore", m)
+        act_minimize.triggered.connect(self.overlay.toggle_minimized)
+        m.addAction(act_minimize)
+
+        m.addSeparator()
+
+        act_quit = QAction("Quit", m)
+        act_quit.triggered.connect(self._on_quit)
+        m.addAction(act_quit)
+
+    # ------------------------------------------------------------- refresh
 
     def _refresh_async(self) -> None:
-        """Spawn a daemon thread to collect usage data without blocking the UI.
-
-        Returns immediately if a refresh is already in flight (``_refreshing``)
-        or the application is shutting down (``_alive`` is ``False``).  On
-        completion the worker re-enters the GTK main thread via
-        ``GLib.idle_add`` so that widget updates are always made from the
-        correct thread.
-        """
         if self._refreshing or not self._alive:
             return
         self._refreshing = True
@@ -809,50 +662,32 @@ class ClaudeUsageTray:
                 stats = collect_all(self.config)
             except Exception:
                 stats = UsageStats(rate_limit_error="Collection failed")
-            # Schedule the UI update on the GTK main thread; skip if we quit
-            # while the thread was running.
+            # Emit cross-thread signal; the slot runs on the GUI thread.
             if self._alive:
-                GLib.idle_add(self._apply_stats, stats)
+                self.stats_ready.emit(stats)
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _apply_stats(self, stats: UsageStats) -> bool:
-        """Push freshly collected stats into every UI surface.
-
-        Called exclusively from ``GLib.idle_add``, guaranteeing execution on
-        the GTK main thread.  Clears ``_refreshing`` so the next timer tick
-        can start a new collection run.
-
-        Returns ``False`` to tell GLib not to reschedule this idle callback.
-        """
-        # Clear the guard before any early return so a later refresh can proceed.
+    @Slot(object)
+    def _apply_stats(self, stats: UsageStats) -> None:
         self._refreshing = False
         if not self._alive:
-            return False
+            return
         self.stats = stats
 
-        session_pct = int(stats.session_utilization * 100)
-        week_pct = int(stats.weekly_utilization * 100)
-
-        self.mi_session.set_label(f"Session: {session_pct}% used")
-        self.mi_week.set_label(f"Weekly: {week_pct}% used")
-        # The second argument to set_label is the accessible description shown
-        # to screen readers / the panel when the icon itself is not visible.
-        self.indicator.set_label(f"{session_pct}%", "")
-
-        self.popup.update(stats)
-        self.overlay.update(stats)
+        self.overlay.update_stats(stats)
+        self.popup.update_stats(stats)
         self.notifier.check_stats(stats)
 
-        # --- Webhooks ---
-        # Anomaly event
+        # Webhook: anomaly
         if getattr(stats.anomaly, "is_anomaly", False):
             self._webhooks.fire("anomaly", {
                 "ratio": stats.anomaly.ratio,
                 "z_score": stats.anomaly.z_score,
                 "message": stats.anomaly.message,
             })
-        # Daily report — fired once per local day on the first refresh
+
+        # Webhook: daily report (first refresh of each local day)
         today_iso = datetime.now().strftime("%Y-%m-%d")
         if today_iso != self._last_daily_report_date:
             self._last_daily_report_date = today_iso
@@ -864,44 +699,40 @@ class ClaudeUsageTray:
                 "today_tokens": stats.today_tokens,
             })
 
-        return False  # remove from idle queue
+    # -------------------------------------------------------------- slots
 
-    def _on_timer(self) -> bool:
-        """GLib timeout callback. Returns ``True`` to keep the timer alive."""
-        if not self._alive:
-            return False
-        self._refresh_async()
-        return True
+    def _on_overlay_click(self) -> None:
+        self._show_popup()
 
-    def _on_show_details(self, _widget: Gtk.MenuItem) -> None:
-        """Open (or re-show) the detailed usage popup."""
-        self.popup.show_all()
-        self.popup.present()
+    def _on_overlay_right_click(self, global_pos: QPoint) -> None:
+        self._context_menu.popup(global_pos)
 
-    def _on_toggle_osd(self, widget: Gtk.CheckMenuItem) -> None:
-        """Show or hide the OSD overlay based on the check-menu state."""
-        if widget.get_active():
-            self.overlay.show_all()
-        else:
-            self.overlay.hide()
+    def _show_popup(self) -> None:
+        self.popup.show()
+        self.popup.raise_()
+        self.popup.activateWindow()
 
-    def _on_set_opacity(self, _widget: Gtk.MenuItem, value: float) -> None:
-        """Set the OSD overlay opacity from the submenu selection."""
-        self.overlay.set_opacity(value)
+    def _check_update(self) -> None:
+        try:
+            from claude_usage import __version__ as v
+            from claude_usage.updater import check_latest_version
+            tag, available = check_latest_version(v)
+            if available and tag:
+                self._latest_tag = tag
+                # Show a one-time system notification.
+                self.notifier._send(
+                    f"Claude Usage {tag} available",
+                    "Update with: pip install --upgrade claude-usage-widget",
+                )
+        except Exception:
+            pass
 
-    def _apply_update_label(self, tag: str) -> bool:
-        """Show the 'Update available' menu item (called from GTK main thread)."""
-        self.mi_update.set_label(f"Update available: {tag}")
-        self.mi_update.set_visible(True)
-        self.mi_update.show()
-        return False  # don't repeat idle_add
-
-    def _on_quit(self, _widget: Gtk.MenuItem) -> None:
-        """Shut down the application cleanly."""
-        # Mark dead before removing the timer so any in-flight idle callback
-        # that fires during teardown sees _alive=False and exits cleanly.
+    def _on_quit(self) -> None:
         self._alive = False
-        GLib.source_remove(self._timer_id)
+        self._timer.stop()
         if self._api_server is not None:
-            self._api_server.stop()
-        Gtk.main_quit()
+            try:
+                self._api_server.stop()
+            except Exception:
+                pass
+        QApplication.instance().quit()

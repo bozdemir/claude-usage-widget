@@ -1,2 +1,0 @@
-rumps>=0.4.0
-pyobjc-framework-Cocoa>=9.0

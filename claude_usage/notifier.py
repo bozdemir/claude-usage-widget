@@ -1,9 +1,21 @@
 """Threshold-crossing notifications for usage utilization.
 
-Pure crossing logic lives in `CrossingDetector` (testable). `UsageNotifier`
-binds the detector to a platform-appropriate desktop notification sender.
+Pure crossing logic lives in :class:`CrossingDetector` (testable).
+:class:`UsageNotifier` binds the detector to a platform-appropriate desktop
+notification sender.
+
+The sender uses plain subprocess calls so the widget has no runtime
+dependency on PyGObject (libnotify) or rumps:
+
+    Linux : ``notify-send`` (from ``libnotify-bin`` / ``libnotify``)
+    macOS : ``osascript`` (AppleScript, ships with macOS)
+    Other : silent no-op
 """
 
+from __future__ import annotations
+
+import shutil
+import subprocess
 import sys
 from typing import Callable, Optional
 
@@ -28,27 +40,43 @@ class CrossingDetector:
 
 
 def _send_linux(title: str, body: str) -> None:
+    """Fire a desktop notification via ``notify-send`` (libnotify)."""
+    if shutil.which("notify-send") is None:
+        return
     try:
-        import gi
-        gi.require_version("Notify", "0.7")
-        from gi.repository import Notify
-        if not Notify.is_initted():
-            Notify.init("Claude Usage")
-        Notify.Notification.new(title, body, "dialog-warning").show()
+        subprocess.run(
+            ["notify-send", "--icon=dialog-warning", title, body],
+            check=False, timeout=5,
+        )
     except Exception:
         pass
 
 
 def _send_macos(title: str, body: str) -> None:
+    """Fire a desktop notification via ``osascript`` (AppleScript)."""
+    # Escape quotes so AppleScript doesn't break.
+    t = title.replace('"', '\\"')
+    b = body.replace('"', '\\"')
+    script = f'display notification "{b}" with title "{t}"'
     try:
-        import rumps
-        rumps.notification(title=title, subtitle="", message=body)
+        subprocess.run(
+            ["/usr/bin/osascript", "-e", script],
+            check=False, timeout=5,
+        )
     except Exception:
         pass
 
 
-def _default_sender():
-    return _send_macos if sys.platform == "darwin" else _send_linux
+def _default_sender() -> Callable[[str, str], None]:
+    if sys.platform == "darwin":
+        return _send_macos
+    if sys.platform.startswith("linux"):
+        return _send_linux
+
+    def _noop(title: str, body: str) -> None:
+        return
+
+    return _noop
 
 
 class UsageNotifier:
@@ -69,17 +97,12 @@ class UsageNotifier:
         thresholds = config.get("notify_thresholds", [0.75, 0.90])
         self.detector = CrossingDetector(thresholds)
         self._send = sender or _default_sender()
-        # Observer callback fired for every threshold crossing, used e.g.
-        # by the widget to dispatch a webhook. Fires independent of the
-        # ``enabled`` flag — webhooks are a separate opt-in pathway.
         self._on_threshold = on_threshold
 
     def check_stats(self, stats) -> None:
         for scope, label, attr in self.SCOPES:
             util = getattr(stats, attr, 0.0) or 0.0
-            crossings = self.detector.check(scope, util)
-            for t in crossings:
-                # Desktop notification (respects notifications_enabled)
+            for t in self.detector.check(scope, util):
                 if self.enabled:
                     pct_t = int(round(t * 100))
                     pct_now = int(round(util * 100))
@@ -87,7 +110,6 @@ class UsageNotifier:
                         f"Claude {label} usage at {pct_now}%",
                         f"Crossed the {pct_t}% threshold.",
                     )
-                # Observer callback (independent of notifications_enabled)
                 if self._on_threshold is not None:
                     try:
                         self._on_threshold(scope, t)
