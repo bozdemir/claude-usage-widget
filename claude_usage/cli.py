@@ -94,6 +94,13 @@ def _launch_gui() -> None:
 
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
+    # Force XWayland on Linux: native Wayland forbids absolute window
+    # positioning, so ``QWidget.move()``, ``QMenu.popup(global_pos)``, and
+    # any drag-to-reposition logic silently break. XCB (XWayland) honours
+    # the standard X11 positioning semantics our OSD relies on.
+    if sys.platform.startswith("linux"):
+        os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication
 
