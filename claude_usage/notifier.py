@@ -5,6 +5,7 @@ binds the detector to a platform-appropriate desktop notification sender.
 """
 
 import sys
+from typing import Callable, Optional
 
 
 class CrossingDetector:
@@ -58,21 +59,37 @@ class UsageNotifier:
         ("weekly", "Weekly", "weekly_utilization"),
     )
 
-    def __init__(self, config: dict, sender=None):
+    def __init__(
+        self,
+        config: dict,
+        sender: Optional[Callable[[str, str], None]] = None,
+        on_threshold: Optional[Callable[[str, float], None]] = None,
+    ):
         self.enabled = bool(config.get("notifications_enabled", True))
         thresholds = config.get("notify_thresholds", [0.75, 0.90])
         self.detector = CrossingDetector(thresholds)
         self._send = sender or _default_sender()
+        # Observer callback fired for every threshold crossing, used e.g.
+        # by the widget to dispatch a webhook. Fires independent of the
+        # ``enabled`` flag — webhooks are a separate opt-in pathway.
+        self._on_threshold = on_threshold
 
     def check_stats(self, stats) -> None:
-        if not self.enabled:
-            return
         for scope, label, attr in self.SCOPES:
             util = getattr(stats, attr, 0.0) or 0.0
-            for t in self.detector.check(scope, util):
-                pct_t = int(round(t * 100))
-                pct_now = int(round(util * 100))
-                self._send(
-                    f"Claude {label} usage at {pct_now}%",
-                    f"Crossed the {pct_t}% threshold.",
-                )
+            crossings = self.detector.check(scope, util)
+            for t in crossings:
+                # Desktop notification (respects notifications_enabled)
+                if self.enabled:
+                    pct_t = int(round(t * 100))
+                    pct_now = int(round(util * 100))
+                    self._send(
+                        f"Claude {label} usage at {pct_now}%",
+                        f"Crossed the {pct_t}% threshold.",
+                    )
+                # Observer callback (independent of notifications_enabled)
+                if self._on_threshold is not None:
+                    try:
+                        self._on_threshold(scope, t)
+                    except Exception:
+                        pass

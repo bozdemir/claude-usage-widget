@@ -759,12 +759,20 @@ class ClaudeUsageTray:
         self.popup: UsagePopup = UsagePopup(config)
         self.overlay: UsageOverlay = UsageOverlay(config)
         self.overlay.show_all()
-        self.notifier = UsageNotifier(config)
 
         # Webhook dispatcher — fires on threshold / daily / anomaly events.
         from claude_usage.webhooks import WebhookDispatcher
         self._webhooks = WebhookDispatcher(config.get("webhooks", {}))
         self._last_daily_report_date: str = ""
+
+        # Notifier must be constructed after _webhooks so its on_threshold
+        # callback can dispatch to the webhook.
+        self.notifier = UsageNotifier(
+            config,
+            on_threshold=lambda scope, t: self._webhooks.fire(
+                "threshold_crossed", {"scope": scope, "threshold": t},
+            ),
+        )
 
         # Optional: start localhost JSON API server for shell integrations.
         self._api_server = None

@@ -12,4 +12,3 @@ _gi_fix/
 dist/
 build/
 *.egg-info/
-.github/workflows/
