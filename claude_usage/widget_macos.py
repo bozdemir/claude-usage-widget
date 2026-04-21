@@ -205,6 +205,21 @@ def _short_model_name(model: str) -> str:
     return m
 
 
+def _prettify_project_name(name: str) -> str:
+    """Convert dashed path (-home-user-proj) to readable form (~/proj).
+
+    Matches the dashed home prefix to preserve dashes inside project names.
+    """
+    if not name:
+        return "?"
+    home_dashed = os.path.expanduser("~").replace("/", "-")
+    if name == home_dashed:
+        return "~"
+    if name.startswith(home_dashed + "-"):
+        return "~/" + name[len(home_dashed) + 1:]
+    return name
+
+
 def _format_session_duration(seconds: int) -> str:
     """Return a compact elapsed-time string like "2h 5m" or "47m"."""
     hours, rem = divmod(seconds, 3600)
@@ -691,36 +706,21 @@ class PopupView(NSView):
 
     @objc.python_method
     def _project_row(self, name: str, tokens: int, y: float, w: float) -> float:
-        """Draw one top-project row: compact project name left, token count right.
+        """Draw one top-project row: readable project name left, token count right.
 
-        The project name is compacted: any leading dashes are stripped and the
-        path is shortened to its last two components.  Token counts are
-        abbreviated with a "k" suffix when >= 1000.
+        Uses _prettify_project_name to convert dashed paths to '~/proj' form,
+        and _format_tokens for compact numeric abbreviations.
 
         Returns y advanced past the row (font height + 8 pts padding).
         """
         f = _sys_font(11)
+        compact = _prettify_project_name(name)
 
-        # Strip leading dashes (common in collector project keys) and shorten
-        # to the last two path components for readability.
-        compact = name.lstrip("-")
-        parts = [p for p in compact.split("/") if p]
-        if len(parts) > 2:
-            compact = "/".join(parts[-2:])
-        elif parts:
-            compact = "/".join(parts)
-        if not compact:
-            compact = name or "?"
-
-        # Format the token count: "12.3k" for >= 1000, else plain integer.
         try:
             tok_int = int(tokens)
         except (TypeError, ValueError):
             tok_int = 0
-        if tok_int >= 1000:
-            tok_text = f"{tok_int / 1000:.1f}k tokens"
-        else:
-            tok_text = f"{tok_int} tokens"
+        tok_text = f"{_format_tokens(tok_int)} tokens"
 
         # Right-align the token count first so we know the available width for
         # the project name.

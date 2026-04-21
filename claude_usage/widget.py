@@ -165,6 +165,25 @@ def _short_model_name(model: str) -> str:
     return m
 
 
+def _prettify_project_name(name: str) -> str:
+    """Convert Claude Code's dashed path format back to a readable path.
+
+    Claude stores project dirs as "-home-user-project-name" (absolute path with
+    slashes replaced by dashes). Because project names themselves may contain
+    dashes, we match against the dashed home directory prefix instead of
+    naively replacing all dashes.
+    """
+    if not name:
+        return "?"
+    home_dashed = os.path.expanduser("~").replace("/", "-")  # e.g. "-home-burak"
+    if name == home_dashed:
+        return "~"
+    if name.startswith(home_dashed + "-"):
+        # Strip home prefix; rest is the project folder name (dashes preserved)
+        return "~/" + name[len(home_dashed) + 1:]
+    return name
+
+
 class UsagePopup(Gtk.Window):
     """Detailed popup window showing usage bars, sessions, and model breakdown."""
 
@@ -489,9 +508,10 @@ class UsagePopup(Gtk.Window):
                     tokens_int = int(tokens)
                 except (TypeError, ValueError):
                     tokens_int = 0
-                # Express in thousands for compactness (matches "XXXk tokens").
-                k = tokens_int // 1000
-                self._add_dim_line(f"{name}: {k}k tokens", bottom_margin=4)
+                self._add_dim_line(
+                    f"{_prettify_project_name(name)}: {_format_tokens(tokens_int)} tokens",
+                    bottom_margin=4,
+                )
             self._add_separator()
 
         self._add_section_header(
