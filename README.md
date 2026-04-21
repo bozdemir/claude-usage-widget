@@ -185,6 +185,13 @@ The OSD is a transparent, borderless window rendered entirely via 2D drawing pri
 ### Linux: Cairo errors (`Couldn't find foreign struct converter`)
 - Install `python3-gi-cairo`: `sudo apt install python3-gi-cairo`
 
+### Linux: `ImportError: cannot import name '_gi' from partially initialized module 'gi'`
+This usually means a broken user-level PyGObject install is shadowing the system package. Fix:
+```bash
+pip uninstall -y PyGObject pycairo
+sudo apt install --reinstall python3-gi python3-gi-cairo gir1.2-ayatanaappindicator3-0.1
+```
+
 ### macOS: no menu bar icon
 - Make sure `rumps` is installed: `pip3 install rumps`
 - If using a virtualenv, ensure `pyobjc-framework-Cocoa` is also installed.

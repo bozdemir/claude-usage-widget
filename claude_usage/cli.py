@@ -100,11 +100,27 @@ def _launch_gui() -> None:
         # Force XWayland; native Wayland doesn't support the override-redirect
         # tricks needed for our borderless OSD overlay.
         os.environ.setdefault("GDK_BACKEND", "x11")
+
+        # Guarded gi import — if the system ``python3-gi`` is broken or
+        # shadowed by a partial user-local install, bail out with a clear
+        # message instead of a confusing internal traceback.
+        try:
+            import gi  # type: ignore[import-not-found]
+        except ImportError as exc:
+            _print_linux_install_instructions(exc)
+            sys.exit(1)
+
         _ensure_gi_cairo_linux()
 
-        import gi
-        gi.require_version("Gtk", "3.0")
-        from gi.repository import Gtk  # type: ignore[attr-defined]
+        try:
+            gi.require_version("Gtk", "3.0")
+            from gi.repository import Gtk  # type: ignore[attr-defined]
+            gi.require_version("AyatanaAppIndicator3", "0.1")
+            from gi.repository import AyatanaAppIndicator3  # noqa: F401
+        except (ValueError, ImportError) as exc:
+            _print_linux_install_instructions(exc)
+            sys.exit(1)
+
         from claude_usage.widget import ClaudeUsageTray
 
         config = load_config(_default_config_path())
@@ -114,6 +130,33 @@ def _launch_gui() -> None:
 
     print(f"ERROR: Unsupported platform: {sys.platform}", file=sys.stderr)
     sys.exit(1)
+
+
+def _print_linux_install_instructions(exc: Exception) -> None:
+    """Print actionable install / repair instructions for GTK-related failures."""
+    print(
+        "\nERROR: GTK / GObject Introspection stack is missing or broken.\n"
+        f"  ({exc.__class__.__name__}: {exc})\n"
+        "\n"
+        "Required system packages:\n"
+        "  Ubuntu/Debian:\n"
+        "    sudo apt install python3-gi python3-gi-cairo python3-cairo \\\n"
+        "         gir1.2-ayatanaappindicator3-0.1 gir1.2-notify-0.7\n"
+        "  Fedora:\n"
+        "    sudo dnf install python3-gobject python3-gobject-cairo \\\n"
+        "         libappindicator-gtk3 libnotify\n"
+        "  Arch:\n"
+        "    sudo pacman -S python-gobject python-cairo \\\n"
+        "         libappindicator-gtk3 libnotify\n"
+        "\n"
+        "If 'circular import' appears, there may be a broken user-local install:\n"
+        "  pip uninstall -y PyGObject pycairo\n"
+        "  sudo apt install --reinstall python3-gi  # or your distro equivalent\n"
+        "\n"
+        "GNOME users: the tray icon also needs the AppIndicator extension:\n"
+        "  https://extensions.gnome.org/extension/615/appindicator-support/\n",
+        file=sys.stderr,
+    )
 
 
 def _ensure_gi_cairo_linux() -> None:
