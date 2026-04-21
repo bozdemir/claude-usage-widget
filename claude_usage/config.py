@@ -54,6 +54,9 @@ DEFAULT_CONFIG: Config = {
     "api_server_enabled": False,
     "api_server_host": "127.0.0.1",
     "api_server_port": 8765,
+    # Webhooks (opt-in). Map event -> URL. Supported events:
+    #   threshold_crossed, daily_report, anomaly
+    "webhooks": {},
 }
 
 

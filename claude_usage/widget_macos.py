@@ -1034,6 +1034,11 @@ class ClaudeUsageTray(rumps.App):
         self.overlay.show_all()
         self.notifier = UsageNotifier(config)
 
+        # Webhook dispatcher — fires on threshold / daily / anomaly events.
+        from claude_usage.webhooks import WebhookDispatcher
+        self._webhooks = WebhookDispatcher(config.get("webhooks", {}))
+        self._last_daily_report_date: str = ""
+
         # Optional: start localhost JSON API server for shell integrations.
         self._api_server = None
         if config.get("api_server_enabled"):
@@ -1164,6 +1169,24 @@ class ClaudeUsageTray(rumps.App):
         self.popup.update(stats)
         self.overlay.update(stats)
         self.notifier.check_stats(stats)
+
+        # --- Webhooks ---
+        if getattr(stats.anomaly, "is_anomaly", False):
+            self._webhooks.fire("anomaly", {
+                "ratio": stats.anomaly.ratio,
+                "z_score": stats.anomaly.z_score,
+                "message": stats.anomaly.message,
+            })
+        today_iso = datetime.now().strftime("%Y-%m-%d")
+        if today_iso != self._last_daily_report_date:
+            self._last_daily_report_date = today_iso
+            self._webhooks.fire("daily_report", {
+                "date": today_iso,
+                "session_utilization": stats.session_utilization,
+                "weekly_utilization": stats.weekly_utilization,
+                "today_cost": stats.today_cost,
+                "today_tokens": stats.today_tokens,
+            })
 
     # ------------------------------------------------------------------
     # Menu item action callbacks
