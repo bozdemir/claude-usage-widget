@@ -978,6 +978,17 @@ class ClaudeUsageTray(rumps.App):
         self.overlay.show_all()
         self.notifier = UsageNotifier(config)
 
+        # Optional: start localhost JSON API server for shell integrations.
+        self._api_server = None
+        if config.get("api_server_enabled"):
+            from claude_usage.api_server import UsageAPIServer
+            self._api_server = UsageAPIServer(
+                host=config.get("api_server_host", "127.0.0.1"),
+                port=int(config.get("api_server_port", 8765)),
+                get_stats=lambda: self.stats,
+            )
+            self._api_server.start()
+
         # Prime the pump: start the first data collection immediately so the
         # tray icon shows real data as soon as the app is ready.
         self._do_refresh()
@@ -1128,4 +1139,6 @@ class ClaudeUsageTray(rumps.App):
 
     def _on_quit(self, _: rumps.MenuItem) -> None:
         """Quit the application cleanly via rumps."""
+        if getattr(self, "_api_server", None) is not None:
+            self._api_server.stop()
         rumps.quit_application()

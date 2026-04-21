@@ -679,6 +679,17 @@ class ClaudeUsageTray:
         self.overlay.show_all()
         self.notifier = UsageNotifier(config)
 
+        # Optional: start localhost JSON API server for shell integrations.
+        self._api_server = None
+        if config.get("api_server_enabled"):
+            from claude_usage.api_server import UsageAPIServer
+            self._api_server = UsageAPIServer(
+                host=config.get("api_server_host", "127.0.0.1"),
+                port=int(config.get("api_server_port", 8765)),
+                get_stats=lambda: self.stats,
+            )
+            self._api_server.start()
+
         # Populate the UI immediately, then register the recurring timer.
         self._refresh_async()
         self._timer_id: int = GLib.timeout_add_seconds(
@@ -768,4 +779,6 @@ class ClaudeUsageTray:
         # that fires during teardown sees _alive=False and exits cleanly.
         self._alive = False
         GLib.source_remove(self._timer_id)
+        if self._api_server is not None:
+            self._api_server.stop()
         Gtk.main_quit()

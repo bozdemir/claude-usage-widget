@@ -49,6 +49,11 @@ DEFAULT_CONFIG: Config = {
     "osd_scale": 1.0,
     "notifications_enabled": True,
     "notify_thresholds": [0.75, 0.90],
+    # Localhost JSON API server (opt-in). Exposes /usage and /healthz on
+    # 127.0.0.1:<port> for shell integrations (tmux, polybar, waybar, etc.).
+    "api_server_enabled": False,
+    "api_server_host": "127.0.0.1",
+    "api_server_port": 8765,
 }
 
 
