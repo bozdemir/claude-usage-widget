@@ -39,41 +39,54 @@ A desktop widget that displays your Claude Code usage limits in real time. Shows
 
 ## Installation
 
-### Linux
+### Linux (pip — recommended)
 
 ```bash
-# 1. Install system dependencies (Ubuntu/Debian)
-sudo apt install python3-gi python3-gi-cairo python3-cairo gir1.2-ayatanaappindicator3-0.1
+# 1. Install system GTK stack (one-time)
+sudo apt install python3-gi python3-gi-cairo python3-cairo \
+     gir1.2-ayatanaappindicator3-0.1 gir1.2-notify-0.7   # Ubuntu/Debian
+# Fedora: sudo dnf install python3-gobject python3-gobject-cairo libappindicator-gtk3 libnotify
+# Arch:   sudo pacman -S python-gobject python-cairo libappindicator-gtk3 libnotify
 
-# Fedora
-sudo dnf install python3-gobject python3-gobject-cairo python3-cairo gtk3
+# 2. Install the widget itself
+pip install --user --upgrade claude-usage-widget
 
-# Arch
-sudo pacman -S python-gobject python-cairo gtk3 libappindicator-gtk3
+# 3. Run
+claude-usage            # launches tray + OSD
+claude-usage --version
+```
 
-# 2. Clone and run
+GNOME users also need the [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/) for the tray icon.
+
+### Linux (from source)
+
+```bash
 git clone https://github.com/bozdemir/claude-usage-widget.git
 cd claude-usage-widget
 python3 main.py &
 
-# 3. Autostart on login (optional)
+# Autostart on login (optional)
 ./install.sh
 ```
 
-### macOS
+### macOS (Homebrew — recommended)
 
 ```bash
-# 1. Clone
+brew tap bozdemir/tap
+brew install claude-usage-widget
+claude-usage            # launches menu bar + OSD
+claude-usage --version
+```
+
+### macOS (from source)
+
+```bash
 git clone https://github.com/bozdemir/claude-usage-widget.git
 cd claude-usage-widget
-
-# 2. Install Python dependencies
 pip3 install -r requirements-macos.txt
-
-# 3. Run
 python3 main.py
 
-# 4. Autostart on login (optional) -- installs a Launch Agent
+# Autostart on login (optional) -- installs a Launch Agent
 ./install-macos.sh
 ```
 
