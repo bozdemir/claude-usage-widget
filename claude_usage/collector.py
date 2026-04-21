@@ -14,13 +14,15 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from claude_usage import forecast, pricing
+from claude_usage.analytics import AnomalyReport, detect_anomaly
 from claude_usage.history import aggregate, append_sample, load_samples, prune
 
 HISTORY_FILENAME = "usage-history.jsonl"
-HISTORY_KEEP_DAYS = 8
+HISTORY_KEEP_DAYS = 90  # keep 90 days for trend/anomaly analysis
 SESSION_WINDOW_SECONDS = 5 * 3600
 SESSION_BUCKETS = 30
 WEEKLY_WINDOW_SECONDS = 7 * 86400
+ANALYTICS_WINDOW_SECONDS = 90 * 86400
 WEEKLY_BUCKETS = 28
 
 
@@ -62,6 +64,8 @@ class UsageStats:
     # Forecast dicts produced by forecast.forecast_time_to_limit
     session_forecast: dict = field(default_factory=dict)
     weekly_forecast: dict = field(default_factory=dict)
+    # Anomaly detection over the 90-day baseline
+    anomaly: AnomalyReport = field(default_factory=AnomalyReport)
 
 
 def parse_history(path: str) -> UsageStats:
@@ -560,7 +564,9 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
         except OSError:
             pass
 
-    samples = load_samples(history_path, since_ts=now_ts - WEEKLY_WINDOW_SECONDS)
+    # Load 90 days of history for analytics/trends; the aggregators below
+    # filter it down to their respective windows.
+    samples = load_samples(history_path, since_ts=now_ts - ANALYTICS_WINDOW_SECONDS)
     stats.session_history = aggregate(
         samples, "session", now=now_ts,
         window_seconds=SESSION_WINDOW_SECONDS, n_buckets=SESSION_BUCKETS,
@@ -569,6 +575,10 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
         samples, "weekly", now=now_ts,
         window_seconds=WEEKLY_WINDOW_SECONDS, n_buckets=WEEKLY_BUCKETS,
     )
+
+    # Anomaly detection — compares today's session utilization against the
+    # per-day peaks over prior days (requires >= 7 days of history).
+    stats.anomaly = detect_anomaly(samples, today_usage=stats.session_utilization)
 
     # Burn-rate forecasts: project when utilization will hit 100% at the current rate.
     # Requires at least 2 samples in the window; falls back to an empty dict otherwise.
