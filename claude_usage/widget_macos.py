@@ -369,12 +369,22 @@ class PopupView(NSView):
 
         # ---- Optional: Cost (today) ----
         if stats.today_cost > 0:
-            y = self._section_header("Cost (today)", y, w)
+            sub = (getattr(stats, "subscription_type", "") or "").lower()
+            is_subscriber = sub in ("pro", "max", "team", "enterprise")
+            if is_subscriber:
+                header = f"API-equivalent value (today) — {sub.capitalize()} plan"
+            else:
+                header = "Cost (today)"
+            y = self._section_header(header, y, w)
             f_cost = _sys_font(13, bold=True)
             _draw_str(f"${stats.today_cost:.2f}", PAD_X, y, f_cost, _PRI)
             y += _str_size("X", f_cost).height + 8
+            f_dim = _sys_font(11)
+            if is_subscriber:
+                _draw_str("Included in your plan; no per-token billing",
+                          PAD_X, y, f_dim, _DIM)
+                y += 18
             if stats.cache_savings > 0:
-                f_dim = _sys_font(11)
                 _draw_str(f"${stats.cache_savings:.2f} saved by cache",
                           PAD_X, y, f_dim, _DIM)
                 y += 20

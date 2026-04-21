@@ -47,7 +47,11 @@ class UsageStats:
     rate_limit_error: str = ""  # error message if API call fails
     session_history: list = field(default_factory=list)  # bucketed sparkline (oldest first)
     weekly_history: list = field(default_factory=list)
-    # Cost estimates (USD) derived from per-model token breakdowns
+    # Subscription type from OAuth credentials ("max", "pro", "free", or "" if unknown).
+    # Used to relabel cost fields: subscribers pay a flat fee, so the "cost" is really
+    # the pay-as-you-go API-equivalent value of their usage, not what they're billed.
+    subscription_type: str = ""
+    # Cost estimates (USD) — for subscribers these represent pay-as-you-go equivalent
     today_cost: float = 0.0
     week_cost: float = 0.0
     cache_savings: float = 0.0  # $ saved this week via prompt caching
@@ -337,6 +341,19 @@ def get_active_sessions(claude_dir: str) -> list[dict[str, Any]]:
     return active
 
 
+def _load_subscription_type(claude_dir: str) -> str:
+    """Return subscription type ("max", "pro", "free", ...) from credentials, or ""."""
+    creds_path = os.path.join(claude_dir, ".credentials.json")
+    if not os.path.isfile(creds_path):
+        return ""
+    try:
+        with open(creds_path) as f:
+            creds = json.load(f)
+        return str(creds.get("claudeAiOauth", {}).get("subscriptionType", ""))
+    except (json.JSONDecodeError, OSError):
+        return ""
+
+
 def _load_credentials(claude_dir: str) -> str | None:
     """Load the OAuth access token from the credentials file or macOS Keychain.
 
@@ -493,6 +510,7 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
     history_path = os.path.join(claude_dir, "history.jsonl")
 
     stats = parse_history(history_path)
+    stats.subscription_type = _load_subscription_type(claude_dir)
 
     # Build date prefix strings used to filter conversation entries by timestamp.
     # A single pass over the files collects both today and week totals at once.

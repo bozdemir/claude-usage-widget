@@ -382,11 +382,27 @@ class UsagePopup(Gtk.Window):
         today_cost = float(getattr(stats, "today_cost", 0.0) or 0.0)
         cache_savings = float(getattr(stats, "cache_savings", 0.0) or 0.0)
         today_projects = getattr(stats, "today_by_project", {}) or {}
+        sub_type = getattr(stats, "subscription_type", "") or ""
 
         if today_cost > 0:
-            self._add_section_header("Cost (today)")
+            # On flat-fee subscriptions (Pro/Max) the user does NOT pay per
+            # token — this figure represents the pay-as-you-go API equivalent.
+            is_subscriber = sub_type.lower() in ("pro", "max", "team", "enterprise")
+            if is_subscriber:
+                header = f"API-equivalent value (today) — {sub_type.capitalize()} plan"
+                subtitle = "Included in your plan; no per-token billing"
+            else:
+                header = "Cost (today)"
+                subtitle = ""
+
+            self._add_section_header(header)
             self._add_metric_line(f"${today_cost:.2f}")
-            self._add_dim_line(f"${cache_savings:.2f} saved by cache", bottom_margin=12)
+            if subtitle:
+                self._add_dim_line(subtitle, bottom_margin=2)
+            if cache_savings > 0:
+                self._add_dim_line(f"${cache_savings:.2f} saved by cache", bottom_margin=12)
+            else:
+                self._add_dim_line("", bottom_margin=12)
             self._add_separator()
 
         if today_projects:
