@@ -88,6 +88,20 @@ def run_cli(argv: Sequence[str]) -> int:
     return -1
 
 
+def _print_qt_install_hint(exc: Exception) -> None:
+    """Print install instructions for Qt's xcb platform plugin runtime deps."""
+    print(
+        "\nERROR: Qt platform plugin failed to load.\n"
+        f"  ({exc.__class__.__name__}: {exc})\n"
+        "\n"
+        "Qt 6.5+ needs one small system library that ships outside the wheel:\n"
+        "  Ubuntu/Debian:  sudo apt install -y libxcb-cursor0\n"
+        "  Fedora:         sudo dnf install -y xcb-util-cursor\n"
+        "  Arch:           sudo pacman -S xcb-util-cursor\n",
+        file=sys.stderr,
+    )
+
+
 def _launch_gui() -> None:
     """Launch the PySide6 GUI (cross-platform)."""
     import signal
@@ -107,7 +121,16 @@ def _launch_gui() -> None:
     from claude_usage.widget import ClaudeUsageApp
 
     # High-DPI is default in Qt 6; no special attribute needed.
-    app = QApplication.instance() or QApplication(sys.argv)
+    try:
+        app = QApplication.instance() or QApplication(sys.argv)
+    except Exception as exc:
+        _print_qt_install_hint(exc)
+        raise
+    if app is None:
+        # QApplication() returned None — usually because the xcb plugin
+        # couldn't load.  Print a helpful hint before Qt's own abort kicks in.
+        _print_qt_install_hint(RuntimeError("QApplication failed to initialise"))
+        sys.exit(1)
     app.setQuitOnLastWindowClosed(False)
 
     config = load_config(_default_config_path())

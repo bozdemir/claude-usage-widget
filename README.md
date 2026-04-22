@@ -159,6 +159,14 @@ Qt's `QWidget` with `FramelessWindowHint | Tool | WindowStaysOnTopHint` plus `WA
 - Check if the process is running: `ps aux | grep claude-usage` (Linux/macOS) or the Task Manager (Windows).
 - Try launching from a terminal: `claude-usage` — any startup error prints to stderr.
 
+### Linux: `qt.qpa.plugin: Could not load the Qt platform plugin "xcb"`
+Qt 6.5+ needs one tiny system library that ships separately from the wheel:
+```bash
+sudo apt install -y libxcb-cursor0     # Ubuntu/Debian
+sudo dnf install -y xcb-util-cursor    # Fedora
+sudo pacman -S xcb-util-cursor         # Arch
+```
+
 ### Linux: notifications don't appear
 The widget shoots notifications via `notify-send`. Install it if missing:
 ```bash
