@@ -126,6 +126,11 @@ def _launch_gui() -> None:
     except Exception as exc:
         _print_qt_install_hint(exc)
         raise
+
+    # Hint to window managers that this is a utility/panel process — some
+    # WMs use this to decide whether to show a dock icon.
+    app.setApplicationName("claude-usage")
+    app.setDesktopFileName("claude-usage")
     if app is None:
         # QApplication() returned None — usually because the xcb plugin
         # couldn't load.  Print a helpful hint before Qt's own abort kicks in.

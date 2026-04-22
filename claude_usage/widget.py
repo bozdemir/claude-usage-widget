@@ -234,9 +234,10 @@ class UsagePopup(QWidget):
         self.setWindowTitle("Claude Usage")
         self.setFixedWidth(POPUP_WIDTH)
         self.setMinimumHeight(360)
-        # Qt.Dialog + CustomizeWindowHint gives us a proper resizable popup
-        # with a close button but without the Tool-window title bar quirks.
-        self.setWindowFlags(Qt.Dialog | Qt.WindowStaysOnTopHint | Qt.WindowCloseButtonHint)
+        # Qt.Tool keeps the popup hidden from the dock / taskbar — exit is
+        # via the OSD right-click menu. WindowCloseButtonHint still gives us
+        # a native close button on the title bar for discoverability.
+        self.setWindowFlags(Qt.Tool | Qt.WindowStaysOnTopHint | Qt.WindowCloseButtonHint)
 
         # Style sheet — applied once per instance.
         self.setStyleSheet(self._build_qss())
