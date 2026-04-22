@@ -112,12 +112,16 @@ class UsageOverlay(QWidget):
         # Window setup — frameless, transparent, always on top, no taskbar.
         self.setWindowFlags(
             Qt.FramelessWindowHint
-            | Qt.Tool                      # hidden from taskbar, stays above normal windows
+            | Qt.Tool                      # tool window, should stay above normal ones
             | Qt.WindowStaysOnTopHint
             | Qt.WindowDoesNotAcceptFocus  # typing doesn't steal focus from other apps
+            | Qt.BypassWindowManagerHint   # KDE/GNOME: skip window-manager decoration entirely
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
+        # NET_WM hint: tell the window manager this is a Notification, so dock
+        # / taskbar / Alt-Tab overlays all skip it.
+        self.setAttribute(Qt.WA_X11NetWmWindowTypeNotification, True)
 
         # Initial size + position (top-right of primary screen).
         self._apply_size()

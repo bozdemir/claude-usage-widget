@@ -238,6 +238,9 @@ class UsagePopup(QWidget):
         # via the OSD right-click menu. WindowCloseButtonHint still gives us
         # a native close button on the title bar for discoverability.
         self.setWindowFlags(Qt.Tool | Qt.WindowStaysOnTopHint | Qt.WindowCloseButtonHint)
+        # Reinforce "don't show me in the dock" via the NET_WM window-type
+        # hint. Utility windows are excluded from KDE/GNOME taskbars by spec.
+        self.setAttribute(Qt.WA_X11NetWmWindowTypeUtility, True)
 
         # Style sheet — applied once per instance.
         self.setStyleSheet(self._build_qss())
