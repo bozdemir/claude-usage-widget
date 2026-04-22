@@ -453,14 +453,19 @@ class UsagePopup(QWidget):
         sub = (getattr(stats, "subscription_type", "") or "").lower()
         is_subscriber = sub in ("pro", "max", "team", "enterprise")
 
-        header = (
-            f"API-equivalent value (today) — {sub.capitalize()} plan"
-            if is_subscriber else "Cost (today)"
-        )
-        self._add_section_header(header)
-        self._add_dim_line(f"${today_cost:.2f}", role="metric", margin_bottom=4)
+        # Short header; detailed framing lives in the dim sub-line below so the
+        # popup width doesn't force the title onto two lines.
         if is_subscriber:
-            self._add_dim_line("Included in your plan; no per-token billing", margin_bottom=4)
+            self._add_section_header("Cost (today)", right=f"{sub.capitalize()} plan")
+            self._add_dim_line(f"${today_cost:.2f}", role="metric", margin_bottom=4)
+            self._add_dim_line(
+                "API pay-as-you-go equivalent — included in your plan",
+                margin_bottom=4,
+            )
+        else:
+            self._add_section_header("Cost (today)")
+            self._add_dim_line(f"${today_cost:.2f}", role="metric", margin_bottom=4)
+
         if cache_savings > 0:
             self._add_dim_line(f"${cache_savings:.2f} saved by cache", margin_bottom=8)
 
