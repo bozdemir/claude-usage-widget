@@ -35,11 +35,29 @@ separate layer.
         d4_receipt.py
         d5_strip.py
         d6_brutalist.py
-      bars_ascii.py         # reusable "█░" bar painter
-      bars_block.py         # reusable rounded-rect bar painter
-      ring.py               # reusable 270°-arc gauge painter
-      heatmap.py            # reusable 52w × 7d / 90d heatmaps
-      sparkline.py          # reusable 5h bars + 7d bars
+      _paint.py             # shared QPainter helpers (bars, rings, heatmaps)
+      _popup.py             # shared popup blocks (sections, kpis, lists)
+      _popup_generic.py     # generic popup layout — most directions delegate here
+      popup_data.py         # PopupData dataclass + adapter reference
+      README.md
+      CLAUDE_CODE_PROMPT.md
+
+## OSD vs Popup
+
+Every direction exposes TWO entrypoints:
+
+  - `paint_osd(p, rect, data, scale)` — compact surface (≤ 200px tall).
+    Consumes the existing `UsageStats` shape. Drop-in replacement for
+    the current overlay paint path.
+
+  - `paint_popup(p, rect, data, scale)` — the detail popup. Consumes a
+    richer `PopupData` (see `popup_data.py`). Directions delegate most
+    of the layout to `_popup_generic.paint_popup` and only override the
+    section-header style / bar style / masthead style.
+
+  Exception: `d1_terminal` has a fully custom popup (box-drawing banner,
+  [NN] section markers, mono everywhere) that does NOT use the generic
+  painter. Read that file for the full reference implementation.
 
 ## Wiring into the existing codebase
 

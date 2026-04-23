@@ -18,10 +18,13 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 
 from .._paint import draw_block_bar, draw_text, hex_to_qcolor, mono_font, ui_font
+from .. import _popup_generic
 
 
 THEME = {
     "style":          "dashboard",
+    "_mono_family":   "JetBrains Mono",
+    "_ui_family":     "Inter",
     "bg":             "#0f1114",
     "panel":          "#151820",
     "panel2":         "#1b1f28",
@@ -52,6 +55,14 @@ FONTS = {
     "family_mono": "JetBrains Mono", "family_ui": "Inter",
     "label_pt": 9, "body_pt": 11, "metric_pt": 20, "title_pt": 10,
 }
+
+
+def paint_popup(p, rect, data, scale: float = 1.0):
+    """Dashboard popup: accent-number section headers + block bars."""
+    _popup_generic.paint_popup(p, rect, data, scale, THEME,
+                               section_style="default",
+                               bar_style="block",
+                               masthead_style="default")
 
 
 def _draw_ring_full(p: QPainter, cx: float, cy: float, r: float,

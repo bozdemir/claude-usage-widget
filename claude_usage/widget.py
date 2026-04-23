@@ -309,6 +309,84 @@ class _CalendarHeatmap(QWidget):
             p.drawRect(QRectF(x, y, self.CELL_SIZE, self.CELL_SIZE))
 
 
+class SkinPopupWidget(QWidget):
+    """Full-surface paintEvent popup used when a handoff skin is active.
+
+    Unlike the default :class:`UsagePopup`, this widget doesn't lay out any
+    child widgets — the whole window is painted by the skin's
+    ``paint_popup(painter, rect, data, scale)`` function. A ``QScrollArea``
+    wraps it so tall popups still fit on small screens.
+    """
+
+    def __init__(self, config: dict[str, Any]) -> None:
+        super().__init__()
+        from claude_usage.skins import SKIN_MODULES
+        self._config = config
+        self._all_skins = SKIN_MODULES
+        self._skin = SKIN_MODULES.get(str(config.get("theme", "")))
+        self._data = None
+        self._scale = 1.0
+
+        self.setWindowTitle("Claude Usage")
+        self.setWindowFlags(Qt.Tool | Qt.WindowStaysOnTopHint | Qt.WindowCloseButtonHint)
+        self.setAttribute(Qt.WA_X11NetWmWindowTypeUtility, True)
+
+        # Inner content widget sized to measure_popup output; wrapped in
+        # a scroll area so the window is resizable without losing content.
+        self._content = QWidget(self)
+        self._content.paintEvent = self._paint_content  # type: ignore[method-assign]
+        self._scroll = QScrollArea(self)
+        self._scroll.setWidget(self._content)
+        self._scroll.setWidgetResizable(False)
+        self._scroll.setFrameShape(QScrollArea.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.addWidget(self._scroll)
+
+        self.resize(600, 720)
+
+    def apply_config(self, config: dict[str, Any]) -> None:
+        self._config = config
+        self._skin = self._all_skins.get(str(config.get("theme", "")))
+        self._content.update()
+
+    def update_stats(self, stats) -> None:
+        from claude_usage.skins._adapter import build_popup_data
+        self._data = build_popup_data(stats)
+        self._resize_content()
+        self._content.update()
+
+    def _resize_content(self) -> None:
+        if self._skin is None or self._data is None:
+            return
+        width = int(self._skin.METRICS.get("popup_width", 540) * self._scale)
+        measure = getattr(self._skin, "measure_popup", None)
+        if callable(measure):
+            height = int(measure(self._data, self._scale))
+        else:
+            # Fall back to a generous default that _popup_generic.paint_popup
+            # almost always fits into.
+            height = int(820 * self._scale)
+        self._content.setFixedSize(width, height)
+
+    def _paint_content(self, _event) -> None:
+        if self._skin is None or self._data is None:
+            return
+        from PySide6.QtCore import QRectF
+        p = QPainter(self._content)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.TextAntialiasing, True)
+        try:
+            self._skin.paint_popup(
+                p, QRectF(self._content.rect()), self._data, self._scale,
+            )
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+
 class _Barcode(QWidget):
     """Decorative 1D barcode — used as the receipt-popup footer stamp.
 
@@ -830,9 +908,14 @@ class ClaudeUsageApp(QObject):
         self._refreshing = False
         self._last_daily_report_date: str = ""
 
-        # UI components
+        # UI components — we keep BOTH popup implementations around:
+        # the default one (full QLayout + child widgets) handles the five
+        # classic themes, and the skin popup delegates its whole paintEvent
+        # to the active direction module. `_show_popup` picks whichever
+        # matches the current theme.
         self.overlay = UsageOverlay(config)
         self.popup = UsagePopup(config)
+        self.skin_popup = SkinPopupWidget(config)
 
         # Context menu shown on right-click of the OSD.
         self._context_menu = QMenu()
@@ -968,7 +1051,9 @@ class ClaudeUsageApp(QObject):
 
     def _on_pick_theme(self, name: str) -> None:
         self.overlay.set_theme(name)
-        self.popup.apply_config({**self.config, "theme": name})
+        merged = {**self.config, "theme": name}
+        self.popup.apply_config(merged)
+        self.skin_popup.apply_config(merged)
         self.config["theme"] = name
         self._persist_config()
 
@@ -1029,6 +1114,7 @@ class ClaudeUsageApp(QObject):
 
         self.overlay.update_stats(stats)
         self.popup.update_stats(stats)
+        self.skin_popup.update_stats(stats)
         self.notifier.check_stats(stats)
 
         # Webhook: anomaly
@@ -1072,9 +1158,19 @@ class ClaudeUsageApp(QObject):
         self._context_menu.popup(global_pos)
 
     def _show_popup(self) -> None:
-        self.popup.show()
-        self.popup.raise_()
-        self.popup.activateWindow()
+        # Pick the popup implementation that matches the active theme:
+        # classic themes use the layout-based popup; the 6 handoff skins
+        # use SkinPopupWidget (pure paintEvent).
+        from claude_usage.skins import SKIN_MODULES
+        theme_name = str(self.config.get("theme", "default"))
+        target = self.skin_popup if theme_name in SKIN_MODULES else self.popup
+        # Hide the other so both windows aren't on-screen simultaneously.
+        other = self.popup if target is self.skin_popup else self.skin_popup
+        if other.isVisible():
+            other.hide()
+        target.show()
+        target.raise_()
+        target.activateWindow()
 
     def _generate_weekly_report(self, snapshot: UsageStats) -> None:
         try:

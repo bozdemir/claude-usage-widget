@@ -23,6 +23,8 @@ from .._paint import draw_text, hex_to_qcolor, mono_font
 
 THEME = {
     "style":          "brutalist",
+    "_mono_family":   "Space Mono",
+    "_ui_family":     "Space Mono",
     "bg":             "#eeece7",
     "panel":          "#ffffff",
     "bar_blue":       "#d81f26",
@@ -123,3 +125,20 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     yy = row(yy, "WEEKLY", data.weekly_pct,
              f"RESETS {data.weekly_reset_hrs}H {data.weekly_reset_min}M",
              t["ink"])
+
+
+
+# ---- POPUP ---------------------------------------------------------
+
+def paint_popup(p, rect, data, scale: float = 1.0):
+    """Brutalist popup: heavy 2px rules, § section marks, crimson accent.
+
+    Nuance: section headers are \"§01 TITLE\" style with a 2px black top
+    rule above. The generic painter's \"brutalist\" section style draws
+    this correctly.
+    """
+    from .. import _popup_generic
+    _popup_generic.paint_popup(p, rect, data, scale, THEME,
+                               section_style="brutalist",
+                               bar_style="rect_border",
+                               masthead_style="brutalist")

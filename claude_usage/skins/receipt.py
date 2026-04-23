@@ -29,6 +29,10 @@ WANTS_TICKER = True
 
 THEME = {
     "style":          "receipt",
+    '_mono_family'    : 'JetBrains Mono',
+    '_ui_family'      : 'JetBrains Mono',
+    'accent2'         : '#b4331c',
+    'border'          : '#a79c85',
     "bg":             "#f3efe5",
     "paper":          "#faf6ec",
     "bar_blue":       "#16110a",
@@ -164,3 +168,31 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
               yy + QFontMetrics(small_f).ascent(),
               foot, hex_to_qcolor(t["text_dim"]), small_f,
               letter_spacing_px=2 * s)
+
+
+# ---- POPUP ---------------------------------------------------------
+
+def paint_popup(p, rect, data, scale: float = 1.0):
+    """Receipt popup: dashed rules, centered masthead, rect-border bars.
+
+    Nuance: paper grain IS drawn across the whole popup at scale>=0.8.
+    The grain lines go under everything else — paint grain FIRST, then
+    overlay sections. The generic painter handles sections; we call
+    _draw_grain before delegating.
+    """
+    from . import _popup_generic
+    from ._paint import hex_to_qcolor
+    from PySide6.QtCore import QPointF, QRectF, Qt
+    from PySide6.QtGui import QColor, QPen
+
+    s = scale; t = THEME
+    # paper bg first
+    p.setPen(Qt.NoPen); p.setBrush(hex_to_qcolor(t["paper"]))
+    p.drawRoundedRect(rect, 2 * s, 2 * s)
+    if scale >= 0.8:
+        _draw_grain(p, rect, METRICS["grain_step_px"] * s)
+
+    _popup_generic.paint_popup(p, rect, data, scale, THEME,
+                               section_style="receipt",
+                               bar_style="rect_border",
+                               masthead_style="receipt")

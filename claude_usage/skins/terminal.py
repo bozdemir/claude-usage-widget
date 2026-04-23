@@ -22,6 +22,11 @@ from ._paint import (
     draw_ascii_bar, draw_block_bar, draw_heatmap_52w, draw_sparkline_bars,
     draw_text, draw_ticker_marquee, hex_to_qcolor, mono_font,
 )
+from ._popup import (
+    ROW_GAP, SECTION_GAP,
+    draw_kpi_big, draw_pct_row, draw_project_list, draw_report_card,
+    draw_section_header, draw_sparkline_row,
+)
 
 
 WANTS_TICKER = True
@@ -29,6 +34,10 @@ WANTS_TICKER = True
 
 THEME = {
     "style":          "terminal",
+    '_mono_family'    : 'JetBrains Mono',
+    '_ui_family'      : 'JetBrains Mono',
+    'paper'           : '#0a0f0a',
+    'accent2'         : '#87d7d7',
     "bg":             "#0a0f0a",
     "panel":          "#0e1411",
     "border":         "#1d2a22",
@@ -156,3 +165,137 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
         data.ticker_items, data.ticker_offset,
         ticker_colors, ticker_f, sep_gap_px=10 * s,
     )
+
+
+# ---- POPUP ---------------------------------------------------------
+
+def measure_popup(data, scale: float = 1.0) -> int:
+    """Return total popup height in px for the given data at this scale.
+    Used by the QWidget to set its minimum height BEFORE paintEvent."""
+    s = scale
+    # rough estimate; measured in dev to match draw_popup exactly
+    base = 540 * s
+    base += 12 * len(data.top_projects) * s
+    base += 18 * len(data.tips) * s
+    return int(base)
+
+
+def paint_popup(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
+    """Terminal-style popup. Uses [NN] section headers and ASCII bars.
+    Mimics a terminal readout — dashed rules, box-drawing trim, mono everywhere."""
+    s = scale; t = THEME
+    pad = 18 * s
+
+    # paper
+    p.setPen(Qt.NoPen); p.setBrush(hex_to_qcolor(t["bg"]))
+    p.drawRoundedRect(rect, 6 * s, 6 * s)
+    p.setPen(hex_to_qcolor(t["border"])); p.setBrush(Qt.NoBrush)
+    p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 6 * s, 6 * s)
+
+    x = rect.x() + pad; y = rect.y() + pad
+    w = rect.width() - pad * 2
+
+    # masthead — box-drawing banner
+    banner_f = mono_font(12 * s, bold=True, family=FONTS["family"])
+    fm = QFontMetrics(banner_f)
+    banner = "╔═ CLAUDE USAGE " + "═" * 12 + "╗"
+    draw_text(p, x, y + fm.ascent(), banner,
+              hex_to_qcolor(t["accent"]), banner_f,
+              letter_spacing_px=1.5 * s)
+    sub_f = mono_font(10 * s, family=FONTS["family"])
+    draw_text(p, x, y + fm.height() + QFontMetrics(sub_f).ascent() + 4 * s,
+              "last updated: just now · refresh: 30s",
+              hex_to_qcolor(t["text_dim"]), sub_f)
+    y += fm.height() + QFontMetrics(sub_f).height() + 14 * s
+
+    # [01] plan limits
+    y = draw_section_header(p, x, y, w, 1, "plan limits", t, s, style="terminal")
+    y = draw_pct_row(p, x, y, w, "session · resets in " + f"{data.session_reset_min}m",
+                     data.session_pct, f"{int(data.session_pct * 100)}%".rjust(4),
+                     t, s, bar_style="ascii", fill_hex=t["accent"], ascii_cols=46)
+    y = draw_sparkline_row(p, x, y, w, 28 * s, data.spark_5h,
+                           "last 5 hours", t, s)
+    y += ROW_GAP * s
+    y = draw_pct_row(p, x, y, w, "weekly · resets " + data.weekly_reset_label,
+                     data.weekly_pct, f"{int(data.weekly_pct * 100)}%".rjust(4),
+                     t, s, bar_style="ascii", fill_hex=t["accent"], ascii_cols=46)
+    y = draw_sparkline_row(p, x, y, w, 24 * s, data.spark_7d,
+                           "last 7 days", t, s)
+    y += SECTION_GAP * s
+
+    # [02] calendar (52-week heatmap)
+    y = draw_section_header(p, x, y, w, 2, "calendar", t, s, style="terminal")
+    draw_heatmap_52w(p, x, y, data.heat_52w,
+                     cell=7 * s, gap=2 * s,
+                     track=hex_to_qcolor(t["very_dim"]),
+                     fill_hex=t["accent"])
+    y += (7 + 2) * 7 * s + 6 * s
+    draw_text(p, x, y + QFontMetrics(sub_f).ascent(),
+              "last 52 weeks", hex_to_qcolor(t["text_dim"]), sub_f)
+    y += QFontMetrics(sub_f).height() + SECTION_GAP * s
+
+    # [03] cost
+    y = draw_section_header(p, x, y, w, 3, "cost (today)", t, s, style="terminal")
+    big_f = mono_font(22 * s, bold=True, family=FONTS["family"])
+    fm_b = QFontMetrics(big_f)
+    cost_txt = f"${data.cost_today_usd:.2f}"
+    draw_text(p, x, y + fm_b.ascent(), cost_txt,
+              hex_to_qcolor(t["accent"]), big_f)
+    sub_text = f"{data.plan} · ${data.cache_saved_usd:,.0f} saved by cache"
+    sw = QFontMetrics(sub_f).horizontalAdvance(sub_text)
+    draw_text(p, x + w - sw, y + fm_b.ascent(), sub_text,
+              hex_to_qcolor(t["text_dim"]), sub_f)
+    y += fm_b.height() + 6 * s
+    # model + rows
+    mono_f = mono_font(10 * s, family=FONTS["family"])
+    fm_m = QFontMetrics(mono_f)
+    draw_text(p, x, y + fm_m.ascent(), data.cost_model,
+              hex_to_qcolor(t["text_secondary"]), mono_f)
+    y += fm_m.height() + 2 * s
+    for row in data.cost_rows:
+        left = f"  {row.label:<12} {row.tokens} × {row.rate}"
+        right = f"${row.value_usd:.2f}"
+        rw = fm_m.horizontalAdvance(right)
+        draw_text(p, x, y + fm_m.ascent(), left,
+                  hex_to_qcolor(t["text_primary"]), mono_f)
+        draw_text(p, x + w - rw, y + fm_m.ascent(), right,
+                  hex_to_qcolor(t["text_primary"]), mono_f)
+        y += fm_m.height() + 2 * s
+    y += SECTION_GAP * s
+
+    # [04] top projects
+    y = draw_section_header(p, x, y, w, 4, "top projects", t, s, style="terminal")
+    y = draw_project_list(p, x, y, w, data.top_projects, t, s)
+    y += SECTION_GAP * s
+
+    # [05] tips
+    y = draw_section_header(p, x, y, w, 5, "tips", t, s, style="terminal")
+    tip_f = mono_font(10 * s, family=FONTS["family"])
+    fm_t = QFontMetrics(tip_f)
+    for tip in data.tips:
+        draw_text(p, x, y + fm_t.ascent(), "▸",
+                  hex_to_qcolor(t["warn"]), tip_f)
+        p.setPen(hex_to_qcolor(t["text_primary"]))
+        p.setFont(tip_f)
+        tr = QRectF(x + 14 * s, y, w - 14 * s, 1000)
+        br = p.fontMetrics().boundingRect(tr.toRect(), Qt.TextWordWrap, tip)
+        p.drawText(QRectF(x + 14 * s, y + fm_t.ascent(), w - 14 * s, br.height()),
+                   Qt.TextWordWrap, tip)
+        y += max(fm_t.height(), br.height()) + 4 * s
+    y += SECTION_GAP * s
+
+    # [06] weekly report
+    y = draw_section_header(p, x, y, w, 6, "your week", t, s, style="terminal")
+    y = draw_report_card(p, x, y, w, data.weekly_report, t, s, style="quote")
+
+    # bottom trim
+    y += 10 * s
+    trim = "╚" + "═" * 28 + "╝"
+    fm_tr = QFontMetrics(sub_f)
+    tw = fm_tr.horizontalAdvance(trim)
+    draw_text(p, x + (w - tw) / 2, y + fm_tr.ascent(), trim,
+              hex_to_qcolor(t["text_dim"]), sub_f)
+
+
+# Constant used by the popup helpers above (ROW_GAP from _popup.py).
+ROW_GAP = 6

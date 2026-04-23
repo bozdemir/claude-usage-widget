@@ -26,6 +26,11 @@ WANTS_TICKER = True
 
 THEME = {
     "style":          "brutalist",
+    '_mono_family'    : 'Space Mono',
+    '_ui_family'      : 'Space Mono',
+    'paper'           : '#ffffff',
+    'accent2'         : '#d81f26',
+    'border'          : '#0a0a0a',
     "bg":             "#eeece7",
     "panel":          "#ffffff",
     "bar_blue":       "#d81f26",
@@ -143,3 +148,19 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
         data.ticker_items, data.ticker_offset,
         ticker_colors, ticker_f, sep_gap_px=10 * s,
     )
+
+
+# ---- POPUP ---------------------------------------------------------
+
+def paint_popup(p, rect, data, scale: float = 1.0):
+    """Brutalist popup: heavy 2px rules, § section marks, crimson accent.
+
+    Nuance: section headers are \"§01 TITLE\" style with a 2px black top
+    rule above. The generic painter's \"brutalist\" section style draws
+    this correctly.
+    """
+    from . import _popup_generic
+    _popup_generic.paint_popup(p, rect, data, scale, THEME,
+                               section_style="brutalist",
+                               bar_style="rect_border",
+                               masthead_style="brutalist")

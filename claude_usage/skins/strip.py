@@ -20,6 +20,10 @@ from ._paint import draw_block_bar, draw_text, hex_to_qcolor, mono_font, ui_font
 
 THEME = {
     "style":          "strip",
+    '_mono_family'    : 'JetBrains Mono',
+    '_ui_family'      : 'Inter',
+    'paper'           : '#0e1012',
+    'accent2'         : '#4db79a',
     "bg":             "#0e1012",
     "panel":          "#181b21",
     "border":         "#23272f",
@@ -130,3 +134,23 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
                   rect.y() + 36 * s,
                   f"{data.live_tok_per_min:.1f}k/min",
                   hex_to_qcolor(t["text_primary"]), label_f)
+
+
+# ---- POPUP ---------------------------------------------------------
+
+def paint_popup(p, rect, data, scale: float = 1.0):
+    """Strip popup: DENSE multi-column layout.
+
+    The strip direction's strength is compactness, so its popup echoes
+    that — smaller KPI tiles in a 2-column grid instead of the tall
+    stacked layout the generic painter produces.
+
+    For now we delegate to the generic painter; Claude Code can
+    implement the dense 2-column version as a v2 once the generic one
+    is running cleanly.
+    """
+    from . import _popup_generic
+    _popup_generic.paint_popup(p, rect, data, scale, THEME,
+                               section_style="default",
+                               bar_style="block",
+                               masthead_style="default")

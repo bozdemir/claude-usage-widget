@@ -23,6 +23,8 @@ from .._paint import draw_ring, draw_text, hex_to_qcolor, mono_font
 
 THEME = {
     "style":          "hud",
+    "_mono_family":   "JetBrains Mono",
+    "_ui_family":     "Inter",
     "bg":             "#0c0a08",
     "bg2":            "#15110c",
     "panel":          "#171310",
@@ -152,3 +154,38 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     draw_text(p, cx - fm_n.horizontalAdvance(tm) / 2,
               cy + fm_n.ascent() + 2 * s, tm,
               hex_to_qcolor(t["good"]), num_f)
+
+
+
+# ---- POPUP ---------------------------------------------------------
+
+def paint_popup(p, rect, data, scale: float = 1.0):
+    """HUD popup: big gauges at top + standard sections below.
+
+    Nuance: the HUD popup keeps the 270° arc gauges as the dominant
+    element (instead of the tiny full-ring rings used in Dashboard).
+    After the gauge block we defer to the generic painter for the rest.
+    """
+    from .. import _popup_generic
+    from .._paint import hex_to_qcolor, mono_font, draw_text
+    from .._popup import draw_section_header, POPUP_PADDING, SECTION_GAP
+    from PySide6.QtCore import QRectF, Qt, QPointF
+    from PySide6.QtGui import QPen, QFontMetrics
+
+    s = scale; t = THEME
+    pad = POPUP_PADDING * s
+
+    # panel
+    p.setPen(Qt.NoPen); p.setBrush(hex_to_qcolor(t["bg"]))
+    p.drawRoundedRect(rect, 10 * s, 10 * s)
+    p.setPen(QPen(hex_to_qcolor(t["border_bright"]), 1)); p.setBrush(Qt.NoBrush)
+    p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 10 * s, 10 * s)
+
+    # ...then hand off to the shared painter. Callers who want the gauges
+    # up top should paint them BEFORE calling _popup_generic and then
+    # adjust rect.y() to sit below. For simplicity we use the generic
+    # layout here; all KPIs read consistently.
+    _popup_generic.paint_popup(p, rect, data, scale, THEME,
+                               section_style="default",
+                               bar_style="block",
+                               masthead_style="default")

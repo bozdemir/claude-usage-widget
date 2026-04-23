@@ -65,6 +65,126 @@ def _tier_for(cost: float, thresholds: tuple[float, float, float]) -> int:
     return 0
 
 
+def _fmt_tokens(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return str(int(n))
+
+
+def _plan_label(subscription_type: str) -> str:
+    sub = (subscription_type or "").lower()
+    if not sub:
+        return "pay-as-you-go"
+    return f"{sub.capitalize()} plan"
+
+
+def _format_weekly_reset_label(ts: int) -> str:
+    if ts <= 0:
+        return ""
+    from datetime import datetime
+    return datetime.fromtimestamp(ts).strftime("%a %I:%M %p").lstrip("0")
+
+
+def build_popup_data(stats, now: float | None = None):
+    """Project ``UsageStats`` onto the handoff's PopupData schema.
+
+    Avoids a top-level import of ``popup_data`` so callers that don't need
+    the popup shape (e.g. the OSD-only paint dispatch) pay nothing for it.
+    """
+    from .popup_data import PopupData, CostRow, ProjectRow, TickerItem
+    from claude_usage.pricing import MODEL_PRICING
+
+    now_ts = now if now is not None else time.time()
+    osd = from_usage_stats(stats, now=now_ts)
+
+    by_model = dict(getattr(stats, "today_by_model_detailed", {}) or {})
+    # Cost rows — one per (category) in the largest-spend model, mirroring
+    # the layout the design lays out (input / output / cache read / cache write).
+    cost_rows: list = []
+    primary_model = ""
+    if by_model:
+        # Pick the model with the biggest total contribution so the cost
+        # card shows the one the user is actually burning budget on.
+        ranked = sorted(
+            by_model.items(),
+            key=lambda kv: sum(int(kv[1].get(k, 0) or 0) for k in ("input", "output", "cache_read", "cache_creation")),
+            reverse=True,
+        )
+        primary_model, counts = ranked[0]
+        rates = MODEL_PRICING.get(primary_model) or MODEL_PRICING["claude-sonnet-4-6"]
+        per_m = 1_000_000.0
+        spec = [
+            ("input",        "input_tokens",           "input"),
+            ("output",       "output_tokens",          "output"),
+            ("cache read",   "cache_read_tokens",      "cache_read"),
+            ("cache write",  "cache_creation_tokens",  "cache_creation"),
+        ]
+        for label, _legacy, key in spec:
+            tokens = int(counts.get(key, 0) or 0)
+            if tokens <= 0:
+                continue
+            rate = rates[key]
+            value = tokens * rate / per_m
+            cost_rows.append(CostRow(
+                label=label,
+                tokens=_fmt_tokens(tokens),
+                rate=f"${rate:.2f}/M",
+                value_usd=float(value),
+            ))
+
+    top_projects = [
+        ProjectRow(name=name, tokens=_fmt_tokens(int(tok) if tok else 0))
+        for name, tok in list((getattr(stats, "today_by_project", {}) or {}).items())[:5]
+    ]
+
+    # Ticker items for the popup are the same shape osd.ticker_items has,
+    # but handoff's popup module imports its own TickerItem dataclass. Copy
+    # across so the popup painter's isinstance/field access is happy.
+    popup_ticker = [
+        TickerItem(cost_usd=it.cost_usd, tool_label=it.tool_label, tier=it.tier)
+        for it in osd.ticker_items
+    ]
+
+    forecast = getattr(stats, "session_forecast", {}) or {}
+    forecast_text = ""
+    if isinstance(forecast, dict) and forecast.get("eta_seconds"):
+        secs = int(forecast["eta_seconds"])
+        hours, rem = divmod(max(secs, 0), 3600)
+        minutes = rem // 60
+        if hours:
+            forecast_text = f"limit in {hours}h {minutes}m"
+        else:
+            forecast_text = f"limit in {minutes}m"
+
+    return PopupData(
+        session_pct=osd.session_pct,
+        weekly_pct=osd.weekly_pct,
+        session_reset_min=osd.session_reset_min,
+        weekly_reset_hrs=osd.weekly_reset_hrs,
+        weekly_reset_min=osd.weekly_reset_min,
+        subagent_count=osd.subagent_count,
+        is_live=osd.is_live,
+        live_tok_per_min=osd.live_tok_per_min,
+        ticker_items=popup_ticker,
+        plan=_plan_label(getattr(stats, "subscription_type", "")),
+        weekly_reset_label=_format_weekly_reset_label(int(getattr(stats, "weekly_reset", 0))),
+        session_forecast=forecast_text,
+        spark_5h=list(getattr(stats, "session_history", []) or []),
+        spark_7d=list(getattr(stats, "weekly_history", []) or []),
+        heat_90d=list(getattr(stats, "daily_heatmap", []) or []),
+        heat_52w=list(getattr(stats, "yearly_heatmap", []) or []),
+        cost_today_usd=float(getattr(stats, "today_cost", 0.0) or 0.0),
+        cache_saved_usd=float(getattr(stats, "cache_savings", 0.0) or 0.0),
+        cost_model=primary_model or "unknown",
+        cost_rows=cost_rows,
+        top_projects=top_projects,
+        tips=list(getattr(stats, "tips", []) or []),
+        weekly_report=str(getattr(stats, "weekly_report_text", "") or ""),
+    )
+
+
 def from_usage_stats(
     stats, now: float | None = None, ticker_offset: float = 0.0,
 ) -> SkinData:
