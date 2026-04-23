@@ -150,7 +150,7 @@ def scan_ticker_items(claude_dir: str, now: float | None = None) -> list[TickerI
 
     for path in _iter_recent_jsonl(projects_dir, cutoff_mtime):
         try:
-            f = open(path)
+            f = open(path, encoding="UTF-8")
         except OSError:
             continue
         with f:

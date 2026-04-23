@@ -115,7 +115,7 @@ def analyze_cache_opportunities(
 
         project = os.path.basename(os.path.dirname(jsonl_path))
         try:
-            f = open(jsonl_path)
+            f = open(jsonl_path, encoding="UTF-8")
         except OSError:
             continue
         with f:

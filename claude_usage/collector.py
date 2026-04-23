@@ -190,7 +190,7 @@ def _parse_tokens_file(
     those are the ones that carry the ``usage`` block with ``output_tokens``.
     """
     try:
-        f = open(path)
+        f = open(path, encoding="UTF-8")
     except OSError:
         return
 
