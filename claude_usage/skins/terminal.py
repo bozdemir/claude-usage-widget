@@ -20,8 +20,11 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 
 from ._paint import (
     draw_ascii_bar, draw_block_bar, draw_heatmap_52w, draw_sparkline_bars,
-    draw_text, hex_to_qcolor, mono_font,
+    draw_text, draw_ticker_marquee, hex_to_qcolor, mono_font,
 )
+
+
+WANTS_TICKER = True
 
 
 THEME = {
@@ -145,34 +148,11 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
         p.drawLine(QPointF(gx, y_tick), QPointF(gx + dash_w, y_tick))
         gx += dash_w * 2
 
-    # Scrolling marquee. Layout every item end-to-end once, then render
-    # two side-by-side copies shifted by `w - (offset % strip_w)` so the
-    # tape wraps seamlessly as the overlay timer advances the offset.
-    ticker_colors = [t["text_dim"], t["text_link"], t["warn"], t["crit"]]
+    # Scrolling marquee via the shared helper.
+    ticker_colors = (t["text_dim"], t["text_link"], t["warn"], t["crit"])
     y_tick_base = y_tick + 4 * s + QFontMetrics(ticker_f).ascent()
-    ordered = list(reversed(data.ticker_items or []))  # enter from right
-    if ordered:
-        sep_gap = 10 * s
-        fm_tick = QFontMetrics(ticker_f)
-        strings = [
-            (f"${it.cost_usd:.3f} {it.tool_label}", ticker_colors[it.tier])
-            for it in ordered
-        ]
-        widths = [fm_tick.horizontalAdvance(s_) + sep_gap for s_, _ in strings]
-        strip_w = sum(widths) or 1
-        p.save()
-        p.setClipRect(QRectF(x, y_tick, w, fm_tick.height() + 6 * s))
-        offset = float(getattr(data, "ticker_offset", 0.0)) % strip_w
-        x_start = x + w - offset
-        copies = max(2, int(w // max(strip_w, 1)) + 2)
-        for repeat in range(copies):
-            gx = x_start + repeat * strip_w
-            for (txt, color_hex), width in zip(strings, widths):
-                if gx + width < x:
-                    gx += width
-                    continue
-                if gx > x + w:
-                    break
-                draw_text(p, gx, y_tick_base, txt, hex_to_qcolor(color_hex), ticker_f)
-                gx += width
-        p.restore()
+    draw_ticker_marquee(
+        p, x, y_tick_base, w,
+        data.ticker_items, data.ticker_offset,
+        ticker_colors, ticker_f, sep_gap_px=10 * s,
+    )

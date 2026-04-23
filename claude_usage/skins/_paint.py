@@ -163,6 +163,56 @@ def draw_heatmap_52w(
         p.drawRect(QRectF(cx, cy, cell, cell))
 
 
+def draw_ticker_marquee(
+    p: QPainter,
+    x: float,
+    y_baseline: float,
+    clip_w: float,
+    items: list,
+    offset: float,
+    color_hex_by_tier: tuple[str, str, str, str],
+    font: QFont,
+    sep_gap_px: float = 10.0,
+    format_fn=lambda it: f"${it.cost_usd:.3f} {it.tool_label}",
+) -> float:
+    """Scrolling ticker tape — two end-to-end copies wrapped by ``offset``.
+
+    ``offset`` is pixels scrolled so far (modulo is taken internally), so
+    callers can feed a monotonically-increasing value from a QTimer and
+    get seamless wrap without ever resetting.
+
+    Returns the total strip width so callers can reason about cadence.
+    """
+    ordered = list(reversed(items or []))
+    if not ordered:
+        return 0.0
+    fm = QFontMetrics(font)
+    strings = [format_fn(it) for it in ordered]
+    widths = [fm.horizontalAdvance(s) + sep_gap_px for s in strings]
+    strip_w = sum(widths) or 1
+    height = fm.height()
+    p.save()
+    p.setClipRect(QRectF(x, y_baseline - fm.ascent(), clip_w, height + 2))
+    cur_off = float(offset) % strip_w
+    x_start = x + clip_w - cur_off
+    copies = max(2, int(clip_w // max(strip_w, 1)) + 2)
+    for repeat in range(copies):
+        gx = x_start + repeat * strip_w
+        for (txt, width, it) in zip(strings, widths, ordered):
+            if gx + width < x:
+                gx += width
+                continue
+            if gx > x + clip_w:
+                break
+            draw_text(
+                p, gx, y_baseline, txt,
+                hex_to_qcolor(color_hex_by_tier[it.tier]), font,
+            )
+            gx += width
+    p.restore()
+    return strip_w
+
+
 def draw_sparkline_bars(
     p: QPainter,
     x: float,

@@ -17,7 +17,12 @@ from __future__ import annotations
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 
-from ._paint import draw_block_bar, draw_text, hex_to_qcolor, mono_font, ui_font
+from ._paint import (
+    draw_block_bar, draw_text, draw_ticker_marquee, hex_to_qcolor, mono_font, ui_font,
+)
+
+
+WANTS_TICKER = True
 
 
 THEME = {
@@ -43,9 +48,10 @@ THEME = {
 }
 
 METRICS = {
-    "osd_width": 380, "osd_height": 172, "osd_radius": 8, "osd_padding": 14,
+    "osd_width": 380, "osd_height": 196, "osd_radius": 8, "osd_padding": 14,
     "popup_width": 540, "popup_padding": 18,
     "ring_size": 58, "ring_stroke": 6, "row_bar_height": 4,
+    "ticker_h": 24,
 }
 
 FONTS = {
@@ -143,3 +149,19 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
                        pct, hex_to_qcolor(t["very_dim"]),
                        hex_to_qcolor(color_hex), radius=0)
         y_cursor += fm.height() + fm_metric.height() + 12 * s
+
+    # Ticker strip along the bottom — separator line above, 5-bucket
+    # quartile colouring, scrolling right-to-left.
+    ticker_h = m["ticker_h"] * s
+    y_sep = rect.bottom() - ticker_h - 2 * s
+    p.setPen(hex_to_qcolor(t["border"]))
+    p.drawLine(QPointF(x, y_sep), QPointF(x + w, y_sep))
+    ticker_f = mono_font(FONTS["label_pt"] * s, family=FONTS["family_mono"])
+    fm_t = QFontMetrics(ticker_f)
+    ticker_colors = (t["text_dim"], t["accent"], t["warn"], t["crit"])
+    y_base = y_sep + 6 * s + fm_t.ascent()
+    draw_ticker_marquee(
+        p, x, y_base, w,
+        data.ticker_items, data.ticker_offset,
+        ticker_colors, ticker_f, sep_gap_px=12 * s,
+    )

@@ -18,7 +18,12 @@ import math
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 
-from ._paint import draw_ring, draw_text, hex_to_qcolor, mono_font
+from ._paint import (
+    draw_ring, draw_text, draw_ticker_marquee, hex_to_qcolor, mono_font,
+)
+
+
+WANTS_TICKER = True
 
 
 THEME = {
@@ -45,9 +50,10 @@ THEME = {
 }
 
 METRICS = {
-    "osd_width": 360, "osd_height": 196, "osd_radius": 10, "osd_padding": 14,
+    "osd_width": 360, "osd_height": 220, "osd_radius": 10, "osd_padding": 14,
     "ring_size": 118, "ring_stroke": 10,
     "ring_size_popup": 140, "ring_stroke_popup": 12,
+    "ticker_h": 22,
 }
 
 FONTS = {
@@ -152,3 +158,24 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     draw_text(p, cx - fm_n.horizontalAdvance(tm) / 2,
               cy + fm_n.ascent() + 2 * s, tm,
               hex_to_qcolor(t["good"]), num_f)
+
+    # Ticker strip along the bottom — bordered separator + amber-tiered
+    # quartile colours matching the cockpit palette.
+    ticker_h = m["ticker_h"] * s
+    y_tick_top = rect.bottom() - ticker_h
+    pen = QPen(hex_to_qcolor(t["border_bright"])); pen.setWidthF(1 * s)
+    p.setPen(pen)
+    p.drawLine(
+        QPointF(rect.x() + m["osd_padding"] * s, y_tick_top),
+        QPointF(rect.right() - m["osd_padding"] * s, y_tick_top),
+    )
+    ticker_f = mono_font(FONTS["label_pt"] * s, family=FONTS["family_mono"])
+    fm_tick = QFontMetrics(ticker_f)
+    y_tick_base = y_tick_top + 6 * s + fm_tick.ascent()
+    ticker_colors = (t["text_dim"], t["good"], t["accent"], t["crit"])
+    draw_ticker_marquee(
+        p, rect.x() + m["osd_padding"] * s, y_tick_base,
+        rect.width() - 2 * m["osd_padding"] * s,
+        data.ticker_items, data.ticker_offset,
+        ticker_colors, ticker_f, sep_gap_px=12 * s,
+    )

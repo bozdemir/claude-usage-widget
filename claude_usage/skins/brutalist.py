@@ -18,7 +18,10 @@ from __future__ import annotations
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen
 
-from ._paint import draw_text, hex_to_qcolor, mono_font
+from ._paint import draw_text, draw_ticker_marquee, hex_to_qcolor, mono_font
+
+
+WANTS_TICKER = True
 
 
 THEME = {
@@ -43,8 +46,8 @@ THEME = {
 }
 
 METRICS = {
-    "osd_width": 360, "osd_height": 200, "osd_radius": 0, "osd_padding": 12,
-    "border_width": 2,
+    "osd_width": 360, "osd_height": 224, "osd_radius": 0, "osd_padding": 12,
+    "border_width": 2, "ticker_h": 22,
 }
 
 FONTS = {"family_mono": "Space Mono", "body_pt": 10, "title_pt": 11}
@@ -123,3 +126,20 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     yy = row(yy, "WEEKLY", data.weekly_pct,
              f"RESETS {data.weekly_reset_hrs}H {data.weekly_reset_min}M",
              t["ink"])
+
+    # 2px rule above the ticker strip — matches the Swiss-grid section
+    # break at the top of the panel.
+    y_tick_rule = rect.bottom() - METRICS["ticker_h"] * s
+    pen = QPen(hex_to_qcolor(t["ink"])); pen.setWidthF(2 * s)
+    p.setPen(pen)
+    p.drawLine(QPointF(x, y_tick_rule), QPointF(x + w, y_tick_rule))
+    ticker_f = mono_font(9 * s, bold=True, family=FONTS["family_mono"])
+    fm_tick = QFontMetrics(ticker_f)
+    y_tick_base = y_tick_rule + 6 * s + fm_tick.ascent()
+    # Brutalist palette — red hot, black warn, muted cool/dim.
+    ticker_colors = (t["text_dim"], t["ink"], t["ink"], t["accent"])
+    draw_ticker_marquee(
+        p, x, y_tick_base, w,
+        data.ticker_items, data.ticker_offset,
+        ticker_colors, ticker_f, sep_gap_px=10 * s,
+    )

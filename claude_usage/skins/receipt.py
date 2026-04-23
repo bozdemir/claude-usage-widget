@@ -19,7 +19,12 @@ from __future__ import annotations
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen
 
-from ._paint import draw_block_bar, draw_text, hex_to_qcolor, mono_font
+from ._paint import (
+    draw_block_bar, draw_text, draw_ticker_marquee, hex_to_qcolor, mono_font,
+)
+
+
+WANTS_TICKER = True
 
 
 THEME = {
@@ -44,9 +49,9 @@ THEME = {
 }
 
 METRICS = {
-    "osd_width": 340, "osd_height": 210, "osd_radius": 2, "osd_padding": 16,
+    "osd_width": 340, "osd_height": 234, "osd_radius": 2, "osd_padding": 16,
     "popup_width": 540, "popup_padding": 26,
-    "grain_step_px": 3,
+    "grain_step_px": 3, "ticker_h": 22,
 }
 
 FONTS = {"family_mono": "JetBrains Mono", "body_pt": 10, "title_pt": 11}
@@ -134,8 +139,25 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     p.setPen(Qt.NoPen); p.setBrush(hex_to_qcolor(t["ink"]))
     p.drawRect(QRectF(x, yy, w * data.weekly_pct, 8 * s))
 
-    # thank-you footer
+    # Ticker marquee (between the weekly bar and the thank-you footer).
     yy += 8 * s + 6 * s
+    ticker_f = mono_font(FONTS["body_pt"] * s * 0.85, family=FONTS["family_mono"])
+    fm_t = QFontMetrics(ticker_f)
+    # Dashed top rule — matches the stationery feel.
+    pen = QPen(hex_to_qcolor(t["rule"])); pen.setWidthF(1)
+    pen.setDashPattern([4, 3]); p.setPen(pen)
+    p.drawLine(QPointF(x, yy), QPointF(x + w, yy))
+    yy_base = yy + 6 * s + fm_t.ascent()
+    # Receipt colors — black for most, red for hot (>= dollar).
+    ticker_colors = (t["text_dim"], t["ink"], t["ink"], t["accent"])
+    draw_ticker_marquee(
+        p, x, yy_base, w,
+        data.ticker_items, data.ticker_offset,
+        ticker_colors, ticker_f, sep_gap_px=8 * s,
+    )
+    yy = yy_base + fm_t.descent() + 6 * s
+
+    # thank-you footer
     foot = "— THANK YOU —"
     fw = QFontMetrics(small_f).horizontalAdvance(foot)
     draw_text(p, rect.x() + (rect.width() - fw) / 2,

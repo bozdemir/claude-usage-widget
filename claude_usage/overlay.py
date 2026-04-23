@@ -236,10 +236,12 @@ class UsageOverlay(QWidget):
         self._active_subagents = max(0, int(getattr(stats, "active_subagent_count", 0) or 0))
         self._ticker_items = list(getattr(stats, "ticker_items", []) or [])
         # Animate whenever we have items and a view that actually draws the
-        # ticker — default bars mode, or a skin that marquees its own tape
-        # (terminal is the only one today; it reads data.ticker_offset).
-        skin_wants_ticker = self._skin is not None and self._ticker_items and (
-            self._skin.THEME.get("style") == "terminal"
+        # ticker — default bars mode, or a skin that opts in via its
+        # module-level WANTS_TICKER flag.
+        skin_wants_ticker = (
+            self._skin is not None
+            and self._ticker_items
+            and getattr(self._skin, "WANTS_TICKER", False)
         )
         ticker_would_draw = not self._minimized and self._ticker_items and (
             (self._ticker_enabled and self._view_mode == VIEW_MODE_BARS and self._skin is None)
