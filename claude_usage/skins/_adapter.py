@@ -37,6 +37,10 @@ class SkinData:
     is_live: bool = False
     subagent_count: int = 0
     ticker_items: list[SkinTickerItem] = field(default_factory=list)
+    # Pixels scrolled so far on the ticker marquee. Skins that animate
+    # their ticker (terminal, strip, ...) modulo this against the total
+    # strip width; static skins ignore it.
+    ticker_offset: float = 0.0
 
 
 def _quartile_thresholds(items: Sequence) -> tuple[float, float, float]:
@@ -61,7 +65,9 @@ def _tier_for(cost: float, thresholds: tuple[float, float, float]) -> int:
     return 0
 
 
-def from_usage_stats(stats, now: float | None = None) -> SkinData:
+def from_usage_stats(
+    stats, now: float | None = None, ticker_offset: float = 0.0,
+) -> SkinData:
     """Project a ``UsageStats`` snapshot onto the handoff's field layout."""
     now_ts = now if now is not None else time.time()
 
@@ -102,4 +108,5 @@ def from_usage_stats(stats, now: float | None = None) -> SkinData:
         is_live=is_live,
         subagent_count=int(getattr(stats, "active_subagent_count", 0) or 0),
         ticker_items=ticker_items,
+        ticker_offset=float(ticker_offset),
     )

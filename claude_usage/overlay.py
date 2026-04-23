@@ -235,14 +235,15 @@ class UsageOverlay(QWidget):
             self._live_tpm = 0.0
         self._active_subagents = max(0, int(getattr(stats, "active_subagent_count", 0) or 0))
         self._ticker_items = list(getattr(stats, "ticker_items", []) or [])
-        # Only animate when the ticker is on, items exist, the OSD is in
-        # its full (non-minimized) form, AND the current view mode draws
-        # the ticker (bars mode only; gauge view suppresses it).
-        ticker_would_draw = (
-            self._ticker_enabled
-            and self._ticker_items
-            and not self._minimized
-            and self._view_mode == VIEW_MODE_BARS
+        # Animate whenever we have items and a view that actually draws the
+        # ticker — default bars mode, or a skin that marquees its own tape
+        # (terminal is the only one today; it reads data.ticker_offset).
+        skin_wants_ticker = self._skin is not None and self._ticker_items and (
+            self._skin.THEME.get("style") == "terminal"
+        )
+        ticker_would_draw = not self._minimized and self._ticker_items and (
+            (self._ticker_enabled and self._view_mode == VIEW_MODE_BARS and self._skin is None)
+            or skin_wants_ticker
         )
         if ticker_would_draw:
             if not self._ticker_timer.isActive():
@@ -436,7 +437,9 @@ class UsageOverlay(QWidget):
             from PySide6.QtCore import QRectF
             p.setRenderHint(QPainter.Antialiasing, True)
             p.setRenderHint(QPainter.TextAntialiasing, True)
-            data = _skin_data_from_stats(self._last_stats)
+            data = _skin_data_from_stats(
+                self._last_stats, ticker_offset=self._ticker_offset,
+            )
             try:
                 self._skin.paint_osd(p, QRectF(0, 0, w, h), data, self._scale)
                 return
