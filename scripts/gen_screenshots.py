@@ -29,7 +29,11 @@ from PySide6.QtWidgets import QApplication
 
 from claude_usage.collector import collect_all
 from claude_usage.config import load_config
-from claude_usage.overlay import UsageOverlay
+from claude_usage.overlay import (
+    VIEW_MODE_BARS,
+    VIEW_MODE_GAUGE,
+    UsageOverlay,
+)
 from claude_usage.themes import THEMES
 from claude_usage.ticker import TickerItem
 from claude_usage.widget import UsagePopup
@@ -114,7 +118,9 @@ def main() -> int:
         tcfg = {**cfg, "theme": theme_name, "show_ticker": True, "osd_opacity": 1.0}
         print(f"  → {theme_name}")
 
-        overlay = UsageOverlay(tcfg)
+        # Bars view.
+        bars_cfg = {**tcfg, "osd_view_mode": VIEW_MODE_BARS}
+        overlay = UsageOverlay(bars_cfg)
         overlay.update_stats(stats)
         # Advance the ticker into mid-scroll so the static shot actually
         # shows items on the tape (at offset=0 the items haven't entered
@@ -122,9 +128,21 @@ def main() -> int:
         overlay._ticker_offset = 260.0
         overlay.show()
         _pump(app)
-        osd_path = os.path.join(OUTPUT_DIR, f"osd-{theme_name}.png")
-        overlay.grab().save(osd_path, "PNG")
+        overlay.grab().save(
+            os.path.join(OUTPUT_DIR, f"osd-{theme_name}.png"), "PNG",
+        )
         overlay.close()
+
+        # Gauge view — same stats, different renderer.
+        gauge_cfg = {**tcfg, "osd_view_mode": VIEW_MODE_GAUGE}
+        gauge = UsageOverlay(gauge_cfg)
+        gauge.update_stats(stats)
+        gauge.show()
+        _pump(app)
+        gauge.grab().save(
+            os.path.join(OUTPUT_DIR, f"osd-gauge-{theme_name}.png"), "PNG",
+        )
+        gauge.close()
 
         popup = UsagePopup(tcfg)
         popup.resize(POPUP_WIDTH, 400)

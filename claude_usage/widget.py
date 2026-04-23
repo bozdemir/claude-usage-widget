@@ -798,6 +798,21 @@ class ClaudeUsageApp(QObject):
             a.triggered.connect(lambda _checked=False, v=pct / 100.0: self.overlay.set_opacity(v))
             opacity_menu.addAction(a)
 
+        # View mode submenu — bars vs gauges, radio-grouped.
+        from PySide6.QtGui import QActionGroup as _QActionGroup
+        from claude_usage.overlay import VIEW_MODES
+        view_menu = m.addMenu("OSD View")
+        self._view_group = _QActionGroup(view_menu)
+        self._view_group.setExclusive(True)
+        self._view_actions: dict[str, QAction] = {}
+        for mode in VIEW_MODES:
+            a = QAction(mode.capitalize(), view_menu)
+            a.setCheckable(True)
+            a.setActionGroup(self._view_group)
+            a.triggered.connect(lambda _checked=False, md=mode: self._on_pick_view_mode(md))
+            view_menu.addAction(a)
+            self._view_actions[mode] = a
+
         # Theme submenu — radio group so only one is ticked at a time. The
         # selection auto-persists to the user config so a restart keeps it.
         from PySide6.QtGui import QActionGroup
@@ -842,13 +857,22 @@ class ClaudeUsageApp(QObject):
         self.config["theme"] = name
         self._persist_config()
 
+    def _on_pick_view_mode(self, mode: str) -> None:
+        self.overlay.set_view_mode(mode)
+        self.config["osd_view_mode"] = mode
+        self._persist_config()
+
     def _sync_menu_state(self) -> None:
         """Refresh the tick marks on checkable items when the menu opens."""
         self._act_ticker.setChecked(self.overlay.is_ticker_enabled())
         current_theme = str(self.config.get("theme", "default"))
-        action = self._theme_actions.get(current_theme)
-        if action is not None:
-            action.setChecked(True)
+        theme_act = self._theme_actions.get(current_theme)
+        if theme_act is not None:
+            theme_act.setChecked(True)
+        current_view = self.overlay.view_mode()
+        view_act = self._view_actions.get(current_view)
+        if view_act is not None:
+            view_act.setChecked(True)
 
     def _persist_config(self) -> None:
         """Write the in-memory config to the user's XDG config file.

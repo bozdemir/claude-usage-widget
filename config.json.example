@@ -9,5 +9,6 @@
     "notifications_enabled": true,
     "notify_thresholds": [0.75, 0.90],
     "theme": "default",
-    "show_ticker": true
+    "show_ticker": true,
+    "osd_view_mode": "bars"
 }

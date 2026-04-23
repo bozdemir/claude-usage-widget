@@ -18,9 +18,24 @@ A cross-platform desktop widget that displays your Claude Code usage limits in r
   <em>Click the OSD to open the detail popup: forecasts, 5h/7d sparklines, 90-day heatmap, 52-week GitHub-style calendar, per-model cost breakdown with Anthropic-published rates, top projects, tips, and a Claude-authored weekly summary.</em>
 </p>
 
+### OSD view modes
+
+Two layouts, switch with right-click → OSD View ▸. Selection persists to `~/.config/claude-usage/config.json` so a restart keeps it.
+
+<table align="center">
+  <tr>
+    <td align="center"><b>Bars</b> — default, includes the scrolling ticker</td>
+    <td align="center"><b>Gauge</b> — circular rings, car-dashboard vibe</td>
+  </tr>
+  <tr>
+    <td><img src="https://raw.githubusercontent.com/bozdemir/claude-usage-widget/main/screenshots/osd-default.png" alt="bars view" width="300" /></td>
+    <td><img src="https://raw.githubusercontent.com/bozdemir/claude-usage-widget/main/screenshots/osd-gauge-default.png" alt="gauge view" width="300" /></td>
+  </tr>
+</table>
+
 ### Themes
 
-Five built-in palettes. Right-click the OSD → Theme ▸ to switch instantly; the choice persists to `~/.config/claude-usage/config.json` so a restart keeps it.
+Five built-in palettes. Right-click the OSD → Theme ▸ to switch instantly; the choice also persists to `~/.config/claude-usage/config.json`.
 
 <table align="center">
   <tr>
@@ -44,6 +59,8 @@ Five built-in palettes. Right-click the OSD → Theme ▸ to switch instantly; t
     <td></td>
   </tr>
 </table>
+
+Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.png`.
 
 ## Features
 
@@ -82,7 +99,7 @@ Five built-in palettes. Right-click the OSD → Theme ▸ to switch instantly; t
 ```bash
 pip install --user --upgrade claude-usage-widget
 claude-usage              # launches the OSD overlay
-claude-usage --version    # 0.4.3
+claude-usage --version    # 0.4.4
 ```
 
 That's it — no `apt`, no `brew`, no PyGObject, no rumps. PySide6 ships Qt in the wheel, so the widget is fully self-contained.
@@ -121,6 +138,7 @@ python3 main.py
 - **Details…** -- open the detail popup
 - **Refresh** -- force an immediate data refresh
 - **OSD Opacity** -- 100% / 75% / 50% / 25%
+- **OSD View ▸** -- switch between **Bars** (default — progress bars + cost ticker) and **Gauge** (two circular rings); auto-persisted
 - **Theme ▸** -- pick one of the 5 palettes; the choice persists to `~/.config/claude-usage/config.json` so a restart keeps it
 - **Minimize / Restore** -- collapse the OSD to a thin progress strip
 - **Show cost ticker** -- toggle the scrolling per-turn cost strip on the OSD

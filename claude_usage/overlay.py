@@ -37,6 +37,16 @@ from claude_usage.ticker import TickerItem
 BASE_WIDTH = 260
 BASE_HEIGHT = 100
 TICKER_STRIP_HEIGHT = 22
+# Gauge view is slightly taller than bars because the rings + label + reset
+# stack vertically inside each column. No ticker in this view (it would
+# collide with the reset line under each ring).
+GAUGE_HEIGHT = 130
+
+# Supported OSD view modes. Kept as string constants so config files and
+# tests don't have to import an enum.
+VIEW_MODE_BARS = "bars"
+VIEW_MODE_GAUGE = "gauge"
+VIEW_MODES = (VIEW_MODE_BARS, VIEW_MODE_GAUGE)
 OSD_MARGIN = 16
 OSD_RADIUS = 12
 OSD_BAR_HEIGHT = 6
@@ -137,6 +147,10 @@ class UsageOverlay(QWidget):
         # User toggle — default on, overridable via config; runtime flip
         # lives in the right-click menu.
         self._ticker_enabled: bool = bool(cfg.get("show_ticker", True))
+        # "bars" (default) or "gauge" — the right-click menu toggles this and
+        # persists to config.
+        raw_mode = str(cfg.get("osd_view_mode", VIEW_MODE_BARS))
+        self._view_mode: str = raw_mode if raw_mode in VIEW_MODES else VIEW_MODE_BARS
 
         # Drag tracking
         self._press_pos: QPoint | None = None        # mouse pos on press (global)
@@ -195,6 +209,22 @@ class UsageOverlay(QWidget):
             self._ticker_offset = 0.0
         self.update()  # schedule a paintEvent
 
+    def set_view_mode(self, mode: str) -> None:
+        """Switch between bar and gauge rendering; resizes the OSD to match."""
+        if mode not in VIEW_MODES or mode == self._view_mode:
+            return
+        self._view_mode = mode
+        self._apply_size()
+        # Gauge view has no ticker — stop the animation to save CPU.
+        if mode == VIEW_MODE_GAUGE:
+            self._ticker_timer.stop()
+        elif self._ticker_enabled and self._ticker_items and not self._minimized:
+            self._ticker_timer.start()
+        self.update()
+
+    def view_mode(self) -> str:
+        return self._view_mode
+
     def set_ticker_enabled(self, enabled: bool) -> None:
         """Show/hide the ticker strip. Resizes the OSD to match."""
         enabled = bool(enabled)
@@ -241,9 +271,14 @@ class UsageOverlay(QWidget):
     # ------------------------------------------------------------- internals
 
     def _apply_size(self) -> None:
-        """Resize the window to match ``_scale``, ``_minimized``, and ticker state."""
+        """Resize the window to match ``_scale``, view mode, and chrome state."""
         width = int(BASE_WIDTH * self._scale)
-        base = BASE_HEIGHT + (TICKER_STRIP_HEIGHT if self._ticker_enabled else 0)
+        if self._view_mode == VIEW_MODE_GAUGE:
+            # Gauge mode has no ticker — the reset line under each ring
+            # already occupies that footer real estate.
+            base = GAUGE_HEIGHT
+        else:
+            base = BASE_HEIGHT + (TICKER_STRIP_HEIGHT if self._ticker_enabled else 0)
         height = MINIMIZED_HEIGHT if self._minimized else int(base * self._scale)
         # Preserve the top-right corner when resizing so the overlay doesn't
         # visually drift as the user scrolls to scale.
@@ -325,6 +360,10 @@ class UsageOverlay(QWidget):
             self._paint_minimized(p, w, h)
             return
 
+        if self._view_mode == VIEW_MODE_GAUGE:
+            self._paint_gauge(p, w, h)
+            return
+
         self._paint_full(p, w, h)
 
     def _paint_minimized(self, p: QPainter, w: int, h: int) -> None:
@@ -337,6 +376,97 @@ class UsageOverlay(QWidget):
             fill_w = max(w * min(self._session_pct, 1.0), 4)
             p.setBrush(_bar_color(self._session_pct, self._theme))
             p.drawRoundedRect(QRectF(0, 0, fill_w, h), 3, 3)
+
+    def _paint_gauge(self, p: QPainter, w: int, h: int) -> None:
+        """Two circular-ring gauges (Session + Weekly) side-by-side.
+
+        Each ring fills clockwise from 12 o'clock as utilisation rises. The
+        ring colour tracks ``_bar_color`` so a turning-red session is just as
+        alarming here as in bars mode.
+        """
+        s = self._scale
+        radius = OSD_RADIUS * s
+
+        # Background panel.
+        bg = _hex_to_qcolor(self._theme["bg"], self._opacity)
+        p.setPen(Qt.NoPen)
+        p.setBrush(bg)
+        p.drawRoundedRect(QRectF(0, 0, w, h), radius, radius)
+
+        # Two columns splitting the panel; each column is one gauge stack.
+        col_w = w / 2
+        ring_d = max(50.0, min(col_w * 0.58, 80 * s))
+        ring_stroke = max(4.0, 7 * s)
+        # Centre each ring inside its column, with room below for labels.
+        for idx, (label, pct, reset_ts) in enumerate((
+            ("Session", self._session_pct, self._session_reset),
+            ("Weekly",  self._weekly_pct,  self._weekly_reset),
+        )):
+            cx = col_w * idx + col_w / 2
+            cy = 12 * s + ring_d / 2
+            fill_color = _bar_color(pct, self._theme)
+            self._draw_ring(p, cx, cy, ring_d, ring_stroke, pct, fill_color)
+
+            # Percentage text centred in the ring.
+            pct_text = f"{int(pct * 100)}%"
+            pct_font_pt = max(10, int(13 * s))
+            p.setFont(QFont("monospace", pct_font_pt, QFont.Bold))
+            p.setPen(_hex_to_qcolor(self._theme["text_primary"]))
+            fm = p.fontMetrics()
+            pct_w = fm.horizontalAdvance(pct_text)
+            p.drawText(QPointF(cx - pct_w / 2, cy + fm.ascent() / 2 - 2 * s), pct_text)
+
+            # Label + reset beneath the ring.
+            label_y = cy + ring_d / 2 + 14 * s
+            label_font_pt = max(8, int(9 * s))
+            p.setFont(QFont("monospace", label_font_pt, QFont.Bold))
+            p.setPen(_hex_to_qcolor(self._theme["text_primary"]))
+            fm = p.fontMetrics()
+            lw = fm.horizontalAdvance(label)
+            p.drawText(QPointF(cx - lw / 2, label_y), label)
+
+            reset_label = _format_reset_short(reset_ts)
+            if reset_label:
+                reset_font_pt = max(7, int(7.5 * s))
+                p.setFont(QFont("monospace", reset_font_pt))
+                p.setPen(_hex_to_qcolor(self._theme["text_dim"]))
+                fm = p.fontMetrics()
+                rw = fm.horizontalAdvance(reset_label)
+                p.drawText(QPointF(cx - rw / 2, label_y + 12 * s), reset_label)
+
+    def _draw_ring(
+        self,
+        p: QPainter,
+        cx: float,
+        cy: float,
+        diameter: float,
+        stroke: float,
+        fraction: float,
+        fill_color: QColor,
+    ) -> None:
+        """Draw the track + filled-arc pair that make up one gauge."""
+        from PySide6.QtGui import QPen
+        track_pen = QPen(_hex_to_qcolor(self._theme["bar_track"], 0.7))
+        track_pen.setWidthF(stroke)
+        track_pen.setCapStyle(Qt.FlatCap)
+        p.setPen(track_pen)
+        p.setBrush(Qt.NoBrush)
+        rect = QRectF(cx - diameter / 2, cy - diameter / 2, diameter, diameter)
+        p.drawEllipse(rect)
+
+        if fraction <= 0:
+            return
+
+        # Fill arc — Qt measures angles in sixteenths of a degree. 90° * 16
+        # starts at 12 o'clock; a negative span sweeps clockwise as fraction
+        # grows, matching how the bar version fills left→right.
+        fill_pen = QPen(fill_color)
+        fill_pen.setWidthF(stroke)
+        fill_pen.setCapStyle(Qt.RoundCap)
+        p.setPen(fill_pen)
+        start_angle = 90 * 16
+        span = -int(min(1.0, max(0.0, fraction)) * 360 * 16)
+        p.drawArc(rect, start_angle, span)
 
     def _paint_full(self, p: QPainter, w: int, h: int) -> None:
         s = self._scale
