@@ -3,8 +3,8 @@ class ClaudeUsageWidget < Formula
 
   desc "Desktop widget that shows real-time Claude Code usage limits and cost"
   homepage "https://github.com/bozdemir/claude-usage-widget"
-  url "https://files.pythonhosted.org/packages/a0/cc/a04fcecfad536abd50d3e50b695bc449ca907afc210d7c249fae63905bf5/claude_usage_widget-0.4.2.tar.gz"
-  sha256 "c4ddea9de8367f71c19cd57cf5f78b73fdf96ce737530040bc0e4ab94886c512"
+  url "https://files.pythonhosted.org/packages/a9/54/13a38aa7454ed4edebb6084d65573a50f649a57bb8741ff0cdf3cefe52c9/claude_usage_widget-0.4.3.tar.gz"
+  sha256 "51d32c3d588bc941efe5d71f56c02a52bc629d25b36cce200d880574c6bc547f"
   license "MIT"
 
   depends_on "python@3.12"
@@ -19,6 +19,6 @@ class ClaudeUsageWidget < Formula
   end
 
   test do
-    assert_match "0.4.2", shell_output("#{bin}/claude-usage --version")
+    assert_match "0.4.3", shell_output("#{bin}/claude-usage --version")
   end
 end
