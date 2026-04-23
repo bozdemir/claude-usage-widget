@@ -8,5 +8,6 @@
     "osd_scale": 1.0,
     "notifications_enabled": true,
     "notify_thresholds": [0.75, 0.90],
-    "theme": "default"
+    "theme": "default",
+    "show_ticker": true
 }

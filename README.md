@@ -24,6 +24,8 @@ A cross-platform desktop widget that displays your Claude Code usage limits in r
 - **Real API data** -- rate-limit utilisation read straight from `anthropic-ratelimit-unified-*` response headers
 - **OSD overlay** -- transparent, frameless, always-on-top; left-click opens the details popup, right-click shows a context menu
 - **Live token stream** -- `● LIVE 5.3k tok/min` badge on the OSD while a Claude Code session is actively writing, derived from the conversation JSONLs
+- **Per-turn cost ticker** -- a scrolling strip at the bottom of the OSD shows the USD cost of each assistant turn as it lands (`$0.156 ← Bash · 116`), colour-coded by quartile within the visible window so the tape always stays visually varied. Toggle via right-click → "Show cost ticker" or set `"show_ticker": false` in `config.json`.
+- **Subagent rozet** -- when you spawn parallel subagents via the Task tool, the `CLAUDE` title gets a `⚙ N` counter next to it showing how many are currently writing. Hidden when zero so single-session use isn't cluttered.
 - **Detail popup** -- usage bars, forecast, 5h/7d sparklines, 90-day heatmap, 52-week GitHub-style calendar, per-model cost breakdown, top projects, active sessions (resizable)
 - **Auto-refresh** -- every 30 seconds by default, fully configurable
 - **Resizable** -- scroll wheel on the OSD (0.6x -- 2.0x); drag the popup window edges to widen it
@@ -53,7 +55,7 @@ A cross-platform desktop widget that displays your Claude Code usage limits in r
 ```bash
 pip install --user --upgrade claude-usage-widget
 claude-usage              # launches the OSD overlay
-claude-usage --version    # 0.4.1
+claude-usage --version    # 0.4.2
 ```
 
 That's it — no `apt`, no `brew`, no PyGObject, no rumps. PySide6 ships Qt in the wheel, so the widget is fully self-contained.
@@ -126,6 +128,7 @@ cp config.json.example config.json
 | `weekly_token_limit` | `25000000` | Weekly token limit for local tracking |
 | `claude_dir` | `~/.claude` | Path to the Claude Code data directory |
 | `theme` | `default` | Color theme for the OSD and popup. One of `default`, `catppuccin-mocha`, `dracula`, `nord`, `gruvbox-dark` |
+| `show_ticker` | `true` | Whether the scrolling per-turn cost ticker is painted at the bottom of the OSD. Toggle at runtime via right-click → "Show cost ticker". |
 
 Keys omitted from `config.json` fall back to built-in defaults. `claude_dir` is not included in the example file because the default is correct for most setups.
 
@@ -171,6 +174,14 @@ Qt's `QWidget` with `FramelessWindowHint | Tool | WindowStaysOnTopHint` plus `WA
 ### Live token stream
 
 The OSD renders a `● LIVE ~5.3k tok/min` badge when a Claude Code session is actively writing. The detector scans `~/.claude/projects/*/*.jsonl` for assistant turns in the last 5 minutes (filtered cheaply by file mtime), sums their `output_tokens`, and divides by the window. The "live" dot only lights up when the newest turn is under 90 seconds old; the rate keeps showing for the full 5-minute window so bursts are visible in context.
+
+### Per-turn cost ticker
+
+A thin scrolling strip along the bottom of the OSD shows the USD cost of each assistant turn as it lands (`$0.156 ← Bash · 116`). The same JSONL scan that powers the live-tokens badge reads `usage.{input, output, cache_read, cache_creation}_tokens` from each unique message (dedup'd by Anthropic's `message.id`) and multiplies by the Anthropic-published rates in `pricing.py`. Multi-tool turns collapse to a compact `Read+2` label. Items are colour-coded by quartile rank within the current 40-item buffer (dim → blue → amber → red), so you always see four tiers regardless of whether you're on Haiku, Sonnet, or Opus — the tape stays meaningful when every turn happens to land in a narrow dollar band. Disable with the right-click menu or `show_ticker: false` in `config.json`.
+
+### Subagent rozet
+
+Right next to the `CLAUDE` title, a `⚙ N` badge shows how many Task-tool subagents are actively writing. Detection is a stat-only glob of `~/.claude/projects/<proj>/<uuid>/subagents/agent-*.jsonl` filtered to files whose mtime is within the last 60 s — no file contents opened, negligible cost on every refresh. The rozet is hidden when the count is zero so single-session users aren't nagged by a permanent `⚙ 0`.
 
 ### Prompt-cache opportunities
 

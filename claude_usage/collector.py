@@ -18,6 +18,8 @@ from claude_usage.analytics import AnomalyReport, detect_anomaly, generate_tips
 from claude_usage.cache_analyzer import CacheOpportunity, analyze_cache_opportunities
 from claude_usage.history import aggregate, append_sample, load_samples, prune
 from claude_usage.live_stream import LiveActivity, detect_live_activity
+from claude_usage.subagents import count_active_subagents
+from claude_usage.ticker import TickerItem, scan_ticker_items
 from claude_usage.trends import daily_heatmap, hourly_histogram, monthly_summary
 
 HISTORY_FILENAME = "usage-history.jsonl"
@@ -82,6 +84,11 @@ class UsageStats:
     live_activity: LiveActivity = field(default_factory=LiveActivity)
     # Claude-authored weekly summary text (empty when unavailable / not yet cached)
     weekly_report_text: str = ""
+    # Rolling per-turn cost feed for the OSD's scrolling ticker tape
+    ticker_items: list[TickerItem] = field(default_factory=list)
+    # Count of subagent JSONLs touched in the last minute — surfaced as the
+    # "⚙ N" rozet next to the CLAUDE title when > 0.
+    active_subagent_count: int = 0
 
 
 def parse_history(path: str) -> UsageStats:
@@ -624,6 +631,20 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
         stats.live_activity = detect_live_activity(claude_dir, now=now_ts)
     except OSError:
         stats.live_activity = LiveActivity()
+
+    # Ticker tape: latest ~40 assistant turns across active sessions, each
+    # with its USD cost and primary tool. Drives the scrolling strip on the
+    # OSD. Same cheap mtime-filtered scan as the other recent-activity modules.
+    try:
+        stats.ticker_items = scan_ticker_items(claude_dir, now=now_ts)
+    except OSError:
+        stats.ticker_items = []
+
+    # Active subagent count — stat-only glob (no file contents opened).
+    try:
+        stats.active_subagent_count = count_active_subagents(claude_dir, now=now_ts)
+    except OSError:
+        stats.active_subagent_count = 0
 
     # Claude-authored weekly report — we only *read* the on-disk cache here;
     # regeneration happens in a background thread from the widget so the

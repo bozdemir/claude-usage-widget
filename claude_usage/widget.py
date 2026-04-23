@@ -802,11 +802,28 @@ class ClaudeUsageApp(QObject):
         act_minimize.triggered.connect(self.overlay.toggle_minimized)
         m.addAction(act_minimize)
 
+        self._act_ticker = QAction("Show cost ticker", m)
+        self._act_ticker.setCheckable(True)
+        self._act_ticker.setChecked(self.overlay.is_ticker_enabled())
+        self._act_ticker.toggled.connect(self._on_toggle_ticker)
+        m.addAction(self._act_ticker)
+        m.aboutToShow.connect(
+            lambda: self._act_ticker.setChecked(self.overlay.is_ticker_enabled())
+        )
+
         m.addSeparator()
 
         act_quit = QAction("Quit", m)
         act_quit.triggered.connect(self._on_quit)
         m.addAction(act_quit)
+
+    def _on_toggle_ticker(self, checked: bool) -> None:
+        self.overlay.set_ticker_enabled(checked)
+        # Remember the preference for the rest of this session. Persistence
+        # across restarts would require a config-file writer we don't ship
+        # yet — users can set `"show_ticker": false` in config.json to
+        # start the widget with the ticker off.
+        self.config["show_ticker"] = bool(checked)
 
     # ------------------------------------------------------------- refresh
 

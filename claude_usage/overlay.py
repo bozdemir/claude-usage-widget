@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -29,16 +29,25 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from claude_usage.collector import UsageStats
 from claude_usage.themes import get_theme
+from claude_usage.ticker import TickerItem
 
 
-# Base OSD dimensions (at scale=1.0)
+# Base OSD dimensions (at scale=1.0). Ticker adds ~22px to the bottom of
+# the panel; when it's toggled off we collapse back to the original height.
 BASE_WIDTH = 260
 BASE_HEIGHT = 100
+TICKER_STRIP_HEIGHT = 22
 OSD_MARGIN = 16
 OSD_RADIUS = 12
 OSD_BAR_HEIGHT = 6
 OSD_BAR_RADIUS = 3
 MINIMIZED_HEIGHT = 6
+
+# Ticker animation: seconds-per-full-loop scales inversely with viewport
+# width; we use a pixels-per-second rate instead so scale changes don't
+# affect perceived speed. 30 px/s feels unhurried but still alive.
+TICKER_SCROLL_PX_PER_SEC = 30.0
+TICKER_FRAME_INTERVAL_MS = 40  # ~25 fps — smooth without waking the CPU
 
 # Scroll-wheel scale limits
 SCALE_MIN = 0.6
@@ -48,6 +57,21 @@ SCALE_STEP = 0.1
 # Distance the mouse must move between press and release before a left-click
 # is treated as a drag rather than a click.
 DRAG_THRESHOLD = 5
+
+
+def _ticker_quartile_thresholds(items: list[TickerItem]) -> tuple[float, float, float]:
+    """Return (cool, warm, hot) cost cutoffs based on quartiles of *items*.
+
+    With < 4 items the buffer is too small to quartile meaningfully, so
+    we collapse to a single tier by returning sentinels that force every
+    item into the "cool" bucket. This avoids flickering colours during the
+    first seconds after startup.
+    """
+    if len(items) < 4:
+        return (0.0, float("inf"), float("inf"))
+    costs = sorted(it.cost_usd for it in items)
+    n = len(costs)
+    return (costs[n // 4], costs[n // 2], costs[3 * n // 4])
 
 
 def _hex_to_qcolor(hex_str: str, alpha: float = 1.0) -> QColor:
@@ -105,6 +129,14 @@ class UsageOverlay(QWidget):
         self._weekly_reset: int = 0
         self._live_tpm: float = 0.0      # tokens/min over the last few minutes
         self._is_live: bool = False       # show the "● LIVE" dot
+        self._active_subagents: int = 0  # count of running Task-tool subagents
+        # Ticker tape: newest-first. The paint loop walks them oldest→newest
+        # so the newest item rides in from the right edge like a news ticker.
+        self._ticker_items: list[TickerItem] = []
+        self._ticker_offset: float = 0.0  # pixels scrolled so far; grows each frame
+        # User toggle — default on, overridable via config; runtime flip
+        # lives in the right-click menu.
+        self._ticker_enabled: bool = bool(cfg.get("show_ticker", True))
 
         # Drag tracking
         self._press_pos: QPoint | None = None        # mouse pos on press (global)
@@ -129,6 +161,13 @@ class UsageOverlay(QWidget):
         self._apply_size()
         self._move_to_default_position()
 
+        # Ticker animation timer — advances _ticker_offset each frame. We
+        # only start it when there are items to scroll so the OSD stays
+        # CPU-idle during quiet periods.
+        self._ticker_timer = QTimer(self)
+        self._ticker_timer.setInterval(TICKER_FRAME_INTERVAL_MS)
+        self._ticker_timer.timeout.connect(self._advance_ticker)
+
     # ------------------------------------------------------------------ API
 
     def update_stats(self, stats: UsageStats) -> None:
@@ -144,7 +183,39 @@ class UsageOverlay(QWidget):
         else:
             self._is_live = False
             self._live_tpm = 0.0
+        self._active_subagents = max(0, int(getattr(stats, "active_subagent_count", 0) or 0))
+        self._ticker_items = list(getattr(stats, "ticker_items", []) or [])
+        # Only animate when the ticker is on, items exist, and the OSD is in
+        # its full (non-minimized) form.
+        if self._ticker_enabled and self._ticker_items and not self._minimized:
+            if not self._ticker_timer.isActive():
+                self._ticker_timer.start()
+        else:
+            self._ticker_timer.stop()
+            self._ticker_offset = 0.0
         self.update()  # schedule a paintEvent
+
+    def set_ticker_enabled(self, enabled: bool) -> None:
+        """Show/hide the ticker strip. Resizes the OSD to match."""
+        enabled = bool(enabled)
+        if enabled == self._ticker_enabled:
+            return
+        self._ticker_enabled = enabled
+        self._apply_size()
+        if not enabled:
+            self._ticker_timer.stop()
+            self._ticker_offset = 0.0
+        elif self._ticker_items and not self._minimized:
+            self._ticker_timer.start()
+        self.update()
+
+    def is_ticker_enabled(self) -> bool:
+        return self._ticker_enabled
+
+    def _advance_ticker(self) -> None:
+        """One frame of ticker scroll — called by the animation timer."""
+        self._ticker_offset += TICKER_SCROLL_PX_PER_SEC * (TICKER_FRAME_INTERVAL_MS / 1000.0)
+        self.update()
 
     def set_opacity(self, value: float) -> None:
         """Set background opacity (0.15 -- 1.0)."""
@@ -160,14 +231,20 @@ class UsageOverlay(QWidget):
         """Collapse to a thin progress bar or restore the full panel."""
         self._minimized = not self._minimized
         self._apply_size()
+        # Minimized view has no ticker — stop the animation to save CPU.
+        if self._minimized:
+            self._ticker_timer.stop()
+        elif self._ticker_items:
+            self._ticker_timer.start()
         self.update()
 
     # ------------------------------------------------------------- internals
 
     def _apply_size(self) -> None:
-        """Resize the window to match ``_scale`` and ``_minimized``."""
+        """Resize the window to match ``_scale``, ``_minimized``, and ticker state."""
         width = int(BASE_WIDTH * self._scale)
-        height = MINIMIZED_HEIGHT if self._minimized else int(BASE_HEIGHT * self._scale)
+        base = BASE_HEIGHT + (TICKER_STRIP_HEIGHT if self._ticker_enabled else 0)
+        height = MINIMIZED_HEIGHT if self._minimized else int(base * self._scale)
         # Preserve the top-right corner when resizing so the overlay doesn't
         # visually drift as the user scrolls to scale.
         if self.isVisible():
@@ -284,7 +361,17 @@ class UsageOverlay(QWidget):
         title_font = QFont("monospace", int(font_title))
         p.setFont(title_font)
         p.setPen(_hex_to_qcolor(self._theme["text_dim"]))
-        p.drawText(QPointF(pad_x, pad_y + 7 * s), "CLAUDE")
+        title_y = pad_y + 7 * s
+        p.drawText(QPointF(pad_x, title_y), "CLAUDE")
+
+        # Subagent rozet — only shown when > 0 so single-session users aren't
+        # bothered by a permanent "0 agents" noise. Rendered just right of
+        # CLAUDE in the theme's link colour to signal "active thing".
+        if self._active_subagents > 0:
+            title_w = p.fontMetrics().horizontalAdvance("CLAUDE")
+            rozet = f"⚙ {self._active_subagents}"
+            p.setPen(_hex_to_qcolor(self._theme["text_link"]))
+            p.drawText(QPointF(pad_x + title_w + 6 * s, title_y), rozet)
 
         # Live indicator — only drawn when there's recent assistant activity.
         # Renders as `● LIVE 1.2k tok/min` right-aligned against the title.
@@ -315,6 +402,116 @@ class UsageOverlay(QWidget):
             pct=self._weekly_pct,
             reset_label=_format_reset_short(self._weekly_reset),
         )
+
+        # --- Ticker strip (below the weekly row) ---
+        if self._ticker_enabled:
+            ticker_y = y2 + 15 * s + bar_h + 6 * s
+            self._draw_ticker(p, ticker_y, w, pad_x, s)
+
+    def _draw_ticker(
+        self,
+        p: QPainter,
+        y: float,
+        w: int,
+        pad_x: float,
+        s: float,
+    ) -> None:
+        """Right-to-left scrolling tape of recent per-turn costs."""
+        if not self._ticker_items:
+            return
+
+        # Tape geometry: clipped to the interior width so text doesn't spill
+        # past the rounded corners of the OSD.
+        tape_x = pad_x
+        tape_w = max(0.0, w - 2 * pad_x)
+        tape_h = 14 * s
+        p.save()
+        p.setClipRect(QRectF(tape_x, y - tape_h * 0.1, tape_w, tape_h * 1.2))
+
+        # Monospace keeps item widths predictable as values change.
+        font = QFont("monospace", max(7, int(7.5 * s)))
+        p.setFont(font)
+        fm = p.fontMetrics()
+        sep_gap = int(14 * s)
+        baseline = y + tape_h - 3 * s
+
+        # Build display items oldest-first so the newest rides in from the
+        # right edge as offset grows. Duplicated list makes seamless looping
+        # cheap: as soon as the first copy fully scrolls off-screen, the
+        # second is already visible at its tail.
+        ordered = list(reversed(self._ticker_items))
+        strings = [self._format_ticker_item(it) for it in ordered]
+        widths = [fm.horizontalAdvance(s_) + sep_gap for s_ in strings]
+        strip_width = sum(widths) or 1
+
+        # x_start: the left edge of the first copy of the strip in absolute
+        # coordinates. Subtract the scrolling offset (modulo strip_width) so
+        # it drifts left indefinitely without integer overflow.
+        x_start = tape_x + tape_w - (self._ticker_offset % strip_width)
+        cost_colors = {
+            "hot":    _hex_to_qcolor(self._theme["crit"]),
+            "warm":   _hex_to_qcolor(self._theme["warn"]),
+            "cool":   _hex_to_qcolor(self._theme["bar_blue"]),
+            "dim":    _hex_to_qcolor(self._theme["text_dim"]),
+        }
+        thresholds = _ticker_quartile_thresholds(self._ticker_items)
+        # Enough copies to cover the viewport even when the strip is short —
+        # two copies only works when strip_width ≥ tape_w.
+        copies = max(2, int(tape_w // strip_width) + 2)
+        for repeat in range(copies):
+            x = x_start + repeat * strip_width
+            for item, text, width in zip(ordered, strings, widths):
+                if x + width < tape_x:
+                    x += width
+                    continue
+                if x > tape_x + tape_w:
+                    break
+                p.setPen(self._ticker_color_for(item, cost_colors, thresholds))
+                p.drawText(QPointF(x, baseline), text)
+                x += width
+
+        p.restore()
+
+    @staticmethod
+    def _format_ticker_item(item: TickerItem) -> str:
+        """Compact tape label: ``$0.156 ← Read · 2.3k``."""
+        cost = item.cost_usd
+        if cost >= 1.0:
+            cost_text = f"${cost:.2f}"
+        elif cost >= 0.01:
+            cost_text = f"${cost:.3f}"
+        else:
+            cost_text = f"${cost:.4f}"
+        tool = item.tool or "turn"
+        out = item.output_tokens
+        if out >= 1000:
+            out_text = f"{out / 1000:.1f}k"
+        else:
+            out_text = str(out)
+        return f"{cost_text} ← {tool} · {out_text}"
+
+    @staticmethod
+    def _ticker_color_for(
+        item: TickerItem,
+        palette: dict,
+        thresholds: tuple[float, float, float],
+    ) -> QColor:
+        """Color each item by its quartile rank in the current buffer.
+
+        Using relative thresholds instead of fixed dollar tiers keeps the
+        tape visually informative across wildly different workflows —
+        Haiku-only sessions and Opus tool-heavy sessions both show the full
+        colour range. Cheapest 25% dim, next 25% blue, next 25% amber,
+        top 25% red.
+        """
+        cool_thr, warm_thr, hot_thr = thresholds
+        if item.cost_usd >= hot_thr:
+            return palette["hot"]
+        if item.cost_usd >= warm_thr:
+            return palette["warm"]
+        if item.cost_usd >= cool_thr:
+            return palette["cool"]
+        return palette["dim"]
 
     def _draw_row(
         self,
