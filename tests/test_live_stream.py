@@ -16,11 +16,18 @@ from claude_usage.live_stream import (
 )
 
 
-def _assistant_entry(ts: datetime, out_tokens: int) -> dict:
+_COUNTER = [0]
+
+
+def _assistant_entry(ts: datetime, out_tokens: int, msg_id: str | None = None) -> dict:
+    if msg_id is None:
+        _COUNTER[0] += 1
+        msg_id = f"msg_{_COUNTER[0]}"
     return {
         "timestamp": ts.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
         "message": {
             "role": "assistant",
+            "id": msg_id,
             "usage": {"output_tokens": out_tokens},
         },
     }
@@ -81,6 +88,28 @@ def test_marks_not_live_when_activity_is_outside_rate_window(tmp_path):
     result = detect_live_activity(str(tmp_path), now=now.timestamp())
     assert result.is_live is False
     assert result.tokens_per_minute == 0.0
+    assert result.output_tokens_last_window == 0
+
+
+def test_deduplicates_replays_by_msg_id(tmp_path):
+    """Claude Code rewrites prior assistant turns as context; we must not
+    count the same message three times."""
+    now = datetime.now(timezone.utc)
+    replay = _assistant_entry(now - timedelta(seconds=20), 100, msg_id="dup")
+    _write(str(tmp_path / "projects" / "p" / "s.jsonl"), [replay, replay, replay])
+    result = detect_live_activity(str(tmp_path), now=now.timestamp())
+    assert result.output_tokens_last_window == 100
+
+
+def test_entries_without_msg_id_are_skipped(tmp_path):
+    """Without an id we can't safely dedupe — drop to avoid double-counting."""
+    now = datetime.now(timezone.utc)
+    entry = {
+        "timestamp": now.isoformat().replace("+00:00", "Z"),
+        "message": {"role": "assistant", "usage": {"output_tokens": 500}},
+    }
+    _write(str(tmp_path / "projects" / "p" / "s.jsonl"), [entry])
+    result = detect_live_activity(str(tmp_path), now=now.timestamp())
     assert result.output_tokens_last_window == 0
 
 

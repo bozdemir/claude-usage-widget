@@ -1,3 +1,3 @@
 """Claude Usage Widget — desktop usage tracker for Claude Code."""
 
-__version__ = "0.4.4"
+__version__ = "0.4.5"

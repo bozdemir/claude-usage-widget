@@ -57,6 +57,13 @@ DEFAULT_CONFIG: Config = {
     # Webhooks (opt-in). Map event -> URL. Supported events:
     #   threshold_crossed, daily_report, anomaly
     "webhooks": {},
+    # Appearance: theme palette name (see themes.py for the 5 ships).
+    "theme": "default",
+    # Whether the OSD paints a scrolling per-turn cost ticker along the
+    # bottom edge. Toggle at runtime via the right-click menu.
+    "show_ticker": True,
+    # OSD view mode — "bars" (default) or "gauge". See overlay.VIEW_MODES.
+    "osd_view_mode": "bars",
 }
 
 

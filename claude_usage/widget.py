@@ -74,14 +74,29 @@ def _short_model_name(model: str) -> str:
 
 
 def _prettify_project_name(name: str) -> str:
-    """Convert Claude Code's dashed path (``-home-user-proj``) to ``~/proj``."""
+    """Convert Claude Code's dashed path (``-home-user-proj``) to ``~/proj``.
+
+    Claude Code encodes project paths by replacing path separators with
+    dashes. On POSIX that's ``/`` → ``-``; on Windows it's ``\\`` → ``-``
+    (and the drive-letter colon typically drops). We normalise both so a
+    Windows user sees ``~/proj`` instead of ``C--Users-burak-proj``.
+    """
     if not name:
         return "?"
-    home_dashed = os.path.expanduser("~").replace("/", "-")
-    if name == home_dashed:
-        return "~"
-    if name.startswith(home_dashed + "-"):
-        return "~/" + name[len(home_dashed) + 1:]
+    home = os.path.expanduser("~")
+    # Generate candidate encodings for the home dir.
+    candidates = {
+        home.replace("/", "-"),
+        home.replace(os.sep, "-"),
+        home.replace(os.sep, "-").replace(":", ""),
+    }
+    for home_dashed in candidates:
+        if not home_dashed:
+            continue
+        if name == home_dashed:
+            return "~"
+        if name.startswith(home_dashed + "-"):
+            return "~/" + name[len(home_dashed) + 1:]
     return name
 
 
@@ -326,6 +341,11 @@ class UsagePopup(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
 
+        # Most-recent stats snapshot — stored while the popup is hidden so
+        # we can flush it on show without rebuilding the tree every 30 s
+        # for a popup nobody's looking at.
+        self._pending_stats: UsageStats | None = None
+
         self._scroll = QScrollArea(self)
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -480,7 +500,24 @@ class UsagePopup(QWidget):
 
     @Slot(object)
     def update_stats(self, stats: UsageStats) -> None:
-        """Rebuild the popup contents from *stats*."""
+        """Rebuild the popup contents from *stats*.
+
+        Hidden popups skip the full layout teardown+rebuild — when the user
+        opens it again we re-run with the then-current stats (see ``show``
+        override below).
+        """
+        self._pending_stats = stats
+        if not self.isVisible():
+            return
+        self._rebuild_from(stats)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        # First show after stats arrived while we were hidden — flush.
+        if self._pending_stats is not None and self._layout.count() == 0:
+            self._rebuild_from(self._pending_stats)
+        super().showEvent(event)
+
+    def _rebuild_from(self, stats: UsageStats) -> None:
         self._clear_layout()
 
         # --- Plan usage limits ---
@@ -742,16 +779,25 @@ class ClaudeUsageApp(QObject):
             ),
         )
 
-        # Optional: localhost JSON API server
+        # Optional: localhost JSON API server. Bind failures (port in use,
+        # permission denied) are non-fatal — the widget still starts, just
+        # without the HTTP surface.
         self._api_server = None
         if config.get("api_server_enabled"):
             from claude_usage.api_server import UsageAPIServer
-            self._api_server = UsageAPIServer(
-                host=config.get("api_server_host", "127.0.0.1"),
-                port=int(config.get("api_server_port", 8765)),
-                get_stats=lambda: self.stats,
-            )
-            self._api_server.start()
+            try:
+                self._api_server = UsageAPIServer(
+                    host=config.get("api_server_host", "127.0.0.1"),
+                    port=int(config.get("api_server_port", 8765)),
+                    get_stats=lambda: self.stats,
+                )
+                self._api_server.start()
+            except OSError as exc:
+                print(
+                    f"claude-usage: API server failed to start: {exc}",
+                    file=sys.stderr,
+                )
+                self._api_server = None
 
         # --- Wire signals ---
         self.overlay.clicked.connect(self._on_overlay_click)

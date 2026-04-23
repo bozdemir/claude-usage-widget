@@ -37,7 +37,11 @@ class WeeklyReport:
 
     def is_fresh(self, now: float | None = None) -> bool:
         ts = now if now is not None else time.time()
-        return (ts - self.generated_at) < CACHE_TTL_SECONDS
+        delta = ts - self.generated_at
+        # Reject future-dated reports (clock skew, shared-disk copies from a
+        # faster machine). Without this guard a negative delta would pass
+        # the `< TTL` check and pin a "future" report indefinitely.
+        return 0 <= delta < CACHE_TTL_SECONDS
 
 
 def _cache_path(claude_dir: str) -> str:
@@ -68,16 +72,23 @@ def load_cached_report(claude_dir: str, now: float | None = None) -> WeeklyRepor
 
 
 def save_cached_report(claude_dir: str, report: WeeklyReport) -> None:
-    """Persist *report* to the on-disk cache (best-effort — failures swallowed)."""
+    """Persist *report* to the on-disk cache (best-effort — failures swallowed).
+
+    Writes atomically via ``tmp + os.replace`` so a concurrent reader (or a
+    crash mid-write) never sees a truncated JSON file — matches the pattern
+    used by ``config.save_config``.
+    """
     path = _cache_path(claude_dir)
+    tmp = path + ".tmp"
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump({
                 "text": report.text,
                 "generated_at": report.generated_at,
                 "model": report.model,
             }, f)
+        os.replace(tmp, path)
     except OSError:
         pass
 

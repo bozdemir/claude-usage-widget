@@ -3,4 +3,3 @@ include LICENSE
 include config.json.example
 recursive-include claude_usage/icons *.svg
 recursive-include docs/integrations *
-include requirements-macos.txt

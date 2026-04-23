@@ -69,6 +69,24 @@ SCALE_STEP = 0.1
 DRAG_THRESHOLD = 5
 
 
+def _mono_font(size_pt: int, bold: bool = False) -> QFont:
+    """Return a platform-appropriate fixed-pitch font.
+
+    Naming the family ``"monospace"`` alone is a Unix/X convention — on
+    Windows it falls back to the app default (often a proportional face)
+    which breaks ticker and percentage alignment. Setting ``StyleHint`` to
+    ``Monospace`` tells Qt to honour the hint when resolving the family,
+    so we get a real fixed-pitch font on all three OSes.
+    """
+    f = QFont()
+    f.setStyleHint(QFont.Monospace)
+    f.setFamily("monospace")
+    f.setPointSize(int(size_pt))
+    if bold:
+        f.setBold(True)
+    return f
+
+
 def _ticker_quartile_thresholds(items: list[TickerItem]) -> tuple[float, float, float]:
     """Return (cool, warm, hot) cost cutoffs based on quartiles of *items*.
 
@@ -199,9 +217,16 @@ class UsageOverlay(QWidget):
             self._live_tpm = 0.0
         self._active_subagents = max(0, int(getattr(stats, "active_subagent_count", 0) or 0))
         self._ticker_items = list(getattr(stats, "ticker_items", []) or [])
-        # Only animate when the ticker is on, items exist, and the OSD is in
-        # its full (non-minimized) form.
-        if self._ticker_enabled and self._ticker_items and not self._minimized:
+        # Only animate when the ticker is on, items exist, the OSD is in
+        # its full (non-minimized) form, AND the current view mode draws
+        # the ticker (bars mode only; gauge view suppresses it).
+        ticker_would_draw = (
+            self._ticker_enabled
+            and self._ticker_items
+            and not self._minimized
+            and self._view_mode == VIEW_MODE_BARS
+        )
+        if ticker_would_draw:
             if not self._ticker_timer.isActive():
                 self._ticker_timer.start()
         else:
@@ -235,7 +260,11 @@ class UsageOverlay(QWidget):
         if not enabled:
             self._ticker_timer.stop()
             self._ticker_offset = 0.0
-        elif self._ticker_items and not self._minimized:
+        elif (
+            self._ticker_items
+            and not self._minimized
+            and self._view_mode == VIEW_MODE_BARS
+        ):
             self._ticker_timer.start()
         self.update()
 
@@ -262,9 +291,10 @@ class UsageOverlay(QWidget):
         self._minimized = not self._minimized
         self._apply_size()
         # Minimized view has no ticker — stop the animation to save CPU.
+        # Restarting requires the bars view mode too (gauge view has no ticker).
         if self._minimized:
             self._ticker_timer.stop()
-        elif self._ticker_items:
+        elif self._ticker_items and self._view_mode == VIEW_MODE_BARS:
             self._ticker_timer.start()
         self.update()
 
@@ -410,7 +440,7 @@ class UsageOverlay(QWidget):
             # Percentage text centred in the ring.
             pct_text = f"{int(pct * 100)}%"
             pct_font_pt = max(10, int(13 * s))
-            p.setFont(QFont("monospace", pct_font_pt, QFont.Bold))
+            p.setFont(_mono_font(pct_font_pt, bold=True))
             p.setPen(_hex_to_qcolor(self._theme["text_primary"]))
             fm = p.fontMetrics()
             pct_w = fm.horizontalAdvance(pct_text)
@@ -419,7 +449,7 @@ class UsageOverlay(QWidget):
             # Label + reset beneath the ring.
             label_y = cy + ring_d / 2 + 14 * s
             label_font_pt = max(8, int(9 * s))
-            p.setFont(QFont("monospace", label_font_pt, QFont.Bold))
+            p.setFont(_mono_font(label_font_pt, bold=True))
             p.setPen(_hex_to_qcolor(self._theme["text_primary"]))
             fm = p.fontMetrics()
             lw = fm.horizontalAdvance(label)
@@ -428,7 +458,7 @@ class UsageOverlay(QWidget):
             reset_label = _format_reset_short(reset_ts)
             if reset_label:
                 reset_font_pt = max(7, int(7.5 * s))
-                p.setFont(QFont("monospace", reset_font_pt))
+                p.setFont(_mono_font(reset_font_pt))
                 p.setPen(_hex_to_qcolor(self._theme["text_dim"]))
                 fm = p.fontMetrics()
                 rw = fm.horizontalAdvance(reset_label)
@@ -488,7 +518,7 @@ class UsageOverlay(QWidget):
         font_title = max(7, 8 * s)
 
         # Title
-        title_font = QFont("monospace", int(font_title))
+        title_font = _mono_font(int(font_title))
         p.setFont(title_font)
         p.setPen(_hex_to_qcolor(self._theme["text_dim"]))
         title_y = pad_y + 7 * s
@@ -559,7 +589,7 @@ class UsageOverlay(QWidget):
         p.setClipRect(QRectF(tape_x, y - tape_h * 0.1, tape_w, tape_h * 1.2))
 
         # Monospace keeps item widths predictable as values change.
-        font = QFont("monospace", max(7, int(7.5 * s)))
+        font = _mono_font(max(7, int(7.5 * s)))
         p.setFont(font)
         fm = p.fontMetrics()
         sep_gap = int(14 * s)
@@ -660,7 +690,7 @@ class UsageOverlay(QWidget):
     ) -> None:
         """Draw one row: label on the left, reset + percentage on the right, bar below."""
         # Label + percentage baseline
-        p.setFont(QFont("monospace", int(font_label)))
+        p.setFont(_mono_font(int(font_label)))
         p.setPen(_hex_to_qcolor(self._theme["text_primary"]))
         baseline = y + 10 * self._scale
         p.drawText(QPointF(pad_x, baseline), label)
@@ -671,7 +701,7 @@ class UsageOverlay(QWidget):
 
         # Reset-time (between label and percentage, small font)
         if reset_label:
-            p.setFont(QFont("monospace", int(font_small)))
+            p.setFont(_mono_font(int(font_small)))
             p.setPen(_hex_to_qcolor(self._theme["text_dim"]))
             rw = p.fontMetrics().horizontalAdvance(reset_label)
             p.drawText(

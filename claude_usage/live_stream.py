@@ -56,12 +56,14 @@ def _iter_recent_jsonl(projects_dir: str, mtime_cutoff: float) -> Iterator[str]:
         yield path
 
 
-def _extract_assistant_sample(entry: dict) -> tuple[float, int] | None:
-    """Return (timestamp, output_tokens) for an assistant turn, or None.
+def _extract_assistant_sample(entry: dict) -> tuple[float, int, str] | None:
+    """Return (timestamp, output_tokens, msg_id) for an assistant turn, or None.
 
     We look only at assistant messages with a ``usage`` block — those are the
     ones that actually cost tokens.  Parsing is defensive: any malformed
-    entry returns None and the caller skips it.
+    entry returns None and the caller skips it. ``msg_id`` is the stable
+    Anthropic message identifier used to deduplicate Claude Code's replays
+    of prior turns as context for subsequent ones.
     """
     msg = entry.get("message")
     if not isinstance(msg, dict) or msg.get("role") != "assistant":
@@ -76,16 +78,21 @@ def _extract_assistant_sample(entry: dict) -> tuple[float, int] | None:
     if out_tokens <= 0:
         return None
 
+    msg_id = str(msg.get("id") or "")
+    if not msg_id:
+        # No id means we can't safely dedupe context replays; drop rather
+        # than double-count.
+        return None
+
     ts_str = entry.get("timestamp")
     if not isinstance(ts_str, str) or not ts_str:
         return None
-    # ISO-8601 with Z suffix → python-friendly +00:00.
     try:
         from datetime import datetime
         ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp()
     except ValueError:
         return None
-    return ts, out_tokens
+    return ts, out_tokens, msg_id
 
 
 def detect_live_activity(claude_dir: str, now: float | None = None) -> LiveActivity:
@@ -102,10 +109,11 @@ def detect_live_activity(claude_dir: str, now: float | None = None) -> LiveActiv
 
     total_tokens = 0
     latest_ts = 0.0
+    seen_msg_ids: set[str] = set()
 
     for path in _iter_recent_jsonl(projects_dir, cutoff_mtime):
         try:
-            f = open(path)
+            f = open(path, encoding="utf-8", errors="replace")
         except OSError:
             continue
         with f:
@@ -120,10 +128,13 @@ def detect_live_activity(claude_dir: str, now: float | None = None) -> LiveActiv
                 sample = _extract_assistant_sample(entry)
                 if sample is None:
                     continue
-                ts, out_tokens = sample
+                ts, out_tokens, msg_id = sample
                 if ts < cutoff_window or ts > now_ts + 60:
                     # Future-dated entries (clock skew) are ignored too.
                     continue
+                if msg_id in seen_msg_ids:
+                    continue
+                seen_msg_ids.add(msg_id)
                 total_tokens += out_tokens
                 if ts > latest_ts:
                     latest_ts = ts

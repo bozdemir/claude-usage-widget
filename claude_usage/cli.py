@@ -44,10 +44,11 @@ def _usage_stats_to_dict(stats: UsageStats) -> dict:
 def _default_config_path() -> str:
     """Pick the config.json path to load on startup.
 
-    Precedence: user's XDG config > project-local config.json > packaged
-    config.json.example. The XDG path is also the target where runtime
-    preference changes (theme, ticker toggle) are persisted, so once the
-    user touches a menu we silently migrate them off the .example fallback.
+    Precedence: user's XDG config > project-local config.json (repo
+    checkouts only) > the user XDG path again. In the last case
+    :func:`load_config` gracefully returns :data:`DEFAULT_CONFIG`, so a
+    first-run pip install does not need a config file on disk — the GUI
+    will write one the first time the user touches a menu.
     """
     user = user_config_path()
     if os.path.isfile(user):
@@ -56,7 +57,7 @@ def _default_config_path() -> str:
     project_cfg = os.path.join(base_dir, "config.json")
     if os.path.isfile(project_cfg):
         return project_cfg
-    return os.path.join(base_dir, "config.json.example")
+    return user
 
 
 def run_cli(argv: Sequence[str]) -> int:
@@ -92,7 +93,15 @@ def run_cli(argv: Sequence[str]) -> int:
             if args.field not in data:
                 print(f"error: unknown field {args.field!r}", file=sys.stderr)
                 return 2
-            print(data[args.field])
+            value = data[args.field]
+            # Render containers as JSON so shell pipelines can jq/grep them;
+            # scalars stay in their native repr for backwards-compat with
+            # existing status-bar scripts that expect raw numbers.
+            if isinstance(value, (dict, list)):
+                json.dump(value, sys.stdout, default=str)
+                print()
+            else:
+                print(value)
             return 0
 
         json.dump(data, sys.stdout, default=str, indent=2, sort_keys=True)

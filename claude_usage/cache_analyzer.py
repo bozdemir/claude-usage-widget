@@ -99,7 +99,6 @@ def analyze_cache_opportunities(
 
     now_ts = now if now is not None else datetime.now().timestamp()
     cutoff = now_ts - days * 86400
-    cutoff_dt = datetime.fromtimestamp(cutoff)
 
     # prefix_hash -> dict(project, text, tokens, occurrences, model)
     buckets: dict[str, dict[str, Any]] = {}
@@ -115,7 +114,7 @@ def analyze_cache_opportunities(
 
         project = os.path.basename(os.path.dirname(jsonl_path))
         try:
-            f = open(jsonl_path)
+            f = open(jsonl_path, encoding="utf-8", errors="replace")
         except OSError:
             continue
         with f:
@@ -128,12 +127,17 @@ def analyze_cache_opportunities(
                 except json.JSONDecodeError:
                     continue
 
-                # Window filter by ISO timestamp when present
+                # Window filter by ISO timestamp when present. Convert to a
+                # unix float so the comparison is timezone-safe — earlier
+                # versions compared a UTC dt against a local-tz dt and
+                # shifted the cutoff by the host's UTC offset.
                 ts_str = entry.get("timestamp", "")
                 if ts_str:
                     try:
-                        ts_dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                        if ts_dt.replace(tzinfo=None) < cutoff_dt:
+                        ts_unix = datetime.fromisoformat(
+                            ts_str.replace("Z", "+00:00"),
+                        ).timestamp()
+                        if ts_unix < cutoff:
                             continue
                     except ValueError:
                         pass  # fall through — keep the entry
@@ -147,9 +151,11 @@ def analyze_cache_opportunities(
                     continue
 
                 h = _prefix_hash(text)
+                # Store only a short preview, not the full prefix — a 1 MB
+                # pasted log shouldn't balloon the bucket dict.
                 bucket = buckets.setdefault(h, {
                     "project": project,
-                    "text": text,
+                    "preview": text[:100].replace("\n", " ").strip(),
                     "tokens": tokens,
                     "occurrences": 0,
                     "model": model,
@@ -169,7 +175,7 @@ def analyze_cache_opportunities(
             continue
         opportunities.append(CacheOpportunity(
             project=bucket["project"],
-            prefix_preview=bucket["text"][:100].replace("\n", " ").strip(),
+            prefix_preview=bucket["preview"],
             token_count=bucket["tokens"],
             occurrences=bucket["occurrences"],
             model=bucket["model"],

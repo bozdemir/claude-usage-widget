@@ -29,7 +29,14 @@ def _default_sender(url: str, payload: dict) -> None:
         },
         method="POST",
     )
-    urlopen(req, timeout=5).read()
+    # Context manager guarantees the socket is closed promptly even under
+    # CPython GC edge cases (or on PyPy where delayed finalisation matters).
+    # Also refuse non-HTTP schemes so a misconfigured "file://" URL can't
+    # turn the widget into a local-file reader.
+    if req.type not in ("http", "https"):
+        return
+    with urlopen(req, timeout=5) as resp:
+        resp.read()
 
 
 class WebhookDispatcher:

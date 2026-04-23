@@ -168,10 +168,19 @@ def _collect_tokens_single_pass(
     # Resolve symlinks so glob patterns match the real on-disk layout
     projects_dir = os.path.realpath(projects_dir)
 
+    # mtime cutoff: we only care about files touched within the week window
+    # we're aggregating, plus a one-day slack for clock skew / slow flushes.
+    mtime_cutoff = datetime.now().timestamp() - 8 * 86400
+
     for jsonl_path in glob.glob(os.path.join(projects_dir, "*", "*.jsonl")):
         parts = jsonl_path.split(os.sep)
         # Subagent conversations share tokens with their parent; skip to avoid double-counting
         if "subagents" in parts:
+            continue
+        try:
+            if os.path.getmtime(jsonl_path) < mtime_cutoff:
+                continue
+        except OSError:
             continue
         _parse_tokens_file(jsonl_path, today_prefix, week_prefixes, result)
 
@@ -190,7 +199,7 @@ def _parse_tokens_file(
     those are the ones that carry the ``usage`` block with ``output_tokens``.
     """
     try:
-        f = open(path)
+        f = open(path, encoding="utf-8", errors="replace")
     except OSError:
         return
 
@@ -351,20 +360,22 @@ def get_active_sessions(claude_dir: str) -> list[dict[str, Any]]:
             continue
         path = os.path.join(sessions_dir, fname)
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 sess = json.load(f)
-            pid = sess.get("pid", 0)
-            if pid <= 0:
-                continue
-            os.kill(pid, 0)  # signal 0: probe existence without killing
-            active.append(sess)
-        except PermissionError:
-            # Process exists but is owned by a different UID -- still alive
-            active.append(sess)
-        except ProcessLookupError:
-            pass  # PID no longer exists; session is stale
         except (json.JSONDecodeError, OSError):
             continue
+        pid = sess.get("pid", 0)
+        if pid <= 0:
+            continue
+        try:
+            os.kill(pid, 0)  # signal 0: probe existence without killing
+        except PermissionError:
+            # Process exists but is owned by a different UID -- still alive.
+            active.append(sess)
+        except ProcessLookupError:
+            pass  # PID no longer exists; session is stale.
+        else:
+            active.append(sess)
     return active
 
 
@@ -534,9 +545,13 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
     recorded in ``stats.rate_limit_error`` and all other fields remain valid.
     """
     claude_dir = config["claude_dir"]
-    history_path = os.path.join(claude_dir, "history.jsonl")
+    # Two distinct files with similar names — keep them separate to avoid the
+    # "history_path" shadowing bomb where a later reassignment silently swaps
+    # which file the rest of collect_all reads/writes.
+    claude_history_path = os.path.join(claude_dir, "history.jsonl")
+    samples_path = os.path.join(claude_dir, HISTORY_FILENAME)
 
-    stats = parse_history(history_path)
+    stats = parse_history(claude_history_path)
     stats.subscription_type = _load_subscription_type(claude_dir)
 
     # Build date prefix strings used to filter conversation entries by timestamp.
@@ -569,7 +584,6 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
     stats.active_sessions = get_active_sessions(claude_dir)
 
     rate_limits = fetch_rate_limits(claude_dir)
-    history_path = os.path.join(claude_dir, HISTORY_FILENAME)
     now_ts = datetime.now().timestamp()
 
     if "error" in rate_limits:
@@ -582,14 +596,14 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
         stats.overage_status = rate_limits["overage_status"]
         stats.fallback_status = rate_limits["fallback_status"]
         try:
-            append_sample(history_path, now_ts, stats.session_utilization, stats.weekly_utilization)
-            prune(history_path, keep_seconds=HISTORY_KEEP_DAYS * 86400, now=now_ts)
+            append_sample(samples_path, now_ts, stats.session_utilization, stats.weekly_utilization)
+            prune(samples_path, keep_seconds=HISTORY_KEEP_DAYS * 86400, now=now_ts)
         except OSError:
             pass
 
     # Load 90 days of history for analytics/trends; the aggregators below
     # filter it down to their respective windows.
-    samples = load_samples(history_path, since_ts=now_ts - ANALYTICS_WINDOW_SECONDS)
+    samples = load_samples(samples_path, since_ts=now_ts - ANALYTICS_WINDOW_SECONDS)
     stats.session_history = aggregate(
         samples, "session", now=now_ts,
         window_seconds=SESSION_WINDOW_SECONDS, n_buckets=SESSION_BUCKETS,
