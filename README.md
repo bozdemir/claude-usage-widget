@@ -9,12 +9,12 @@ A cross-platform desktop widget that displays your Claude Code usage limits in r
 ## Screenshots
 
 <p align="center">
-  <img src="screenshots/osd.png" alt="OSD overlay with live token stream" width="320" /><br/>
+  <img src="https://raw.githubusercontent.com/bozdemir/claude-usage-widget/main/screenshots/osd.png" alt="OSD overlay with live token stream" width="320" /><br/>
   <em>Always-on-top OSD: session + weekly utilisation, reset timers, and the <code>● LIVE</code> token-per-minute badge while a Claude Code session is writing.</em>
 </p>
 
 <p align="center">
-  <img src="screenshots/popup.png" alt="Detail popup with usage bars, heatmaps, cost breakdown, and the AI-generated weekly report" width="640" /><br/>
+  <img src="https://raw.githubusercontent.com/bozdemir/claude-usage-widget/main/screenshots/popup.png" alt="Detail popup with usage bars, heatmaps, cost breakdown, and the AI-generated weekly report" width="640" /><br/>
   <em>Click the OSD to open the detail popup: forecasts, 5h/7d sparklines, 90-day heatmap, 52-week GitHub-style calendar, per-model cost breakdown with Anthropic-published rates, top projects, tips, and a Claude-authored weekly summary.</em>
 </p>
 
@@ -53,7 +53,7 @@ A cross-platform desktop widget that displays your Claude Code usage limits in r
 ```bash
 pip install --user --upgrade claude-usage-widget
 claude-usage              # launches the OSD overlay
-claude-usage --version    # 0.4.0
+claude-usage --version    # 0.4.1
 ```
 
 That's it — no `apt`, no `brew`, no PyGObject, no rumps. PySide6 ships Qt in the wheel, so the widget is fully self-contained.
