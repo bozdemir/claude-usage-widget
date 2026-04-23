@@ -605,20 +605,15 @@ class UsageOverlay(QWidget):
             reset_label=_format_reset_short(self._weekly_reset),
         )
 
-        # --- Ticker strip / barcode (below the weekly row) ---
-        # Receipt skin replaces the scrolling ticker with a decorative 1D
-        # barcode so the OSD reads as a thermal-printed chit rather than a
-        # moving terminal. Other skins keep the ticker when enabled.
+        # --- Ticker strip / receipt footer (below the weekly row) ---
+        # Receipt skin replaces the scrolling ticker with a dotted
+        # perforation line + centred "— THANK YOU —" footer, matching the
+        # thermal-chit design. The actual 1D barcode lives in the popup
+        # footer (see widget.py), not here — it's a statement stamp, not
+        # part of the at-a-glance overlay.
         if self._style.decoration == "receipt":
-            barcode_h = 14 * s
-            barcode_y = y2 + 15 * s + bar_h + 6 * s
-            self._paint_barcode(
-                p,
-                pad_x,
-                barcode_y,
-                w - 2 * pad_x,
-                barcode_h,
-            )
+            footer_y = y2 + 15 * s + bar_h + 6 * s
+            self._paint_receipt_footer(p, pad_x, footer_y, w - 2 * pad_x, s)
         elif self._ticker_enabled:
             ticker_y = y2 + 15 * s + bar_h + 6 * s
             self._draw_ticker(p, ticker_y, w, pad_x, s)
@@ -786,6 +781,31 @@ class UsageOverlay(QWidget):
         while y < h:
             p.drawLine(QPointF(0, y), QPointF(w, y))
             y += step
+
+    def _paint_receipt_footer(
+        self, p: QPainter, x: float, y: float, w: float, s: float,
+    ) -> None:
+        """Receipt OSD footer: dotted perforation + centred THANK-YOU line."""
+        # Row 1: perforation dots across the full width.
+        dim_pen = QPen(_hex_to_qcolor(self._theme["text_dim"]))
+        dim_pen.setWidthF(1.0)
+        p.setPen(dim_pen)
+        font = _mono_font(max(7, int(9 * s)))
+        p.setFont(font)
+        fm = p.fontMetrics()
+        dot_w = fm.horizontalAdvance(".")
+        n_dots = max(8, int(w / max(dot_w, 1)))
+        perf_baseline = y + fm.ascent() - 1
+        p.drawText(QPointF(x, perf_baseline), "." * n_dots)
+
+        # Row 2: centred "— THANK YOU —" in an even smaller font.
+        tiny = _mono_font(max(7, int(7 * s)))
+        p.setFont(tiny)
+        fm2 = p.fontMetrics()
+        thanks = "— THANK YOU —"
+        tw = fm2.horizontalAdvance(thanks)
+        thanks_y = perf_baseline + fm2.ascent()
+        p.drawText(QPointF(x + (w - tw) / 2, thanks_y), thanks)
 
     def _paint_barcode(
         self, p: QPainter, x: float, y: float, w: float, h: float,

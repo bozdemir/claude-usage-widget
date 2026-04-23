@@ -303,7 +303,7 @@ THEME_STYLES: Dict[str, ThemeStyle] = {
         corner_radius=0,
         border_width=1,
         bar_style=BAR_STYLE_BLOCK,
-        label_case="lower",
+        label_case="upper",  # SESSION / WEEKLY per the thermal-print design
         decoration="receipt",
         separator_style="dashed",
     ),

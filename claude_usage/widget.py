@@ -309,6 +309,42 @@ class _CalendarHeatmap(QWidget):
             p.drawRect(QRectF(x, y, self.CELL_SIZE, self.CELL_SIZE))
 
 
+class _Barcode(QWidget):
+    """Decorative 1D barcode — used as the receipt-popup footer stamp.
+
+    Deterministic bar widths (no PRNG) so screenshot runs are byte-stable.
+    Doesn't encode anything real; it's pure thermal-chit visual vibe.
+    """
+
+    HEIGHT = 32
+
+    def __init__(self, theme: dict[str, str]) -> None:
+        super().__init__()
+        self._theme = theme
+        self.setFixedHeight(self.HEIGHT)
+        self.setMinimumWidth(260)
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        p = QPainter(self)
+        w, h = self.width(), self.height()
+        p.fillRect(self.rect(), _hex_to_qcolor(self._theme["bg"]))
+        ink = _hex_to_qcolor(self._theme["text_primary"])
+        p.setPen(Qt.NoPen)
+        p.setBrush(ink)
+        # 32 bar units interleaved with 32 gap units, mirroring the design
+        # mock's `repeat-in-pattern` approach.
+        pattern = (1, 2, 1, 3, 2, 1, 1, 3, 1, 2, 2, 1, 3, 1, 2, 1,
+                   1, 3, 1, 2, 1, 3, 2, 1, 1, 2, 3, 1, 2, 1, 3, 1)
+        total_units = sum(pattern) * 2
+        unit = w / total_units
+        cx = 0.0
+        for i, wu in enumerate(pattern):
+            bw = wu * unit
+            if i % 2 == 0:  # even index = solid bar, odd = gap
+                p.drawRect(QRectF(cx, 0, bw, h))
+            cx += bw
+
+
 # ---------------------------------------------------------------------------
 # Detail popup
 # ---------------------------------------------------------------------------
@@ -747,6 +783,33 @@ class UsagePopup(QWidget):
         self._add_dim_line("Last updated: just now", margin_bottom=0)
         if stats.rate_limit_error:
             self._add_dim_line(f"API: {stats.rate_limit_error}", role="error", margin_bottom=0)
+
+        # Receipt-skin statement stamp: "— END OF STATEMENT —" + 1D barcode
+        # + a version line. Matches the thermal-chit popup footer in the
+        # Claude Design source.
+        if self._style.decoration == "receipt":
+            from PySide6.QtWidgets import QHBoxLayout, QFrame
+            self._layout.addSpacing(8)
+            end_line = self._label("— END OF STATEMENT —", role="dim")
+            end_line.setAlignment(Qt.AlignHCenter)
+            self._layout.addWidget(end_line)
+
+            bar_row = QFrame()
+            bar_row.setStyleSheet("QFrame { background: transparent; }")
+            h_layout = QHBoxLayout(bar_row)
+            h_layout.setContentsMargins(0, 8, 0, 4)
+            barcode = _Barcode(self._theme)
+            h_layout.addStretch(1)
+            h_layout.addWidget(barcode)
+            h_layout.addStretch(1)
+            self._layout.addWidget(bar_row)
+
+            from claude_usage import __version__ as _v
+            ver_line = self._label(
+                f"CLAUDE-USAGE-WIDGET-{_v}", role="dim",
+            )
+            ver_line.setAlignment(Qt.AlignHCenter)
+            self._layout.addWidget(ver_line)
 
 
 # ---------------------------------------------------------------------------
