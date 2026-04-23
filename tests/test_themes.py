@@ -17,11 +17,17 @@ EXPECTED_THEMES = {
     "dracula",
     "nord",
     "gruvbox-dark",
+    "terminal",
+    "dashboard",
+    "hud",
+    "receipt",
+    "strip",
+    "brutalist",
 }
 
 
-def test_five_themes_present() -> None:
-    """All five advertised themes are registered."""
+def test_all_themes_present() -> None:
+    """All shipped themes are registered."""
     assert set(THEMES.keys()) == EXPECTED_THEMES
 
 

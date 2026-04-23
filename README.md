@@ -35,7 +35,9 @@ Two layouts, switch with right-click → OSD View ▸. Selection persists to `~/
 
 ### Themes
 
-Five built-in palettes. Right-click the OSD → Theme ▸ to switch instantly; the choice also persists to `~/.config/claude-usage/config.json`.
+**11 built-in palettes** — 5 classics + 6 Claude-designed skins. Right-click the OSD → Theme ▸ to switch instantly; the choice persists to `~/.config/claude-usage/config.json`.
+
+**Classics** (dark):
 
 <table align="center">
   <tr>
@@ -57,6 +59,31 @@ Five built-in palettes. Right-click the OSD → Theme ▸ to switch instantly; t
     <td><img src="https://raw.githubusercontent.com/bozdemir/claude-usage-widget/main/screenshots/osd-nord.png" alt="nord" width="260" /></td>
     <td><img src="https://raw.githubusercontent.com/bozdemir/claude-usage-widget/main/screenshots/osd-gruvbox-dark.png" alt="gruvbox-dark" width="260" /></td>
     <td></td>
+  </tr>
+</table>
+
+**Claude-designed skins:**
+
+<table align="center">
+  <tr>
+    <td align="center"><b>terminal</b><br/><em>htop vibe, green-on-black</em></td>
+    <td align="center"><b>dashboard</b><br/><em>Bloomberg-terminal cool blue</em></td>
+    <td align="center"><b>hud</b><br/><em>car-dashboard amber</em></td>
+  </tr>
+  <tr>
+    <td><img src="https://raw.githubusercontent.com/bozdemir/claude-usage-widget/main/screenshots/osd-terminal.png" alt="terminal" width="260" /></td>
+    <td><img src="https://raw.githubusercontent.com/bozdemir/claude-usage-widget/main/screenshots/osd-dashboard.png" alt="dashboard" width="260" /></td>
+    <td><img src="https://raw.githubusercontent.com/bozdemir/claude-usage-widget/main/screenshots/osd-hud.png" alt="hud" width="260" /></td>
+  </tr>
+  <tr>
+    <td align="center"><b>receipt</b> <sub>(light)</sub><br/><em>thermal-paper cream + red</em></td>
+    <td align="center"><b>strip</b><br/><em>cool mint on mono-gray</em></td>
+    <td align="center"><b>brutalist</b> <sub>(light)</sub><br/><em>white, heavy rules, crimson</em></td>
+  </tr>
+  <tr>
+    <td><img src="https://raw.githubusercontent.com/bozdemir/claude-usage-widget/main/screenshots/osd-receipt.png" alt="receipt" width="260" /></td>
+    <td><img src="https://raw.githubusercontent.com/bozdemir/claude-usage-widget/main/screenshots/osd-strip.png" alt="strip" width="260" /></td>
+    <td><img src="https://raw.githubusercontent.com/bozdemir/claude-usage-widget/main/screenshots/osd-brutalist.png" alt="brutalist" width="260" /></td>
   </tr>
 </table>
 
@@ -99,7 +126,7 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 ```bash
 pip install --user --upgrade claude-usage-widget
 claude-usage              # launches the OSD overlay
-claude-usage --version    # 0.4.7
+claude-usage --version    # 0.4.8
 ```
 
 That's it — no `apt`, no `brew`, no PyGObject, no rumps. PySide6 ships Qt in the wheel, so the widget is fully self-contained.
@@ -174,7 +201,7 @@ cp config.json.example config.json
 | `daily_token_limit` | `5000000` | Daily token limit for local tracking |
 | `weekly_token_limit` | `25000000` | Weekly token limit for local tracking |
 | `claude_dir` | `~/.claude` | Path to the Claude Code data directory |
-| `theme` | `default` | Color theme for the OSD and popup. One of `default`, `catppuccin-mocha`, `dracula`, `nord`, `gruvbox-dark` |
+| `theme` | `default` | Color theme for the OSD and popup. One of `default`, `catppuccin-mocha`, `dracula`, `nord`, `gruvbox-dark`, `terminal`, `dashboard`, `hud`, `receipt`, `strip`, `brutalist` |
 | `show_ticker` | `true` | Whether the scrolling per-turn cost ticker is painted at the bottom of the OSD. Toggle at runtime via right-click → "Show cost ticker". |
 
 Keys omitted from `config.json` fall back to built-in defaults. `claude_dir` is not included in the example file because the default is correct for most setups.
@@ -189,13 +216,22 @@ The widget ships with 5 built-in color themes. Select one by adding `"theme": "<
 }
 ```
 
-Available themes:
+Available themes (gallery above):
 
-- **default** -- the original widget palette _(screenshots welcome)_
-- **catppuccin-mocha** -- soft pastel dark theme _(screenshots welcome)_
-- **dracula** -- classic purple-and-pink dark theme _(screenshots welcome)_
-- **nord** -- cool arctic blue palette _(screenshots welcome)_
-- **gruvbox-dark** -- warm retro-style dark theme _(screenshots welcome)_
+**Classics (dark):**
+- **default** -- the original widget palette
+- **catppuccin-mocha** -- soft pastel dark theme
+- **dracula** -- classic purple-and-pink dark theme
+- **nord** -- cool arctic blue palette
+- **gruvbox-dark** -- warm retro-style dark theme
+
+**Claude-designed skins:**
+- **terminal** -- htop/btop vibe, green-on-black hacker aesthetic
+- **dashboard** -- Bloomberg-terminal clean cool blue, near-zero chroma
+- **hud** -- car-dashboard amber on warm black, mil-spec green live dot
+- **receipt** -- cream thermal-paper + near-black ink + red accents (light)
+- **strip** -- cool mint on mono-gray, ultra-compact menu-bar vibe
+- **brutalist** -- white, heavy rules, one crimson accent (light)
 
 ## How It Works
 
