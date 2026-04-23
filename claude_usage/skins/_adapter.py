@@ -10,6 +10,7 @@ values (live tokens in ``k``, ticker-tier quartile bucketing).
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Sequence
@@ -93,7 +94,7 @@ def build_popup_data(stats, now: float | None = None):
     Avoids a top-level import of ``popup_data`` so callers that don't need
     the popup shape (e.g. the OSD-only paint dispatch) pay nothing for it.
     """
-    from .popup_data import PopupData, CostRow, ProjectRow, TickerItem
+    from .popup_data import PopupData, CostRow, ProjectRow, TickerItem, ActiveSessionRow
     from claude_usage.pricing import MODEL_PRICING
 
     now_ts = now if now is not None else time.time()
@@ -182,7 +183,27 @@ def build_popup_data(stats, now: float | None = None):
         top_projects=top_projects,
         tips=list(getattr(stats, "tips", []) or []),
         weekly_report=str(getattr(stats, "weekly_report_text", "") or ""),
+        active_sessions=[
+            ActiveSessionRow(
+                cwd=str(s.get("cwd", "?")).replace(os.path.expanduser("~"), "~"),
+                duration=_format_session_duration(s, now_ts),
+            )
+            for s in (getattr(stats, "active_sessions", []) or [])
+        ],
     )
+
+
+def _format_session_duration(session: dict, now_ts: float) -> str:
+    started = session.get("startedAt", 0) or 0
+    if started <= 0:
+        return ""
+    # startedAt is in milliseconds — convert and compute elapsed seconds.
+    elapsed = max(0, int(now_ts - started / 1000))
+    hours, rem = divmod(elapsed, 3600)
+    minutes = rem // 60
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
 
 
 def from_usage_stats(

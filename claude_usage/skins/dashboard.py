@@ -172,13 +172,23 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
 
 # ---- POPUP ----------------------------------------------------
 
-def paint_popup(p, rect, data, scale: float = 1.0):
+def paint_popup(p, rect, data, scale: float = 1.0) -> float:
     """Dashboard popup: accent-number section headers + block bars."""
     from . import _popup_generic
-    _popup_generic.paint_popup(p, rect, data, scale, THEME,
-                               section_style="default",
-                               bar_style="block",
-                               masthead_style="default")
+    return _popup_generic.paint_popup(p, rect, data, scale, THEME,
+                                      section_style="default",
+                                      bar_style="block",
+                                      masthead_style="default")
+
+
+def measure_popup(data, scale: float = 1.0) -> int:
+    from ._popup import dry_measure
+    return dry_measure(paint_popup, data, scale, METRICS["popup_width"]) + int(20 * scale)
+
+
+def paint_loading(p, rect, phase: float = 0.0, scale: float = 1.0) -> None:
+    from ._popup import paint_loading as _pl
+    _pl(p, rect, THEME, scale, style="default", phase=phase)
 
 
 def _draw_ring_full(p: QPainter, cx: float, cy: float, r: float,

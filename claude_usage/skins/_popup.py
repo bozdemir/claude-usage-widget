@@ -54,6 +54,169 @@ REQUIRED_KEYS = (
 )
 
 
+# ---- measurement --------------------------------------------------
+
+def dry_measure(paint_fn: Callable, data, scale: float = 1.0,
+                width: int = POPUP_WIDTH) -> int:
+    """Paint the popup into a throwaway 1×1 QImage and read back the final
+    y cursor the painter returned.
+
+    Skins track their own y cursor through every section; once paint_popup
+    returns that cursor, we have the exact content height — no guessing.
+    The paint operations go out of bounds on the 1×1 surface, but Qt
+    silently clips; what we care about is the returned y value."""
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QImage, QPainter
+    img = QImage(1, 1, QImage.Format_ARGB32)
+    img.fill(0)
+    p = QPainter(img)
+    try:
+        y = paint_fn(p, QRectF(0, 0, width, 99999), data, scale)
+    finally:
+        p.end()
+    # Fall back for paint functions that haven't been taught to return y.
+    if not isinstance(y, (int, float)):
+        return int(1180 * scale)
+    return int(y)
+
+
+# ---- loading state ------------------------------------------------
+
+def paint_loading(
+    p: QPainter, rect: QRectF, theme: dict, scale: float = 1.0,
+    *, style: str = "default", phase: float = 0.0,
+) -> None:
+    """Draws a "waiting for data" state in the popup's centre. ``phase`` is
+    a 0..1 value driven by a timer outside so the indicator can animate
+    (dots cycling, arc sweeping, etc.).
+
+    Styles:
+        "terminal"  — ASCII box with cycling ``.``/``..``/``...``
+        "receipt"   — dashed rule + centered "PRINTING..."
+        "hud"       — 270° arc that rotates
+        "brutalist" — thick 2px block + "WAIT" stamp
+        "default"   — centered "Loading…" with a 3-dot pulse
+    """
+    s = scale; t = theme
+    # panel bg + border — match the resting popup chrome so the transition
+    # to the real content is seamless (no flash).
+    bg = hex_to_qcolor(t.get("paper", t["bg"]))
+    p.setPen(Qt.NoPen); p.setBrush(bg)
+    radius = 0 if style == "brutalist" else 8 * s
+    p.drawRoundedRect(rect, radius, radius)
+    border_w = 2 * s if style == "brutalist" else 1
+    p.setPen(QPen(hex_to_qcolor(t["border"]), border_w))
+    p.setBrush(Qt.NoBrush)
+    p.drawRoundedRect(rect.adjusted(border_w / 2, border_w / 2,
+                                    -border_w / 2, -border_w / 2),
+                      radius, radius)
+
+    cx = rect.x() + rect.width() / 2
+    cy = rect.y() + rect.height() / 2
+
+    # dot animation — 0..3 dots based on phase
+    dots = ("", ".", "..", "...")[int(phase * 4) % 4]
+
+    if style == "terminal":
+        banner_f = mono_font(13 * s, bold=True,
+                             family=t.get("_mono_family", "JetBrains Mono"))
+        body_f = mono_font(11 * s, family=t.get("_mono_family", "JetBrains Mono"))
+        fm_b = QFontMetrics(banner_f); fm = QFontMetrics(body_f)
+        line1 = "╔═ LOADING " + "═" * 8 + "╗"
+        line2 = f"  collecting{dots}".ljust(len(line1) - 2)
+        line3 = "╚" + "═" * (len(line1) - 2) + "╝"
+        w1 = fm_b.horizontalAdvance(line1)
+        y0 = cy - fm_b.height()
+        draw_text(p, cx - w1 / 2, y0 + fm_b.ascent(),
+                  line1, hex_to_qcolor(t["accent"]), banner_f,
+                  letter_spacing_px=1.0 * s)
+        draw_text(p, cx - w1 / 2 + fm_b.horizontalAdvance("║") * 1.0,
+                  y0 + fm_b.height() + fm.ascent(),
+                  line2, hex_to_qcolor(t["text_primary"]), body_f)
+        draw_text(p, cx - w1 / 2,
+                  y0 + fm_b.height() + fm.height() + fm_b.ascent(),
+                  line3, hex_to_qcolor(t["accent"]), banner_f,
+                  letter_spacing_px=1.0 * s)
+        return
+
+    if style == "receipt":
+        banner_f = mono_font(12 * s, bold=True,
+                             family=t.get("_mono_family", "JetBrains Mono"))
+        fm_b = QFontMetrics(banner_f)
+        txt = f"- - -  PRINTING{dots.ljust(3)}  - - -"
+        tw = fm_b.horizontalAdvance(txt)
+        # dashed rule above & below
+        pen = QPen(hex_to_qcolor(t.get("rule", t["border"])))
+        pen.setDashPattern([4, 3])
+        p.setPen(pen)
+        p.drawLine(QPointF(cx - tw / 2 - 20 * s, cy - 24 * s),
+                   QPointF(cx + tw / 2 + 20 * s, cy - 24 * s))
+        draw_text(p, cx - tw / 2, cy + fm_b.ascent() / 2,
+                  txt, hex_to_qcolor(t["text_primary"]), banner_f,
+                  letter_spacing_px=2 * s)
+        p.setPen(pen)
+        p.drawLine(QPointF(cx - tw / 2 - 20 * s, cy + 24 * s),
+                   QPointF(cx + tw / 2 + 20 * s, cy + 24 * s))
+        return
+
+    if style == "hud":
+        # rotating 270° arc
+        r = 34 * s; stroke = 6 * s
+        arc_rect = QRectF(cx - r, cy - r - 12 * s, r * 2, r * 2)
+        pen = QPen(hex_to_qcolor(t["bar_track"])); pen.setWidthF(stroke)
+        pen.setCapStyle(Qt.RoundCap)
+        p.setPen(pen); p.setBrush(Qt.NoBrush)
+        p.drawArc(arc_rect, 0, 360 * 16)
+        pen = QPen(hex_to_qcolor(t["accent"])); pen.setWidthF(stroke)
+        pen.setCapStyle(Qt.RoundCap)
+        p.setPen(pen)
+        start_deg = int(-phase * 360 * 16)
+        p.drawArc(arc_rect, start_deg, -90 * 16)
+        # label below
+        label_f = mono_font(10 * s, bold=True,
+                            family=t.get("_mono_family", "JetBrains Mono"))
+        fm = QFontMetrics(label_f)
+        txt = "INITIALIZING" + dots
+        tw = fm.horizontalAdvance(txt)
+        draw_text(p, cx - tw / 2, cy + r + 24 * s,
+                  txt, hex_to_qcolor(t["text_dim"]), label_f,
+                  letter_spacing_px=3 * s)
+        return
+
+    if style == "brutalist":
+        # big solid block + stamp
+        big_f = mono_font(28 * s, bold=True,
+                          family=t.get("_mono_family", "Space Mono"))
+        fm_b = QFontMetrics(big_f)
+        txt = f"§ WAIT{dots}"
+        tw = fm_b.horizontalAdvance(txt)
+        block = QRectF(cx - tw / 2 - 18 * s, cy - fm_b.height() / 2 - 6 * s,
+                       tw + 36 * s, fm_b.height() + 12 * s)
+        p.setPen(Qt.NoPen); p.setBrush(hex_to_qcolor(t["text_primary"]))
+        p.drawRect(block)
+        draw_text(p, cx - tw / 2, cy + fm_b.ascent() / 2 - 4 * s,
+                  txt, hex_to_qcolor(t["paper"]), big_f,
+                  letter_spacing_px=3 * s)
+        return
+
+    # default — centred "Loading..." with a pulsing 3-dot bar
+    label_f = ui_font(13 * s, family=t.get("_ui_family", "Inter"))
+    fm = QFontMetrics(label_f)
+    txt = "Loading"
+    tw = fm.horizontalAdvance(txt)
+    draw_text(p, cx - tw / 2, cy - 6 * s,
+              txt, hex_to_qcolor(t["text_primary"]), label_f,
+              letter_spacing_px=1.5 * s)
+    # 3 dots, the "active" one (based on phase) is accent
+    dot_r = 3 * s
+    active = int(phase * 3) % 3
+    for i in range(3):
+        col = hex_to_qcolor(t["accent"]) if i == active else hex_to_qcolor(t["text_dim"])
+        p.setPen(Qt.NoPen); p.setBrush(col)
+        p.drawEllipse(QPointF(cx - 12 * s + i * 12 * s, cy + 14 * s),
+                      dot_r, dot_r)
+
+
 # ---- reusable blocks ----------------------------------------------
 
 def draw_section_header(
@@ -237,6 +400,42 @@ def draw_project_list(
                   hex_to_qcolor(theme["text_dim"]), f)
         # hairline between rows
         if i < len(projects) - 1:
+            p.setPen(hex_to_qcolor(theme["border"]))
+            p.drawLine(QPointF(x, y + row_h - 1),
+                       QPointF(x + w, y + row_h - 1))
+        y += row_h
+    return y
+
+
+def draw_active_sessions(
+    p: QPainter, x: float, y: float, w: float,
+    sessions: list,    # each has .cwd and .duration
+    theme: dict, scale: float = 1.0,
+) -> float:
+    """Per-row list of running Claude Code sessions: cwd left, duration right,
+    hairline between rows. Falls back to a dim "no active sessions" line when
+    the list is empty so the section still has visual weight."""
+    s = scale
+    f = mono_font(11 * s, family=theme["_mono_family"])
+    fm = QFontMetrics(f)
+    row_h = fm.height() + 6 * s
+    if not sessions:
+        draw_text(p, x, y + fm.ascent() + 3 * s, "no active sessions",
+                  hex_to_qcolor(theme["text_dim"]), f)
+        return y + row_h
+    for i, sess in enumerate(sessions):
+        bl = y + fm.ascent() + 3 * s
+        cwd = getattr(sess, "cwd", "?") or "?"
+        dur = getattr(sess, "duration", "") or ""
+        # elide long cwds so right-aligned duration never gets pushed off
+        dw = fm.horizontalAdvance(dur)
+        cwd_max = w - dw - 16 * s
+        elided_cwd = fm.elidedText(cwd, Qt.ElideMiddle, int(cwd_max))
+        draw_text(p, x, bl, elided_cwd,
+                  hex_to_qcolor(theme["text_primary"]), f)
+        draw_text(p, x + w - dw, bl, dur,
+                  hex_to_qcolor(theme["text_dim"]), f)
+        if i < len(sessions) - 1:
             p.setPen(hex_to_qcolor(theme["border"]))
             p.drawLine(QPointF(x, y + row_h - 1),
                        QPointF(x + w, y + row_h - 1))

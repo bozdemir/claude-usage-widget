@@ -28,6 +28,13 @@ class ProjectRow:
 
 
 @dataclass
+class ActiveSessionRow:
+    """One live Claude Code session shown under the Active Sessions section."""
+    cwd: str           # project directory (may be "[redacted]" for screenshots)
+    duration: str      # human-readable time-since-start ("47m", "2h 14m")
+
+
+@dataclass
 class TickerItem:
     cost_usd: float
     tool_label: str
@@ -73,6 +80,7 @@ class PopupData:
     top_projects: list[ProjectRow] = field(default_factory=list)
     tips: list[str] = field(default_factory=list)
     weekly_report: str = ""
+    active_sessions: list[ActiveSessionRow] = field(default_factory=list)
 
 
 def adapt_from_usage_stats(stats, extra: dict | None = None) -> PopupData:

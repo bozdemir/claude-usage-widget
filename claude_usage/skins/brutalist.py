@@ -152,7 +152,7 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
 
 # ---- POPUP ---------------------------------------------------------
 
-def paint_popup(p, rect, data, scale: float = 1.0):
+def paint_popup(p, rect, data, scale: float = 1.0) -> float:
     """Brutalist popup: heavy 2px rules, § section marks, crimson accent.
 
     Nuance: section headers are \"§01 TITLE\" style with a 2px black top
@@ -160,7 +160,17 @@ def paint_popup(p, rect, data, scale: float = 1.0):
     this correctly.
     """
     from . import _popup_generic
-    _popup_generic.paint_popup(p, rect, data, scale, THEME,
-                               section_style="brutalist",
-                               bar_style="rect_border",
-                               masthead_style="brutalist")
+    return _popup_generic.paint_popup(p, rect, data, scale, THEME,
+                                      section_style="brutalist",
+                                      bar_style="rect_border",
+                                      masthead_style="brutalist")
+
+
+def measure_popup(data, scale: float = 1.0) -> int:
+    from ._popup import dry_measure
+    return dry_measure(paint_popup, data, scale, METRICS.get("popup_width", 540)) + int(20 * scale)
+
+
+def paint_loading(p, rect, phase: float = 0.0, scale: float = 1.0) -> None:
+    from ._popup import paint_loading as _pl
+    _pl(p, rect, THEME, scale, style="brutalist", phase=phase)

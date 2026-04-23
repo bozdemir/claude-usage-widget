@@ -36,7 +36,8 @@ from claude_usage.overlay import (
 )
 from claude_usage.themes import THEMES
 from claude_usage.ticker import TickerItem
-from claude_usage.widget import UsagePopup
+from claude_usage.skins import SKIN_MODULES
+from claude_usage.widget import SkinPopupWidget, UsagePopup
 
 
 OUTPUT_DIR = os.path.join(REPO_ROOT, "screenshots")
@@ -77,7 +78,13 @@ def main() -> int:
         "-home-user-project-beta": 169_800,
         "-home-user-project-gamma": 95_300,
     }
-    stats.active_sessions = []  # cwd contains the user's home path
+    # Synthetic active sessions so the new [07] section has rows to show.
+    import time as _time
+    _now = _time.time()
+    stats.active_sessions = [
+        {"cwd": "/home/user/project-alpha", "startedAt": int((_now - 47 * 60) * 1000)},
+        {"cwd": "/home/user/project-beta",  "startedAt": int((_now - 2 * 3600 - 14 * 60) * 1000)},
+    ]
     stats.weekly_report_text = (
         "Productive week — 626k output tokens across three projects, "
         "all on Opus 4.7. Cache is pulling ~5x its own weight; expensive "
@@ -144,20 +151,27 @@ def main() -> int:
         )
         gauge.close()
 
-        popup = UsagePopup(tcfg)
-        popup.resize(POPUP_WIDTH, 400)
-        popup.update_stats(stats)
-        popup.show()
-        _pump(app, ms=120)
-        # Grab the inner content widget directly — skips the scroll area
-        # chrome and the vertical scrollbar, and we don't have to guess
-        # whether the popup height is tall enough.
-        content = popup._content
-        content.adjustSize()
-        _pump(app, ms=80)
         popup_path = os.path.join(OUTPUT_DIR, f"popup-{theme_name}.png")
-        content.grab().save(popup_path, "PNG")
-        popup.close()
+        if theme_name in SKIN_MODULES:
+            # Skin themes paint through SkinPopupWidget's paintEvent stack
+            # — grab the inner content widget for a chrome-free capture.
+            skin_popup = SkinPopupWidget(tcfg)
+            skin_popup.update_stats(stats)
+            skin_popup.show()
+            _pump(app, ms=200)
+            skin_popup._content.grab().save(popup_path, "PNG")
+            skin_popup.close()
+        else:
+            popup = UsagePopup(tcfg)
+            popup.resize(POPUP_WIDTH, 400)
+            popup.update_stats(stats)
+            popup.show()
+            _pump(app, ms=120)
+            content = popup._content
+            content.adjustSize()
+            _pump(app, ms=80)
+            content.grab().save(popup_path, "PNG")
+            popup.close()
 
     print(f"\nSaved to {OUTPUT_DIR}/")
     return 0

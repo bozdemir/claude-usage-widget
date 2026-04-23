@@ -172,7 +172,7 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
 
 # ---- POPUP ---------------------------------------------------------
 
-def paint_popup(p, rect, data, scale: float = 1.0):
+def paint_popup(p, rect, data, scale: float = 1.0) -> float:
     """Receipt popup: dashed rules, centered masthead, rect-border bars.
 
     Nuance: paper grain IS drawn across the whole popup at scale>=0.8.
@@ -192,7 +192,17 @@ def paint_popup(p, rect, data, scale: float = 1.0):
     if scale >= 0.8:
         _draw_grain(p, rect, METRICS["grain_step_px"] * s)
 
-    _popup_generic.paint_popup(p, rect, data, scale, THEME,
-                               section_style="receipt",
-                               bar_style="rect_border",
-                               masthead_style="receipt")
+    return _popup_generic.paint_popup(p, rect, data, scale, THEME,
+                                      section_style="receipt",
+                                      bar_style="rect_border",
+                                      masthead_style="receipt")
+
+
+def measure_popup(data, scale: float = 1.0) -> int:
+    from ._popup import dry_measure
+    return dry_measure(paint_popup, data, scale, METRICS["popup_width"]) + int(20 * scale)
+
+
+def paint_loading(p, rect, phase: float = 0.0, scale: float = 1.0) -> None:
+    from ._popup import paint_loading as _pl
+    _pl(p, rect, THEME, scale, style="receipt", phase=phase)

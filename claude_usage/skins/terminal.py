@@ -24,8 +24,8 @@ from ._paint import (
 )
 from ._popup import (
     ROW_GAP, SECTION_GAP,
-    draw_kpi_big, draw_pct_row, draw_project_list, draw_report_card,
-    draw_section_header, draw_sparkline_row,
+    draw_active_sessions, draw_kpi_big, draw_pct_row, draw_project_list,
+    draw_report_card, draw_section_header, draw_sparkline_row,
 )
 
 
@@ -170,17 +170,18 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
 # ---- POPUP ---------------------------------------------------------
 
 def measure_popup(data, scale: float = 1.0) -> int:
-    """Return total popup height in px for the given data at this scale.
-    Used by the QWidget to set its minimum height BEFORE paintEvent."""
-    s = scale
-    # rough estimate; measured in dev to match draw_popup exactly
-    base = 540 * s
-    base += 12 * len(data.top_projects) * s
-    base += 18 * len(data.tips) * s
-    return int(base)
+    """Exact popup height via dry paint — see ``_popup.dry_measure``."""
+    from ._popup import dry_measure
+    return dry_measure(paint_popup, data, scale, METRICS["popup_width"]) + int(20 * scale)
 
 
-def paint_popup(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
+def paint_loading(p: QPainter, rect: QRectF, phase: float = 0.0,
+                  scale: float = 1.0) -> None:
+    from ._popup import paint_loading as _pl
+    _pl(p, rect, THEME, scale, style="terminal", phase=phase)
+
+
+def paint_popup(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> float:
     """Terminal-style popup. Uses [NN] section headers and ASCII bars.
     Mimics a terminal readout — dashed rules, box-drawing trim, mono everywhere."""
     s = scale; t = THEME
@@ -287,6 +288,11 @@ def paint_popup(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     # [06] weekly report
     y = draw_section_header(p, x, y, w, 6, "your week", t, s, style="terminal")
     y = draw_report_card(p, x, y, w, data.weekly_report, t, s, style="quote")
+    y += SECTION_GAP * s
+
+    # [07] active sessions
+    y = draw_section_header(p, x, y, w, 7, "active sessions", t, s, style="terminal")
+    y = draw_active_sessions(p, x, y, w, data.active_sessions, t, s)
 
     # bottom trim
     y += 10 * s
@@ -295,6 +301,7 @@ def paint_popup(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     tw = fm_tr.horizontalAdvance(trim)
     draw_text(p, x + (w - tw) / 2, y + fm_tr.ascent(), trim,
               hex_to_qcolor(t["text_dim"]), sub_f)
+    return y + fm_tr.height() + pad
 
 
 # Constant used by the popup helpers above (ROW_GAP from _popup.py).

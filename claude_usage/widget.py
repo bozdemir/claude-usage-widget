@@ -326,6 +326,13 @@ class SkinPopupWidget(QWidget):
         self._skin = SKIN_MODULES.get(str(config.get("theme", "")))
         self._data = None
         self._scale = 1.0
+        # Phase driver for the pre-data "Loading..." animation. Bumps every
+        # tick so dots cycle / arcs sweep while we wait for first collect.
+        self._loading_phase = 0.0
+        self._loading_timer = QTimer(self)
+        self._loading_timer.setInterval(120)
+        self._loading_timer.timeout.connect(self._tick_loading)
+        self._loading_timer.start()
 
         self.setWindowTitle("Claude Usage")
         self.setWindowFlags(Qt.Tool | Qt.WindowStaysOnTopHint | Qt.WindowCloseButtonHint)
@@ -346,7 +353,8 @@ class SkinPopupWidget(QWidget):
         root.addWidget(self._scroll)
 
         self._apply_scrollbar_style()
-        self.resize(540, 720)
+        self.resize(540, 360)
+        self._resize_content()
 
     def apply_config(self, config: dict[str, Any]) -> None:
         self._config = config
@@ -374,20 +382,43 @@ class SkinPopupWidget(QWidget):
     def update_stats(self, stats) -> None:
         from claude_usage.skins._adapter import build_popup_data
         self._data = build_popup_data(stats)
+        # First-data-in: stop the loading animation and repaint immediately
+        # so the placeholder doesn't linger for another timer interval.
+        if self._loading_timer.isActive():
+            self._loading_timer.stop()
         self._resize_content()
         self._content.update()
 
+    def _tick_loading(self) -> None:
+        if self._data is not None:
+            self._loading_timer.stop()
+            return
+        self._loading_phase = (self._loading_phase + 0.12) % 1.0
+        self._content.update()
+
     def _resize_content(self) -> None:
-        if self._skin is None or self._data is None:
+        if self._skin is None:
             return
         width = int(self._skin.METRICS.get("popup_width", 540) * self._scale)
+        if self._data is None:
+            # No data yet — size the content so the loading indicator has
+            # a sensible canvas. 360px covers every skin's paint_loading.
+            placeholder_h = int(360 * self._scale)
+            self._content.setFixedSize(width, placeholder_h)
+            self.resize(width, placeholder_h)
+            return
         measure = getattr(self._skin, "measure_popup", None)
         if callable(measure):
             height = int(measure(self._data, self._scale))
         else:
-            # Fall back to a generous default that _popup_generic.paint_popup
-            # almost always fits into.
-            height = int(820 * self._scale)
+            # Generic-layout skins need roughly this much for the full
+            # section stack (plan / calendar / cost / projects / tips /
+            # weekly report / ticker footer). 1180 is the observed max
+            # across dashboard / hud / receipt / strip / brutalist at 1.0x.
+            height = int(1180 * self._scale)
+        # Snap to a minimum so short data doesn't leave a tiny postage-
+        # stamp window either.
+        height = max(height, int(520 * self._scale))
         self._content.setFixedSize(width, height)
         # Size the outer window to exactly wrap the content so we don't
         # leave grey gutters around a small popup. Cap the height at 90%
@@ -399,20 +430,27 @@ class SkinPopupWidget(QWidget):
             max_h = int(screen.availableGeometry().height() * 0.9) if screen else height
         except Exception:
             max_h = height
+        # Add scrollbar width when the content is taller than the
+        # available space so nothing gets hidden under a floating bar.
+        chrome_w = 14 if height > max_h else 0
         window_h = min(height, max_h)
-        # When content is shorter than max, snap window tight. When it's
-        # taller, leave the scroll area with its scrollbar so the user
-        # can still reach the bottom.
-        self.resize(width, window_h)
+        self.resize(width + chrome_w, window_h)
 
     def _paint_content(self, _event) -> None:
-        if self._skin is None or self._data is None:
+        if self._skin is None:
             return
         from PySide6.QtCore import QRectF
         p = QPainter(self._content)
         p.setRenderHint(QPainter.Antialiasing, True)
         p.setRenderHint(QPainter.TextAntialiasing, True)
         try:
+            if self._data is None:
+                # First-open placeholder — animated by _tick_loading.
+                paint_loading = getattr(self._skin, "paint_loading", None)
+                if callable(paint_loading):
+                    paint_loading(p, QRectF(self._content.rect()),
+                                  self._loading_phase, self._scale)
+                return
             self._skin.paint_popup(
                 p, QRectF(self._content.rect()), self._data, self._scale,
             )
@@ -1084,6 +1122,14 @@ class ClaudeUsageApp(QObject):
         self._persist_config()
 
     def _on_pick_theme(self, name: str) -> None:
+        # If either popup is open, close it — switching themes swaps the
+        # painter/layout wholesale, and leaving the old window visible
+        # causes a jarring mid-paint flicker. User can re-open to see the
+        # new theme.
+        if self.popup.isVisible():
+            self.popup.hide()
+        if self.skin_popup.isVisible():
+            self.skin_popup.hide()
         self.overlay.set_theme(name)
         merged = {**self.config, "theme": name}
         self.popup.apply_config(merged)

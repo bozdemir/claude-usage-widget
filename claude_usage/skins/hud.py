@@ -188,7 +188,7 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
 
 # ---- POPUP ---------------------------------------------------------
 
-def paint_popup(p, rect, data, scale: float = 1.0):
+def paint_popup(p, rect, data, scale: float = 1.0) -> float:
     """HUD popup: big gauges at top + standard sections below.
 
     Nuance: the HUD popup keeps the 270° arc gauges as the dominant
@@ -214,7 +214,17 @@ def paint_popup(p, rect, data, scale: float = 1.0):
     # up top should paint them BEFORE calling _popup_generic and then
     # adjust rect.y() to sit below. For simplicity we use the generic
     # layout here; all KPIs read consistently.
-    _popup_generic.paint_popup(p, rect, data, scale, THEME,
-                               section_style="default",
-                               bar_style="block",
-                               masthead_style="default")
+    return _popup_generic.paint_popup(p, rect, data, scale, THEME,
+                                      section_style="default",
+                                      bar_style="block",
+                                      masthead_style="default")
+
+
+def measure_popup(data, scale: float = 1.0) -> int:
+    from ._popup import dry_measure
+    return dry_measure(paint_popup, data, scale, METRICS.get("popup_width", 540)) + int(20 * scale)
+
+
+def paint_loading(p, rect, phase: float = 0.0, scale: float = 1.0) -> None:
+    from ._popup import paint_loading as _pl
+    _pl(p, rect, THEME, scale, style="hud", phase=phase)

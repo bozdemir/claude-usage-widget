@@ -23,7 +23,7 @@ from ._paint import (
 )
 from ._popup import (
     POPUP_PADDING, ROW_GAP, SECTION_GAP,
-    draw_pct_row, draw_project_list, draw_report_card,
+    draw_active_sessions, draw_pct_row, draw_project_list, draw_report_card,
     draw_section_header, draw_sparkline_row,
 )
 
@@ -34,7 +34,7 @@ def paint_popup(
     section_style: str = "default",
     bar_style: str = "block",
     masthead_style: str = "default",   # "default" | "receipt" | "brutalist"
-) -> None:
+) -> float:
     s = scale; t = theme
     pad = POPUP_PADDING * s
 
@@ -209,4 +209,11 @@ def paint_popup(
     # --- section 06: weekly report --------------------------------
     y = draw_section_header(p, x, y, w, 6, "your week with claude", t, s,
                             style=section_style)
-    draw_report_card(p, x, y, w, data.weekly_report, t, s, style="quote")
+    y = draw_report_card(p, x, y, w, data.weekly_report, t, s, style="quote")
+    y += SECTION_GAP * s
+
+    # --- section 07: active sessions ------------------------------
+    y = draw_section_header(p, x, y, w, 7, "active sessions", t, s,
+                            style=section_style)
+    y = draw_active_sessions(p, x, y, w, data.active_sessions, t, s)
+    return y + POPUP_PADDING * s
