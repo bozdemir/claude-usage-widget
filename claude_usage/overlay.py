@@ -23,12 +23,19 @@ from PySide6.QtGui import (
     QMouseEvent,
     QPainter,
     QPaintEvent,
+    QPen,
     QWheelEvent,
 )
 from PySide6.QtWidgets import QApplication, QWidget
 
 from claude_usage.collector import UsageStats
-from claude_usage.themes import get_theme
+from claude_usage.themes import (
+    BAR_STYLE_ASCII,
+    BAR_STYLE_BLOCK,
+    ThemeStyle,
+    get_style,
+    get_theme,
+)
 from claude_usage.ticker import TickerItem
 
 
@@ -145,7 +152,9 @@ class UsageOverlay(QWidget):
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__()
         cfg = config or {}
-        self._theme = get_theme(str(cfg.get("theme", "default")))
+        theme_name = str(cfg.get("theme", "default"))
+        self._theme = get_theme(theme_name)
+        self._style: ThemeStyle = get_style(theme_name)
         self._scale: float = float(cfg.get("osd_scale", 1.0))
         self._opacity: float = float(cfg.get("osd_opacity", 0.75))
         self._minimized: bool = False
@@ -284,6 +293,7 @@ class UsageOverlay(QWidget):
     def set_theme(self, name: str) -> None:
         """Switch to a named theme and repaint."""
         self._theme = get_theme(name)
+        self._style = get_style(name)
         self.update()
 
     def toggle_minimized(self) -> None:
@@ -308,7 +318,10 @@ class UsageOverlay(QWidget):
             # already occupies that footer real estate.
             base = GAUGE_HEIGHT
         else:
-            base = BASE_HEIGHT + (TICKER_STRIP_HEIGHT if self._ticker_enabled else 0)
+            # Receipt skin always reserves the footer strip for its barcode,
+            # even if the user disabled the ticker feature.
+            wants_footer = self._ticker_enabled or self._style.decoration == "receipt"
+            base = BASE_HEIGHT + (TICKER_STRIP_HEIGHT if wants_footer else 0)
         height = MINIMIZED_HEIGHT if self._minimized else int(base * self._scale)
         # Preserve the top-right corner when resizing so the overlay doesn't
         # visually drift as the user scrolls to scale.
@@ -415,13 +428,23 @@ class UsageOverlay(QWidget):
         alarming here as in bars mode.
         """
         s = self._scale
-        radius = OSD_RADIUS * s
+        radius = self._style.corner_radius * s
 
         # Background panel.
         bg = _hex_to_qcolor(self._theme["bg"], self._opacity)
         p.setPen(Qt.NoPen)
         p.setBrush(bg)
         p.drawRoundedRect(QRectF(0, 0, w, h), radius, radius)
+        if self._style.border_width > 0:
+            bw = self._style.border_width * s
+            border_pen = QPen(_hex_to_qcolor(self._theme.get("separator", "#000000")))
+            border_pen.setWidthF(bw)
+            p.setPen(border_pen)
+            p.setBrush(Qt.NoBrush)
+            inset = bw / 2
+            p.drawRoundedRect(
+                QRectF(inset, inset, w - bw, h - bw), radius, radius,
+            )
 
         # Two columns splitting the panel; each column is one gauge stack.
         col_w = w / 2
@@ -475,7 +498,6 @@ class UsageOverlay(QWidget):
         fill_color: QColor,
     ) -> None:
         """Draw the track + filled-arc pair that make up one gauge."""
-        from PySide6.QtGui import QPen
         track_pen = QPen(_hex_to_qcolor(self._theme["bar_track"], 0.7))
         track_pen.setWidthF(stroke)
         track_pen.setCapStyle(Qt.FlatCap)
@@ -500,13 +522,30 @@ class UsageOverlay(QWidget):
 
     def _paint_full(self, p: QPainter, w: int, h: int) -> None:
         s = self._scale
-        radius = OSD_RADIUS * s
+        # Per-theme corner radius; default keeps the historical 12px curve.
+        radius = self._style.corner_radius * s
 
         # Background
         bg = _hex_to_qcolor(self._theme["bg"], self._opacity)
         p.setPen(Qt.NoPen)
         p.setBrush(bg)
         p.drawRoundedRect(QRectF(0, 0, w, h), radius, radius)
+        # Receipt skin: overlay a subtle paper-grain stripe pattern so the
+        # panel reads as thermal paper instead of flat fill.
+        if self._style.decoration == "receipt":
+            self._paint_paper_grain(p, w, h)
+        # Optional heavy border — brutalist theme uses 2px for the Swiss-grid
+        # vibe; receipt uses 1px for a paper-edge feel.
+        if self._style.border_width > 0:
+            bw = self._style.border_width * s
+            border_pen = QPen(_hex_to_qcolor(self._theme.get("separator", "#000000")))
+            border_pen.setWidthF(bw)
+            p.setPen(border_pen)
+            p.setBrush(Qt.NoBrush)
+            inset = bw / 2
+            p.drawRoundedRect(
+                QRectF(inset, inset, w - bw, h - bw), radius, radius,
+            )
 
         pad_x = 14 * s
         pad_y = 10 * s
@@ -517,18 +556,21 @@ class UsageOverlay(QWidget):
         font_small = max(7, 7.5 * s)
         font_title = max(7, 8 * s)
 
-        # Title
+        # Title — optional skin-specific ASCII prefix (e.g. "┌─ " for
+        # terminal). The prefix is drawn inline so the rozet/LIVE badge
+        # positioning still works off the full string width.
         title_font = _mono_font(int(font_title))
         p.setFont(title_font)
         p.setPen(_hex_to_qcolor(self._theme["text_dim"]))
         title_y = pad_y + 7 * s
-        p.drawText(QPointF(pad_x, title_y), "CLAUDE")
+        title_text = self._style.title_prefix + "CLAUDE"
+        p.drawText(QPointF(pad_x, title_y), title_text)
 
         # Subagent rozet — only shown when > 0 so single-session users aren't
         # bothered by a permanent "0 agents" noise. Rendered just right of
         # CLAUDE in the theme's link colour to signal "active thing".
         if self._active_subagents > 0:
-            title_w = p.fontMetrics().horizontalAdvance("CLAUDE")
+            title_w = p.fontMetrics().horizontalAdvance(title_text)
             rozet = f"⚙ {self._active_subagents}"
             p.setPen(_hex_to_qcolor(self._theme["text_link"]))
             p.drawText(QPointF(pad_x + title_w + 6 * s, title_y), rozet)
@@ -563,8 +605,21 @@ class UsageOverlay(QWidget):
             reset_label=_format_reset_short(self._weekly_reset),
         )
 
-        # --- Ticker strip (below the weekly row) ---
-        if self._ticker_enabled:
+        # --- Ticker strip / barcode (below the weekly row) ---
+        # Receipt skin replaces the scrolling ticker with a decorative 1D
+        # barcode so the OSD reads as a thermal-printed chit rather than a
+        # moving terminal. Other skins keep the ticker when enabled.
+        if self._style.decoration == "receipt":
+            barcode_h = 14 * s
+            barcode_y = y2 + 15 * s + bar_h + 6 * s
+            self._paint_barcode(
+                p,
+                pad_x,
+                barcode_y,
+                w - 2 * pad_x,
+                barcode_h,
+            )
+        elif self._ticker_enabled:
             ticker_y = y2 + 15 * s + bar_h + 6 * s
             self._draw_ticker(p, ticker_y, w, pad_x, s)
 
@@ -689,11 +744,17 @@ class UsageOverlay(QWidget):
         reset_label: str,
     ) -> None:
         """Draw one row: label on the left, reset + percentage on the right, bar below."""
-        # Label + percentage baseline
+        # Label + percentage baseline. Some skins (dashboard, brutalist)
+        # uppercase the row label for a datasheet feel.
         p.setFont(_mono_font(int(font_label)))
         p.setPen(_hex_to_qcolor(self._theme["text_primary"]))
         baseline = y + 10 * self._scale
-        p.drawText(QPointF(pad_x, baseline), label)
+        label_text = label
+        if self._style.label_case == "upper":
+            label_text = label.upper()
+        elif self._style.label_case == "lower":
+            label_text = label.lower()
+        p.drawText(QPointF(pad_x, baseline), label_text)
 
         pct_text = f"{int(pct * 100)}%"
         pct_width = p.fontMetrics().horizontalAdvance(pct_text)
@@ -709,14 +770,95 @@ class UsageOverlay(QWidget):
                 reset_label,
             )
 
-        # Bar track
+        # Bar — skin-specific style: ASCII block glyphs for terminal, sharp
+        # rectangle for brutalist/receipt, classic rounded pill otherwise.
         bar_y = y + 14 * self._scale
+        self._draw_bar(p, pad_x, bar_y, bar_w, bar_h, bar_r, pct)
+
+    def _paint_paper_grain(self, p: QPainter, w: int, h: int) -> None:
+        """Thin horizontal stripes every 4px — thermal-paper grain texture."""
+        ink = _hex_to_qcolor(self._theme["text_primary"], 0.04)
+        pen = QPen(ink)
+        pen.setWidthF(1.0)
+        p.setPen(pen)
+        step = max(3, int(4 * self._scale))
+        y = 0
+        while y < h:
+            p.drawLine(QPointF(0, y), QPointF(w, y))
+            y += step
+
+    def _paint_barcode(
+        self, p: QPainter, x: float, y: float, w: float, h: float,
+    ) -> None:
+        """Deterministic 1D barcode strip — no runtime randomness so the
+        rendered output is pixel-stable for screenshots."""
+        ink = _hex_to_qcolor(self._theme["text_primary"])
+        bg_fill = _hex_to_qcolor(self._theme["bg"])
+        p.setPen(Qt.NoPen)
+        p.setBrush(bg_fill)
+        p.drawRect(QRectF(x, y, w, h))
+        # Pattern chosen to look like a real UPC-A-ish barcode without being
+        # a valid encoding of anything. Digits = bar widths in units.
+        pattern = (1, 2, 1, 3, 2, 1, 1, 3, 1, 2, 2, 1, 3, 1, 2, 1, 1, 3, 1, 2,
+                   1, 3, 2, 1, 1, 2, 3, 1, 2, 1, 3, 1)
+        total_units = sum(pattern) * 2  # bars + gaps
+        unit = w / total_units
+        cx = x
+        for i, width_units in enumerate(pattern):
+            bw = width_units * unit
+            if i % 2 == 0:  # even index = bar (ink)
+                p.setBrush(ink)
+                p.drawRect(QRectF(cx, y, bw, h))
+            cx += bw
+
+    def _draw_bar(
+        self,
+        p: QPainter,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        radius: float,
+        pct: float,
+    ) -> None:
+        """Render one usage bar in the style dictated by the current theme."""
+        style = self._style.bar_style
+        s = self._scale
+        if style == BAR_STYLE_ASCII:
+            # Monospace block glyphs — htop / btop vibe. We draw with the
+            # mono font so each cell is a fixed cell width; filled vs empty
+            # separate at the fraction boundary.
+            cells = max(10, int(w / max(6 * s, 1)))
+            filled = round(pct * cells)
+            font = _mono_font(max(7, int(10 * s)))
+            p.setFont(font)
+            fill = _bar_color(pct, self._theme)
+            track = _hex_to_qcolor(self._theme["bar_track"], 0.8)
+            fm = p.fontMetrics()
+            cell_w = fm.horizontalAdvance("█")
+            baseline = y + h + fm.ascent() / 2 - 1
+            cx = x
+            for i in range(cells):
+                p.setPen(fill if i < filled else track)
+                p.drawText(QPointF(cx, baseline), "█" if i < filled else "░")
+                cx += cell_w
+            return
+
+        if style == BAR_STYLE_BLOCK:
+            # Sharp-cornered rectangles — brutalist / receipt vibe.
+            p.setPen(Qt.NoPen)
+            p.setBrush(_hex_to_qcolor(self._theme["bar_track"], 0.8))
+            p.drawRect(QRectF(x, y, w, h))
+            if pct > 0:
+                p.setBrush(_bar_color(pct, self._theme))
+                p.drawRect(QRectF(x, y, w * min(pct, 1.0), h))
+            return
+
+        # Default: classic rounded pill.
         p.setPen(Qt.NoPen)
         p.setBrush(_hex_to_qcolor(self._theme["bar_track"], 0.6))
-        p.drawRoundedRect(QRectF(pad_x, bar_y, bar_w, bar_h), bar_r, bar_r)
-
-        # Bar fill
+        p.drawRoundedRect(QRectF(x, y, w, h), radius, radius)
         if pct > 0:
-            fill_w = max(bar_w * min(pct, 1.0), bar_h)
+            fill_w = max(w * min(pct, 1.0), h)
             p.setBrush(_bar_color(pct, self._theme))
-            p.drawRoundedRect(QRectF(pad_x, bar_y, fill_w, bar_h), bar_r, bar_r)
+            p.drawRoundedRect(QRectF(x, y, fill_w, h), radius, radius)

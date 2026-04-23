@@ -40,7 +40,7 @@ from claude_usage.forecast import format_forecast
 from claude_usage.notifier import UsageNotifier
 from claude_usage.overlay import UsageOverlay, _hex_to_qcolor
 from claude_usage.pricing import MODEL_PRICING, calculate_cost
-from claude_usage.themes import get_theme
+from claude_usage.themes import ThemeStyle, get_style, get_theme
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +319,9 @@ class UsagePopup(QWidget):
     def __init__(self, config: dict[str, Any]) -> None:
         super().__init__()
         self._config = config
-        self._theme = get_theme(str(config.get("theme", "default")))
+        theme_name = str(config.get("theme", "default"))
+        self._theme = get_theme(theme_name)
+        self._style: ThemeStyle = get_style(theme_name)
 
         self.setWindowTitle("Claude Usage")
         # Resizable: set a sensible initial size and a minimum, but let the
@@ -497,7 +499,9 @@ class UsagePopup(QWidget):
     def apply_config(self, config: dict[str, Any]) -> None:
         """Re-read theme/opacity in case the user changed it at runtime."""
         self._config = config
-        self._theme = get_theme(str(config.get("theme", "default")))
+        theme_name = str(config.get("theme", "default"))
+        self._theme = get_theme(theme_name)
+        self._style = get_style(theme_name)
         self.setStyleSheet(self._build_qss())
 
     @Slot(object)

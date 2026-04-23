@@ -25,7 +25,51 @@ Keys and their intended roles:
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Dict, Mapping
+
+
+# Bar rendering styles. "rounded" is the classic Qt pill progress bar; "ascii"
+# swaps in monospace block glyphs (`█░`) for terminal themes; "block" draws
+# sharp-cornered rectangles for brutalist themes.
+BAR_STYLE_ROUNDED = "rounded"
+BAR_STYLE_ASCII = "ascii"
+BAR_STYLE_BLOCK = "block"
+
+
+@dataclass(frozen=True)
+class ThemeStyle:
+    """Per-theme paint parameters consulted by overlay + popup renderers.
+
+    These are intentionally narrow — a theme that wants radically different
+    layout should still slot into the bars/gauge paint paths. Anything more
+    ambitious belongs in a view_mode, not a style override.
+    """
+
+    # Panel corner radius. 0 = sharp corners (brutalist, receipt).
+    corner_radius: int = 12
+    # Outline width around the OSD / popup chrome. >=2 draws a visible
+    # border on top of the background fill (brutalist).
+    border_width: int = 0
+    # Bar fill style. See BAR_STYLE_* constants.
+    bar_style: str = BAR_STYLE_ROUNDED
+    # Optional ASCII decoration prefixed to the CLAUDE title on the OSD
+    # (e.g. "┌─ " for the terminal theme).
+    title_prefix: str = ""
+    # Case transform applied to top-level labels ("Session", "Weekly",
+    # section headers). "upper" gives dashboard/brutalist their datasheet
+    # look without the renderer hardcoding it.
+    label_case: str = "normal"  # normal | upper | lower
+    # Decorative flourish bucket. Currently only "receipt" is handled —
+    # it paints a paper-grain bg stripe pattern plus a 1D barcode along
+    # the OSD bottom edge, matching the thermal-printer skin.
+    decoration: str = ""  # "" | "receipt"
+    # Separator rendering — "solid" (default), "dashed" (receipt), or
+    # "heavy" (brutalist Swiss-grid vibe).
+    separator_style: str = "solid"  # solid | dashed | heavy
+
+
+_DEFAULT_STYLE = ThemeStyle()
 
 # Canonical set of keys every theme must provide.
 THEME_KEYS: frozenset[str] = frozenset({
@@ -242,6 +286,40 @@ THEMES: Dict[str, Dict[str, str]] = {
 }
 
 
+# Per-theme style overrides — only themes that want a non-default paint
+# shape appear here. Anything missing falls back to _DEFAULT_STYLE.
+THEME_STYLES: Dict[str, ThemeStyle] = {
+    "terminal": ThemeStyle(
+        corner_radius=4,
+        bar_style=BAR_STYLE_ASCII,
+        title_prefix="┌─ ",
+        label_case="lower",
+    ),
+    "dashboard": ThemeStyle(
+        corner_radius=6,
+        label_case="upper",
+    ),
+    "receipt": ThemeStyle(
+        corner_radius=0,
+        border_width=1,
+        bar_style=BAR_STYLE_BLOCK,
+        label_case="lower",
+        decoration="receipt",
+        separator_style="dashed",
+    ),
+    "strip": ThemeStyle(
+        corner_radius=4,
+    ),
+    "brutalist": ThemeStyle(
+        corner_radius=0,
+        border_width=2,
+        bar_style=BAR_STYLE_BLOCK,
+        label_case="upper",
+        separator_style="heavy",
+    ),
+}
+
+
 def get_theme(name: str) -> Dict[str, str]:
     """Return the color dict for *name*, falling back to ``"default"``.
 
@@ -252,4 +330,19 @@ def get_theme(name: str) -> Dict[str, str]:
     return dict(theme)
 
 
-__all__ = ["THEMES", "THEME_KEYS", "get_theme"]
+def get_style(name: str) -> ThemeStyle:
+    """Return the :class:`ThemeStyle` for *name*, or the default style."""
+    return THEME_STYLES.get(name, _DEFAULT_STYLE)
+
+
+__all__ = [
+    "THEMES",
+    "THEME_KEYS",
+    "THEME_STYLES",
+    "ThemeStyle",
+    "BAR_STYLE_ROUNDED",
+    "BAR_STYLE_ASCII",
+    "BAR_STYLE_BLOCK",
+    "get_theme",
+    "get_style",
+]
