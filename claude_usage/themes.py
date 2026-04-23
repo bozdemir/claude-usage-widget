@@ -174,101 +174,28 @@ _GRUVBOX_DARK: Dict[str, str] = {
     "live_indicator": "#b8bb26",  # bright green
 }
 
-# 6. Terminal — htop/btop vibe. Monospace green-on-black hacker aesthetic.
-_TERMINAL: Dict[str, str] = {
-    "bg":             "#0a0f0a",
-    "bar_blue":       "#5fd787",  # green
-    "bar_track":      "#2e4238",
-    "text_primary":   "#d7e3d7",
-    "text_secondary": "#7a9889",
-    "text_dim":       "#668c75",
-    "text_link":      "#87d7d7",  # cyan
-    "separator":      "#1d2a22",
-    "warn":           "#d7c85f",
-    "crit":           "#ff6b6b",
-    "error":          "#ff6b6b",
-    "live_indicator": "#5fd787",
-}
+# --- Skin themes -----------------------------------------------------------
+# Themes 6-11 come from the Claude Design handoff bundle under
+# ``claude_usage/skins/``. Each skin module exports its own THEME dict plus
+# the exact paint_osd function the overlay will dispatch to. We copy those
+# dicts over so load_config can still see the theme by name; the richer
+# per-key palette (accent, paper, border_bright, etc.) is read by the skin
+# painter directly from its own module.
+def _filter_theme(src: Dict[str, str]) -> Dict[str, str]:
+    """Narrow a skin THEME to the canonical key set registered here.
 
-# 7. Dashboard — Bloomberg-terminal cool blue, chroma near zero.
-_DASHBOARD: Dict[str, str] = {
-    "bg":             "#0f1114",
-    "bar_blue":       "#6ea8fe",
-    "bar_track":      "#2b2f3a",
-    "text_primary":   "#e4e6ec",
-    "text_secondary": "#7c808c",
-    "text_dim":       "#565968",
-    "text_link":      "#4e8be8",
-    "separator":      "#262a35",
-    "warn":           "#f0b46a",
-    "crit":           "#e76a6a",
-    "error":          "#e76a6a",
-    "live_indicator": "#5fd7a5",
-}
+    Skin modules add extra keys (accent, panel, rule, ...) that the
+    overlay / popup paint paths don't know about; :data:`THEME_KEYS`
+    tests assert equality on the set we register, so we strip extras
+    when sourcing palettes from the skin modules.
+    """
+    return {k: src[k] for k in THEME_KEYS if k in src}
 
-# 8. HUD — car-dashboard / cockpit. Amber on warm black.
-_HUD: Dict[str, str] = {
-    "bg":             "#0c0a08",
-    "bar_blue":       "#f5a524",  # amber primary accent
-    "bar_track":      "#322820",
-    "text_primary":   "#f1e8da",
-    "text_secondary": "#8a7d6a",
-    "text_dim":       "#6c5e4a",  # slightly brighter than veryDim for readability
-    "text_link":      "#f5a524",
-    "separator":      "#2a221a",
-    "warn":           "#f5a524",
-    "crit":           "#e5484d",
-    "error":          "#e5484d",
-    "live_indicator": "#a3d468",  # mil-spec green
-}
 
-# 9. Receipt — cream paper / thermal-receipt. First LIGHT theme.
-_RECEIPT: Dict[str, str] = {
-    "bg":             "#f3efe5",
-    "bar_blue":       "#16110a",  # near-black bar
-    "bar_track":      "#d8cfb9",
-    "text_primary":   "#16110a",
-    "text_secondary": "#43382a",
-    "text_dim":       "#8a7d68",
-    "text_link":      "#b4331c",  # receipt red
-    "separator":      "#cfc6b2",
-    "warn":           "#b4331c",
-    "crit":           "#b4331c",
-    "error":          "#b4331c",
-    "live_indicator": "#3a6b3a",
-}
-
-# 10. Strip — cool mint on mono-gray. Ultra-compact menu-bar-strip vibe.
-_STRIP: Dict[str, str] = {
-    "bg":             "#0e1012",
-    "bar_blue":       "#6be3b6",  # cool mint
-    "bar_track":      "#22262e",
-    "text_primary":   "#e6e8ec",
-    "text_secondary": "#7e8490",
-    "text_dim":       "#5a606c",
-    "text_link":      "#4db79a",
-    "separator":      "#23272f",
-    "warn":           "#e8b15b",
-    "crit":           "#e66466",
-    "error":          "#e66466",
-    "live_indicator": "#6be3b6",
-}
-
-# 11. Brutalist — black/white + one strong crimson. Swiss grid vibe. LIGHT.
-_BRUTALIST: Dict[str, str] = {
-    "bg":             "#eeece7",
-    "bar_blue":       "#d81f26",  # crimson
-    "bar_track":      "#c8c6c0",
-    "text_primary":   "#0a0a0a",
-    "text_secondary": "#575757",
-    "text_dim":       "#8b8b8b",
-    "text_link":      "#d81f26",
-    "separator":      "#0a0a0a",  # heavy rule
-    "warn":           "#d81f26",
-    "crit":           "#d81f26",
-    "error":          "#d81f26",
-    "live_indicator": "#0a0a0a",
-}
+def _load_skin_themes() -> Dict[str, Dict[str, str]]:
+    """Import-once, build a name→palette map from the skins package."""
+    from claude_usage.skins import SKIN_MODULES
+    return {name: _filter_theme(mod.THEME) for name, mod in SKIN_MODULES.items()}
 
 
 THEMES: Dict[str, Dict[str, str]] = {
@@ -277,12 +204,7 @@ THEMES: Dict[str, Dict[str, str]] = {
     "dracula":          _DRACULA,
     "nord":             _NORD,
     "gruvbox-dark":     _GRUVBOX_DARK,
-    "terminal":         _TERMINAL,
-    "dashboard":        _DASHBOARD,
-    "hud":              _HUD,
-    "receipt":          _RECEIPT,
-    "strip":            _STRIP,
-    "brutalist":        _BRUTALIST,
+    **_load_skin_themes(),
 }
 
 

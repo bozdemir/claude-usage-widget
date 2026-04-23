@@ -29,6 +29,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QApplication, QWidget
 
 from claude_usage.collector import UsageStats
+from claude_usage.skins import SKIN_MODULES, from_usage_stats as _skin_data_from_stats
 from claude_usage.themes import (
     BAR_STYLE_ASCII,
     BAR_STYLE_BLOCK,
@@ -155,6 +156,13 @@ class UsageOverlay(QWidget):
         theme_name = str(cfg.get("theme", "default"))
         self._theme = get_theme(theme_name)
         self._style: ThemeStyle = get_style(theme_name)
+        # Handoff skin painter for this theme (or None when we fall back
+        # to the built-in bars / gauge paint paths).
+        self._skin = SKIN_MODULES.get(theme_name)
+        # Latest UsageStats snapshot — skin painters consume a projected
+        # copy, default paint consumes the _session_pct / _weekly_pct
+        # scalars set in update_stats.
+        self._last_stats: UsageStats | None = None
         self._scale: float = float(cfg.get("osd_scale", 1.0))
         self._opacity: float = float(cfg.get("osd_opacity", 0.75))
         self._minimized: bool = False
@@ -213,6 +221,7 @@ class UsageOverlay(QWidget):
 
     def update_stats(self, stats: UsageStats) -> None:
         """Apply the latest :class:`UsageStats` and trigger a repaint."""
+        self._last_stats = stats
         self._session_pct = max(0.0, min(1.0, float(stats.session_utilization)))
         self._weekly_pct = max(0.0, min(1.0, float(stats.weekly_utilization)))
         self._session_reset = int(stats.session_reset)
@@ -294,6 +303,8 @@ class UsageOverlay(QWidget):
         """Switch to a named theme and repaint."""
         self._theme = get_theme(name)
         self._style = get_style(name)
+        self._skin = SKIN_MODULES.get(name)
+        self._apply_size()
         self.update()
 
     def toggle_minimized(self) -> None:
@@ -312,6 +323,20 @@ class UsageOverlay(QWidget):
 
     def _apply_size(self) -> None:
         """Resize the window to match ``_scale``, view mode, and chrome state."""
+        if self._skin is not None and not self._minimized:
+            # Skins declare their own OSD footprint — honour it instead of
+            # squeezing the handoff layout into the default's 260×122 box.
+            m = self._skin.METRICS
+            width = int(m["osd_width"] * self._scale)
+            height = int(m["osd_height"] * self._scale)
+            if self.isVisible():
+                tr = self.frameGeometry().topRight()
+                self.resize(width, height)
+                self.move(tr.x() - width, tr.y())
+            else:
+                self.resize(width, height)
+            return
+
         width = int(BASE_WIDTH * self._scale)
         if self._view_mode == VIEW_MODE_GAUGE:
             # Gauge mode has no ticker — the reset line under each ring
@@ -402,6 +427,25 @@ class UsageOverlay(QWidget):
         if self._minimized:
             self._paint_minimized(p, w, h)
             return
+
+        # Skin dispatch: when a handoff skin is active, hand the whole OSD
+        # over to its dedicated `paint_osd(p, rect, data, scale)` renderer.
+        # The skin owns the entire panel — background, chrome, bars, ticker
+        # — so the default bars / gauge code paths are skipped.
+        if self._skin is not None and self._last_stats is not None:
+            from PySide6.QtCore import QRectF
+            p.setRenderHint(QPainter.Antialiasing, True)
+            p.setRenderHint(QPainter.TextAntialiasing, True)
+            data = _skin_data_from_stats(self._last_stats)
+            try:
+                self._skin.paint_osd(p, QRectF(0, 0, w, h), data, self._scale)
+                return
+            except Exception:
+                # Swallow skin-paint errors and fall through to default paint
+                # so a broken skin module never leaves the OSD black. The
+                # traceback goes to stderr via Qt's default path.
+                import traceback
+                traceback.print_exc()
 
         if self._view_mode == VIEW_MODE_GAUGE:
             self._paint_gauge(p, w, h)
