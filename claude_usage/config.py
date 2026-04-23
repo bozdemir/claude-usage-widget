@@ -91,3 +91,33 @@ def load_config(path: str) -> Config:
     # Merge: user values overwrite defaults, unknown keys are added.
     cfg.update(user_cfg)
     return cfg
+
+
+def user_config_path() -> str:
+    """Return the path where runtime preference changes should be persisted.
+
+    Uses ``$XDG_CONFIG_HOME/claude-usage/config.json`` when set, otherwise
+    ``~/.config/claude-usage/config.json`` on Linux/macOS. On Windows the
+    expanduser fallback still yields ``%USERPROFILE%\\.config\\...`` which is
+    non-idiomatic but functional — we prefer one code path over platform
+    dispatch for something the widget writes a few times per week.
+    """
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, "claude-usage", "config.json")
+
+
+def save_config(path: str, cfg: Config) -> None:
+    """Atomically persist *cfg* to *path* (creating parent dirs as needed).
+
+    Writes to ``path + ".tmp"`` then ``os.replace``s onto the target so a
+    crash mid-write can never produce a truncated JSON file. Callers should
+    handle :class:`OSError` for read-only targets (e.g. packaged installs).
+    """
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=4, sort_keys=True)
+        f.write("\n")
+    os.replace(tmp, path)

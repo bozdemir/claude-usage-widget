@@ -16,7 +16,7 @@ from typing import Sequence
 
 from claude_usage import __version__
 from claude_usage.collector import UsageStats, collect_all
-from claude_usage.config import load_config
+from claude_usage.config import load_config, user_config_path
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,11 +42,21 @@ def _usage_stats_to_dict(stats: UsageStats) -> dict:
 
 
 def _default_config_path() -> str:
+    """Pick the config.json path to load on startup.
+
+    Precedence: user's XDG config > project-local config.json > packaged
+    config.json.example. The XDG path is also the target where runtime
+    preference changes (theme, ticker toggle) are persisted, so once the
+    user touches a menu we silently migrate them off the .example fallback.
+    """
+    user = user_config_path()
+    if os.path.isfile(user):
+        return user
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    cfg = os.path.join(base_dir, "config.json")
-    if not os.path.isfile(cfg):
-        cfg = os.path.join(base_dir, "config.json.example")
-    return cfg
+    project_cfg = os.path.join(base_dir, "config.json")
+    if os.path.isfile(project_cfg):
+        return project_cfg
+    return os.path.join(base_dir, "config.json.example")
 
 
 def run_cli(argv: Sequence[str]) -> int:
@@ -144,6 +154,7 @@ def _launch_gui() -> None:
 
     config = load_config(_default_config_path())
     _controller = ClaudeUsageApp(config)  # keep a reference
+    _ = _controller  # suppress unused-var warnings; QApplication holds ownership
     sys.exit(app.exec())
 
 

@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from typing import Any
 
-from claude_usage.config import DEFAULT_CONFIG, load_config
+from claude_usage.config import DEFAULT_CONFIG, load_config, save_config, user_config_path
 
 
 class TestDefaultConfig(unittest.TestCase):
@@ -279,6 +279,67 @@ class TestLoadConfig(unittest.TestCase):
         cfg_b = load_config("/nonexistent/b.json")
         cfg_a["daily_message_limit"] = 999999
         self.assertNotEqual(cfg_b["daily_message_limit"], 999999)
+
+
+class TestSaveConfig(unittest.TestCase):
+    """Tests for :func:`save_config` — atomic writes, dir creation, round-trips."""
+
+    def test_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "subdir", "config.json")
+            cfg = dict(DEFAULT_CONFIG)
+            cfg["theme"] = "dracula"
+            save_config(path, cfg)
+            loaded = load_config(path)
+            self.assertEqual(loaded["theme"], "dracula")
+
+    def test_creates_parent_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "a", "b", "c", "config.json")
+            save_config(path, {"theme": "nord"})
+            self.assertTrue(os.path.isfile(path))
+
+    def test_atomic_write_leaves_no_tmp_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "config.json")
+            save_config(path, {"theme": "default"})
+            leftovers = [f for f in os.listdir(tmp) if f.endswith(".tmp")]
+            self.assertEqual(leftovers, [])
+
+    def test_overwrites_existing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "config.json")
+            save_config(path, {"theme": "dracula"})
+            save_config(path, {"theme": "nord"})
+            loaded = load_config(path)
+            self.assertEqual(loaded["theme"], "nord")
+
+
+class TestUserConfigPath(unittest.TestCase):
+    """Tests for :func:`user_config_path` — XDG awareness + fallback."""
+
+    def test_respects_xdg_config_home(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            original = os.environ.get("XDG_CONFIG_HOME")
+            os.environ["XDG_CONFIG_HOME"] = tmp
+            try:
+                path = user_config_path()
+                self.assertTrue(path.startswith(tmp + os.sep))
+                self.assertTrue(path.endswith("config.json"))
+            finally:
+                if original is None:
+                    del os.environ["XDG_CONFIG_HOME"]
+                else:
+                    os.environ["XDG_CONFIG_HOME"] = original
+
+    def test_falls_back_to_dot_config(self) -> None:
+        original = os.environ.pop("XDG_CONFIG_HOME", None)
+        try:
+            path = user_config_path()
+            self.assertIn(os.path.join(".config", "claude-usage", "config.json"), path)
+        finally:
+            if original is not None:
+                os.environ["XDG_CONFIG_HOME"] = original
 
 
 if __name__ == "__main__":

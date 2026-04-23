@@ -798,6 +798,22 @@ class ClaudeUsageApp(QObject):
             a.triggered.connect(lambda _checked=False, v=pct / 100.0: self.overlay.set_opacity(v))
             opacity_menu.addAction(a)
 
+        # Theme submenu — radio group so only one is ticked at a time. The
+        # selection auto-persists to the user config so a restart keeps it.
+        from PySide6.QtGui import QActionGroup
+        from claude_usage.themes import THEMES
+        theme_menu = m.addMenu("Theme")
+        self._theme_group = QActionGroup(theme_menu)
+        self._theme_group.setExclusive(True)
+        self._theme_actions: dict[str, QAction] = {}
+        for name in sorted(THEMES.keys()):
+            a = QAction(name, theme_menu)
+            a.setCheckable(True)
+            a.setActionGroup(self._theme_group)
+            a.triggered.connect(lambda _checked=False, n=name: self._on_pick_theme(n))
+            theme_menu.addAction(a)
+            self._theme_actions[name] = a
+
         act_minimize = QAction("Minimize / Restore", m)
         act_minimize.triggered.connect(self.overlay.toggle_minimized)
         m.addAction(act_minimize)
@@ -807,9 +823,7 @@ class ClaudeUsageApp(QObject):
         self._act_ticker.setChecked(self.overlay.is_ticker_enabled())
         self._act_ticker.toggled.connect(self._on_toggle_ticker)
         m.addAction(self._act_ticker)
-        m.aboutToShow.connect(
-            lambda: self._act_ticker.setChecked(self.overlay.is_ticker_enabled())
-        )
+        m.aboutToShow.connect(self._sync_menu_state)
 
         m.addSeparator()
 
@@ -819,11 +833,35 @@ class ClaudeUsageApp(QObject):
 
     def _on_toggle_ticker(self, checked: bool) -> None:
         self.overlay.set_ticker_enabled(checked)
-        # Remember the preference for the rest of this session. Persistence
-        # across restarts would require a config-file writer we don't ship
-        # yet — users can set `"show_ticker": false` in config.json to
-        # start the widget with the ticker off.
         self.config["show_ticker"] = bool(checked)
+        self._persist_config()
+
+    def _on_pick_theme(self, name: str) -> None:
+        self.overlay.set_theme(name)
+        self.popup.apply_config({**self.config, "theme": name})
+        self.config["theme"] = name
+        self._persist_config()
+
+    def _sync_menu_state(self) -> None:
+        """Refresh the tick marks on checkable items when the menu opens."""
+        self._act_ticker.setChecked(self.overlay.is_ticker_enabled())
+        current_theme = str(self.config.get("theme", "default"))
+        action = self._theme_actions.get(current_theme)
+        if action is not None:
+            action.setChecked(True)
+
+    def _persist_config(self) -> None:
+        """Write the in-memory config to the user's XDG config file.
+
+        Best-effort: if the filesystem is read-only (sandboxed installs,
+        full disk) we swallow the error rather than crashing the GUI.
+        The change still applies for the remainder of the session.
+        """
+        from claude_usage.config import save_config, user_config_path
+        try:
+            save_config(user_config_path(), self.config)
+        except OSError:
+            pass
 
     # ------------------------------------------------------------- refresh
 
