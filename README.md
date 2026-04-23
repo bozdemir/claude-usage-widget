@@ -9,12 +9,12 @@ A cross-platform desktop widget that displays your Claude Code usage limits in r
 ## Screenshots
 
 <p align="center">
-  <img src="screenshots/ss1.png" alt="OSD overlay with live token stream" width="320" /><br/>
+  <img src="screenshots/osd.png" alt="OSD overlay with live token stream" width="320" /><br/>
   <em>Always-on-top OSD: session + weekly utilisation, reset timers, and the <code>● LIVE</code> token-per-minute badge while a Claude Code session is writing.</em>
 </p>
 
 <p align="center">
-  <img src="screenshots/ss2.png" alt="Detail popup with usage bars, heatmaps, cost breakdown, and the AI-generated weekly report" width="640" /><br/>
+  <img src="screenshots/popup.png" alt="Detail popup with usage bars, heatmaps, cost breakdown, and the AI-generated weekly report" width="640" /><br/>
   <em>Click the OSD to open the detail popup: forecasts, 5h/7d sparklines, 90-day heatmap, 52-week GitHub-style calendar, per-model cost breakdown with Anthropic-published rates, top projects, tips, and a Claude-authored weekly summary.</em>
 </p>
 
