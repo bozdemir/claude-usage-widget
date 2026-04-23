@@ -219,6 +219,79 @@ class _Heatmap(QWidget):
             p.drawRect(QRectF(i * cell_w, 0, cell_w, h))
 
 
+def _align_calendar_buckets(
+    buckets: list[float],
+    today_weekday: int | None = None,
+) -> list[float]:
+    """Align an oldest-first daily series to a 52×7 GitHub-style grid.
+
+    The column-major grid has row 0 = Sunday and today pinned to the
+    bottom-right column at its real weekday. Buckets older than the grid
+    can hold are dropped; trailing empties are appended so future days of
+    the current week render as blank cells.
+
+    ``today_weekday`` is Python's ``datetime.weekday()`` (Mon=0..Sun=6);
+    pass ``None`` to use ``datetime.now()``.
+    """
+    if today_weekday is None:
+        today_weekday = datetime.now().weekday()
+    # Convert to Sunday-indexed 0..6 to match GitHub's top-row convention.
+    today_row = (today_weekday + 1) % 7
+    total = 52 * 7
+    trailing = 6 - today_row  # empty cells after today within current week
+    usable = total - trailing  # number of real daily cells that fit
+    if len(buckets) > usable:
+        buckets = buckets[-usable:]
+    padded = buckets + [0.0] * trailing
+    # Pad the head if we had fewer buckets than usable slots.
+    missing_head = total - len(padded)
+    if missing_head > 0:
+        padded = [0.0] * missing_head + padded
+    return padded
+
+
+class _CalendarHeatmap(QWidget):
+    """GitHub-style calendar heatmap: 52 weeks × 7 days of peak utilization."""
+
+    CELL_SIZE = 10
+    CELL_GAP = 2
+    WEEKS = 52
+    DAYS = 7
+
+    def __init__(self, theme: dict[str, str]) -> None:
+        super().__init__()
+        self._theme = theme
+        self._buckets: list[float] = []
+        total_w = self.WEEKS * (self.CELL_SIZE + self.CELL_GAP)
+        total_h = self.DAYS * (self.CELL_SIZE + self.CELL_GAP)
+        self.setFixedSize(total_w, total_h)
+
+    def set_buckets(self, buckets: list[float]) -> None:
+        self._buckets = list(buckets or [])
+        self.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        p = QPainter(self)
+        p.setPen(Qt.NoPen)
+        track = _hex_to_qcolor(self._theme["bar_track"])
+        base = self._theme["bar_blue"]
+        # Draw from oldest (top-left) to newest (bottom-right).  The list is
+        # already oldest-first, length WEEKS*DAYS = 364.
+        n = len(self._buckets)
+        for i in range(self.WEEKS * self.DAYS):
+            col = i // self.DAYS
+            row = i % self.DAYS
+            x = col * (self.CELL_SIZE + self.CELL_GAP)
+            y = row * (self.CELL_SIZE + self.CELL_GAP)
+            v = self._buckets[i] if i < n else 0.0
+            if v > 0:
+                alpha = max(0.15, min(1.0, float(v)))
+                p.setBrush(_hex_to_qcolor(base, alpha))
+            else:
+                p.setBrush(track)
+            p.drawRect(QRectF(x, y, self.CELL_SIZE, self.CELL_SIZE))
+
+
 # ---------------------------------------------------------------------------
 # Detail popup
 # ---------------------------------------------------------------------------
@@ -232,7 +305,12 @@ class UsagePopup(QWidget):
         self._theme = get_theme(str(config.get("theme", "default")))
 
         self.setWindowTitle("Claude Usage")
-        self.setFixedWidth(POPUP_WIDTH)
+        # Resizable: set a sensible initial size and a minimum, but let the
+        # user drag the window edges to widen it. A fixed width makes the
+        # scrollbar overlap content and denies power users more horizontal
+        # room for the per-model cost breakdown.
+        self.resize(POPUP_WIDTH, 640)
+        self.setMinimumWidth(420)
         self.setMinimumHeight(360)
         # Qt.Tool keeps the popup hidden from the dock / taskbar — exit is
         # via the OSD right-click menu. WindowCloseButtonHint still gives us
@@ -290,6 +368,9 @@ class UsagePopup(QWidget):
     def _label(self, text: str, role: str = "") -> QLabel:
         lbl = QLabel(text)
         lbl.setWordWrap(True)
+        # Default to plain text — never interpret user-sourced content
+        # (prompt previews, AI report output, project paths) as rich HTML.
+        lbl.setTextFormat(Qt.PlainText)
         if role:
             lbl.setProperty("role", role)
         return lbl
@@ -362,6 +443,20 @@ class UsagePopup(QWidget):
         self._layout.addWidget(hm)
         self._add_dim_line(caption, margin_bottom=12)
 
+    def _add_calendar_heatmap(self, buckets: list[float], caption: str) -> None:
+        from PySide6.QtWidgets import QHBoxLayout, QFrame
+        row = QFrame()
+        row.setStyleSheet("QFrame { background: transparent; }")
+        hl = QHBoxLayout(row)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(0)
+        cal = _CalendarHeatmap(self._theme)
+        cal.set_buckets(_align_calendar_buckets(list(buckets)))
+        hl.addWidget(cal)
+        hl.addStretch(1)
+        self._layout.addWidget(row)
+        self._add_dim_line(caption, margin_bottom=12)
+
     def _add_separator(self) -> None:
         from PySide6.QtWidgets import QFrame
         # Spacer above the hairline
@@ -417,6 +512,11 @@ class UsagePopup(QWidget):
         heatmap = getattr(stats, "daily_heatmap", []) or []
         if any(v > 0 for v in heatmap):
             self._add_heatmap(heatmap, "Last 90 days")
+
+        # 52-week × 7-day calendar heatmap (GitHub-style)
+        yearly = getattr(stats, "yearly_heatmap", []) or []
+        if any(v > 0 for v in yearly):
+            self._add_calendar_heatmap(yearly, "Last 52 weeks")
         self._add_separator()
 
         # --- Anomaly banner ---
@@ -439,6 +539,12 @@ class UsagePopup(QWidget):
             for tip in tips:
                 self._add_dim_line(tip, margin_bottom=6)
             self._add_separator()
+
+        # --- Cache savings opportunities ---
+        self._render_cache_opportunities(stats)
+
+        # --- Weekly Claude-authored report ---
+        self._render_weekly_report(stats)
 
         # --- Active sessions ---
         self._render_active_sessions(stats)
@@ -546,6 +652,38 @@ class UsagePopup(QWidget):
             )
         self._add_separator()
 
+    def _render_cache_opportunities(self, stats: UsageStats) -> None:
+        opps = getattr(stats, "cache_opportunities", []) or []
+        if not opps:
+            return
+        total = sum(float(o.potential_savings_usd) for o in opps)
+        self._add_section_header(
+            "💰 Cache opportunities",
+            right=f"~${total:.2f}/wk savings" if total > 0 else "",
+        )
+        for o in opps[:5]:
+            name = _prettify_project_name(getattr(o, "project", "") or "?")
+            preview = (getattr(o, "prefix_preview", "") or "").strip()
+            if len(preview) > 70:
+                preview = preview[:67] + "…"
+            self._add_dim_line(
+                f"{name}: {getattr(o, 'occurrences', 0)}× × "
+                f"{_format_tokens(getattr(o, 'token_count', 0))} tokens → "
+                f"${float(getattr(o, 'potential_savings_usd', 0.0)):.2f}",
+                margin_bottom=2,
+            )
+            if preview:
+                self._add_dim_line(f"    “{preview}”", margin_bottom=6)
+        self._add_separator()
+
+    def _render_weekly_report(self, stats: UsageStats) -> None:
+        text = (getattr(stats, "weekly_report_text", "") or "").strip()
+        if not text:
+            return
+        self._add_section_header("🪄 Your week with Claude")
+        self._add_dim_line(text, margin_bottom=12)
+        self._add_separator()
+
     def _render_active_sessions(self, stats: UsageStats) -> None:
         self._add_section_header(
             "Active sessions",
@@ -635,6 +773,10 @@ class ClaudeUsageApp(QObject):
         self._latest_tag: str | None = None
         threading.Thread(target=self._check_update, daemon=True).start()
 
+        # Tracks whether a weekly-report generation is already in flight, so
+        # the hourly check doesn't spawn multiple Haiku calls in parallel.
+        self._weekly_report_in_flight = False
+
     # ----------------------------------------------------------- menu build
 
     def _build_context_menu(self) -> None:
@@ -703,6 +845,18 @@ class ClaudeUsageApp(QObject):
                 "message": stats.anomaly.message,
             })
 
+        # Weekly report: kick off a background regeneration if the on-disk
+        # cache is stale and we're not already generating. Pass a snapshot
+        # of the stats so the worker never observes a torn mid-refresh mix
+        # of fields.
+        if not stats.weekly_report_text and not self._weekly_report_in_flight:
+            self._weekly_report_in_flight = True
+            threading.Thread(
+                target=self._generate_weekly_report,
+                args=(stats,),
+                daemon=True,
+            ).start()
+
         # Webhook: daily report (first refresh of each local day)
         today_iso = datetime.now().strftime("%Y-%m-%d")
         if today_iso != self._last_daily_report_date:
@@ -727,6 +881,33 @@ class ClaudeUsageApp(QObject):
         self.popup.show()
         self.popup.raise_()
         self.popup.activateWindow()
+
+    def _generate_weekly_report(self, snapshot: UsageStats) -> None:
+        try:
+            from claude_usage.ai_report import generate_report
+            from claude_usage.collector import _load_credentials
+            claude_dir = self.config["claude_dir"]
+            summary = {
+                "week_cost": snapshot.week_cost,
+                "week_tokens": snapshot.week_tokens,
+                "week_messages": snapshot.week_messages,
+                "subscription_type": snapshot.subscription_type,
+                "top_projects": sorted(
+                    snapshot.today_by_project.items(),
+                    key=lambda kv: kv[1],
+                    reverse=True,
+                )[:3],
+                "by_model": snapshot.today_by_model_detailed,
+            }
+            generate_report(
+                claude_dir=claude_dir,
+                summary=summary,
+                token_loader=lambda: _load_credentials(claude_dir),
+            )
+        except Exception:
+            pass
+        finally:
+            self._weekly_report_in_flight = False
 
     def _check_update(self) -> None:
         try:

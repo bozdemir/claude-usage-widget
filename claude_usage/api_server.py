@@ -16,6 +16,21 @@ from typing import Callable
 from claude_usage.collector import UsageStats
 
 
+def _redact_external(data: dict) -> dict:
+    """Strip raw prompt content from serialized stats.
+
+    ``cache_opportunities[*].prefix_preview`` is the first ~100 chars of an
+    actual user prompt — fine for the local Qt popup, but we don't want
+    callers of ``/usage`` or ``--json`` slurping prompt text into logs.
+    """
+    opps = data.get("cache_opportunities") or []
+    for o in opps:
+        if isinstance(o, dict) and "prefix_preview" in o:
+            length = len(str(o.get("prefix_preview", "") or ""))
+            o["prefix_preview"] = f"[{length} chars — redacted]" if length else ""
+    return data
+
+
 class UsageAPIServer:
     """Background HTTP server exposing /usage and /healthz."""
 
@@ -70,7 +85,7 @@ class UsageAPIServer:
                 if self.path == "/usage":
                     stats = get_stats()
                     data = asdict(stats) if is_dataclass(stats) else dict(stats)
-                    self._send_json(data)
+                    self._send_json(_redact_external(data))
                     return
                 self.send_error(404, "Not Found")
 

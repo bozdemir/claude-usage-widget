@@ -15,7 +15,9 @@ from urllib.request import Request, urlopen
 
 from claude_usage import forecast, pricing
 from claude_usage.analytics import AnomalyReport, detect_anomaly, generate_tips
+from claude_usage.cache_analyzer import CacheOpportunity, analyze_cache_opportunities
 from claude_usage.history import aggregate, append_sample, load_samples, prune
+from claude_usage.live_stream import LiveActivity, detect_live_activity
 from claude_usage.trends import daily_heatmap, hourly_histogram, monthly_summary
 
 HISTORY_FILENAME = "usage-history.jsonl"
@@ -71,8 +73,15 @@ class UsageStats:
     tips: list[str] = field(default_factory=list)
     # Long-range trends
     daily_heatmap: list = field(default_factory=list)       # 90-day peaks (newest last)
+    yearly_heatmap: list = field(default_factory=list)      # 364-day peaks (52 wk × 7 d)
     monthly_summary: list = field(default_factory=list)     # last 6 months
     hourly_histogram: list = field(default_factory=list)    # 24 buckets
+    # Prompt-cache savings opportunities (top N repeated prefixes)
+    cache_opportunities: list[CacheOpportunity] = field(default_factory=list)
+    # Live-activity snapshot for the OSD indicator
+    live_activity: LiveActivity = field(default_factory=LiveActivity)
+    # Claude-authored weekly summary text (empty when unavailable / not yet cached)
+    weekly_report_text: str = ""
 
 
 def parse_history(path: str) -> UsageStats:
@@ -596,8 +605,33 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
 
     # Long-range trend aggregations for the popup UI.
     stats.daily_heatmap = daily_heatmap(samples, now=now_ts, n_days=90)
+    # 52 weeks × 7 days = 364 cells — GitHub-style yearly calendar grid.
+    stats.yearly_heatmap = daily_heatmap(samples, now=now_ts, n_days=364)
     stats.monthly_summary = monthly_summary(samples, now=now_ts, n_months=6)
     stats.hourly_histogram = hourly_histogram(samples, now=now_ts)
+
+    # Prompt-cache savings opportunities — scans ~/.claude/projects/ for
+    # repeated prompt prefixes; bounded cost by the mtime cutoff in the
+    # analyser, so this stays cheap on every refresh.
+    try:
+        stats.cache_opportunities = analyze_cache_opportunities(claude_dir, days=7, now=now_ts)
+    except OSError:
+        stats.cache_opportunities = []
+
+    # Live-activity rate: scans the same tree but only touches recently-
+    # modified files, so it's O(active-sessions) per refresh.
+    try:
+        stats.live_activity = detect_live_activity(claude_dir, now=now_ts)
+    except OSError:
+        stats.live_activity = LiveActivity()
+
+    # Claude-authored weekly report — we only *read* the on-disk cache here;
+    # regeneration happens in a background thread from the widget so the
+    # refresh path stays synchronous and never blocks on a network call.
+    from claude_usage.ai_report import load_cached_report
+    cached_report = load_cached_report(claude_dir, now=now_ts)
+    if cached_report is not None:
+        stats.weekly_report_text = cached_report.text
 
     # Burn-rate forecasts: project when utilization will hit 100% at the current rate.
     # Requires at least 2 samples in the window; falls back to an empty dict otherwise.

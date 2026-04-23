@@ -103,6 +103,8 @@ class UsageOverlay(QWidget):
         self._weekly_pct: float = 0.0
         self._session_reset: int = 0
         self._weekly_reset: int = 0
+        self._live_tpm: float = 0.0      # tokens/min over the last few minutes
+        self._is_live: bool = False       # show the "● LIVE" dot
 
         # Drag tracking
         self._press_pos: QPoint | None = None        # mouse pos on press (global)
@@ -135,6 +137,13 @@ class UsageOverlay(QWidget):
         self._weekly_pct = max(0.0, min(1.0, float(stats.weekly_utilization)))
         self._session_reset = int(stats.session_reset)
         self._weekly_reset = int(stats.weekly_reset)
+        live = getattr(stats, "live_activity", None)
+        if live is not None:
+            self._is_live = bool(getattr(live, "is_live", False))
+            self._live_tpm = float(getattr(live, "tokens_per_minute", 0.0) or 0.0)
+        else:
+            self._is_live = False
+            self._live_tpm = 0.0
         self.update()  # schedule a paintEvent
 
     def set_opacity(self, value: float) -> None:
@@ -276,6 +285,18 @@ class UsageOverlay(QWidget):
         p.setFont(title_font)
         p.setPen(_hex_to_qcolor(self._theme["text_dim"]))
         p.drawText(QPointF(pad_x, pad_y + 7 * s), "CLAUDE")
+
+        # Live indicator — only drawn when there's recent assistant activity.
+        # Renders as `● LIVE 1.2k tok/min` right-aligned against the title.
+        if self._is_live and self._live_tpm > 0:
+            tpm = self._live_tpm
+            tpm_text = f"{tpm / 1000:.1f}k" if tpm >= 1000 else f"{int(tpm)}"
+            live_text = f"● LIVE {tpm_text} tok/min"
+            live_width = p.fontMetrics().horizontalAdvance(live_text)
+            live_x = w - pad_x - live_width
+            # Green-ish per-theme accent; fallback covers older themes.
+            p.setPen(_hex_to_qcolor(self._theme.get("live_indicator", "#4ade80")))
+            p.drawText(QPointF(live_x, pad_y + 7 * s), live_text)
 
         # --- Session row ---
         y = pad_y + 16 * s

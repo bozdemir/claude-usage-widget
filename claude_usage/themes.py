@@ -20,6 +20,7 @@ Keys and their intended roles:
     warn           -- warning notices (e.g. approaching limits)
     crit           -- critical notices (e.g. over budget)
     error          -- error text (e.g. API / collection failures)
+    live_indicator -- "● LIVE" dot + text on the OSD while a session is running
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ THEME_KEYS: frozenset[str] = frozenset({
     "warn",
     "crit",
     "error",
+    "live_indicator",
 })
 
 
@@ -57,6 +59,7 @@ _DEFAULT: Dict[str, str] = {
     "warn":           "#f59e0b",  # amber — matches tray icon warn gradient
     "crit":           "#dc2626",  # strong red
     "error":          "#ef4444",  # vivid red — matches existing .error-text CSS
+    "live_indicator": "#4ade80",  # emerald — reads as "running" against dark bg
 }
 
 # 2. Catppuccin Mocha — https://catppuccin.com/palette/
@@ -73,6 +76,7 @@ _CATPPUCCIN_MOCHA: Dict[str, str] = {
     "warn":           "#fab387",  # peach
     "crit":           "#f38ba8",  # red
     "error":          "#eba0ac",  # maroon
+    "live_indicator": "#a6e3a1",  # green
 }
 
 # 3. Dracula — https://draculatheme.com/contribute
@@ -89,6 +93,7 @@ _DRACULA: Dict[str, str] = {
     "warn":           "#ffb86c",  # orange
     "crit":           "#ff5555",  # red
     "error":          "#ff79c6",  # pink — reserved for hard errors
+    "live_indicator": "#50fa7b",  # green
 }
 
 # 4. Nord — https://www.nordtheme.com/docs/colors-and-palettes
@@ -105,6 +110,7 @@ _NORD: Dict[str, str] = {
     "warn":           "#ebcb8b",  # nord13 (aurora yellow)
     "crit":           "#bf616a",  # nord11 (aurora red)
     "error":          "#d08770",  # nord12 (aurora orange)
+    "live_indicator": "#a3be8c",  # nord14 (aurora green)
 }
 
 # 5. Gruvbox Dark — https://github.com/morhetz/gruvbox
@@ -121,6 +127,7 @@ _GRUVBOX_DARK: Dict[str, str] = {
     "warn":           "#fabd2f",  # bright yellow
     "crit":           "#fb4934",  # bright red
     "error":          "#fe8019",  # bright orange
+    "live_indicator": "#b8bb26",  # bright green
 }
 
 

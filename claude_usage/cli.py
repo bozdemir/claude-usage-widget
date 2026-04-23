@@ -73,6 +73,10 @@ def run_cli(argv: Sequence[str]) -> int:
         config = load_config(_default_config_path())
         stats = collect_all(config)
         data = _usage_stats_to_dict(stats)
+        # Same privacy redaction as the localhost API — never leak raw prompt
+        # text through --json / --field output.
+        from claude_usage.api_server import _redact_external
+        data = _redact_external(data)
 
         if args.field is not None:
             if args.field not in data:

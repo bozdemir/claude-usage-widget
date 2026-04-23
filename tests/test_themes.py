@@ -49,6 +49,7 @@ def test_theme_keys_contains_expected_role_names() -> None:
         "warn",
         "crit",
         "error",
+        "live_indicator",
     })
 
 
