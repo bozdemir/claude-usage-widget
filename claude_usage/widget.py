@@ -76,20 +76,22 @@ def _short_model_name(model: str) -> str:
 def _prettify_project_name(name: str) -> str:
     """Convert Claude Code's dashed path (``-home-user-proj``) to ``~/proj``.
 
-    Claude Code encodes project paths by replacing path separators with
-    dashes. On POSIX that's ``/`` → ``-``; on Windows it's ``\\`` → ``-``
-    (and the drive-letter colon typically drops). We normalise both so a
-    Windows user sees ``~/proj`` instead of ``C--Users-burak-proj``.
+    Claude Code encodes every non-alphanumeric path component character as
+    ``-``. On POSIX ``/home/alice/proj`` becomes ``-home-alice-proj``; on
+    Windows ``C:\\Users\\alice\\proj`` becomes ``C--Users-alice-proj``
+    (verified against real Claude Code output — see anthropics/claude-code
+    issue #46071). We build candidate home-dir encodings for both shapes
+    so the pretty form renders correctly on every OS.
     """
     if not name:
         return "?"
     home = os.path.expanduser("~")
-    # Generate candidate encodings for the home dir.
-    candidates = {
-        home.replace("/", "-"),
-        home.replace(os.sep, "-"),
-        home.replace(os.sep, "-").replace(":", ""),
-    }
+    # Both POSIX-style ("/home/alice" → "-home-alice") and Windows-style
+    # ("C:\\Users\\alice" → "C--Users-alice") — colons AND backslashes map
+    # to dashes.
+    home_posix = home.replace("/", "-")
+    home_windows = home.replace("\\", "-").replace(":", "-")
+    candidates = {home_posix, home_windows}
     for home_dashed in candidates:
         if not home_dashed:
             continue

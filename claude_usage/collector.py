@@ -342,13 +342,53 @@ def _parse_conversation_tokens(
             result["by_model"][model]["output"] += output_tokens
 
 
+def _process_alive(pid: int) -> bool:
+    """Return True iff a process with *pid* is currently running.
+
+    On POSIX we use ``os.kill(pid, 0)`` — sends no signal, just asks the
+    kernel to validate the pid. On Windows ``os.kill`` unconditionally
+    calls ``TerminateProcess`` (yes, even for signal 0 — it would KILL
+    the process instead of probing it), so we fall back to the
+    OpenProcess/GetExitCodeProcess idiom via ``ctypes``.
+    """
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            k32 = ctypes.windll.kernel32
+            handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not handle:
+                return False
+            try:
+                exit_code = ctypes.c_ulong()
+                if not k32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                    return False
+                return exit_code.value == STILL_ACTIVE
+            finally:
+                k32.CloseHandle(handle)
+        except Exception:
+            return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Process exists but is owned by a different UID — still alive.
+        return True
+    except OSError:
+        return False
+    return True
+
+
 def get_active_sessions(claude_dir: str) -> list[dict[str, Any]]:
     """Return list of active Claude sessions whose recorded PID is still alive.
 
-    Uses ``os.kill(pid, 0)`` as a zero-signal probe: it raises
-    ``ProcessLookupError`` when the process is gone and ``PermissionError``
-    when it exists but is owned by another user.  In both surviving cases the
-    session is treated as "running" from the user's perspective.
+    Uses :func:`_process_alive` which dispatches to platform-safe probes —
+    ``os.kill(pid, 0)`` is a destructive ``TerminateProcess`` call on
+    Windows, so we never call it there.
     """
     sessions_dir = os.path.join(claude_dir, "sessions")
     if not os.path.isdir(sessions_dir):
@@ -367,14 +407,7 @@ def get_active_sessions(claude_dir: str) -> list[dict[str, Any]]:
         pid = sess.get("pid", 0)
         if pid <= 0:
             continue
-        try:
-            os.kill(pid, 0)  # signal 0: probe existence without killing
-        except PermissionError:
-            # Process exists but is owned by a different UID -- still alive.
-            active.append(sess)
-        except ProcessLookupError:
-            pass  # PID no longer exists; session is stale.
-        else:
+        if _process_alive(pid):
             active.append(sess)
     return active
 

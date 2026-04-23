@@ -51,12 +51,16 @@ class TestPrettifyProjectName(unittest.TestCase):
             self.assertEqual(_prettify_project_name("-home-alice"), "~")
 
     def test_windows_home_dashed_becomes_tilde(self):
-        # Emulate the encoding Claude Code uses on Windows: drive colon
-        # dropped, backslashes → dashes.
+        # Real Claude Code encoding on Windows: every non-alphanumeric path
+        # component character (colon AND backslash) becomes a dash, so
+        # "C:\\Users\\alice\\project-x" → "C--Users-alice-project-x".
         with patch("os.path.expanduser", return_value="C:\\Users\\alice"):
-            with patch("os.sep", "\\"):
-                out = _prettify_project_name("C-Users-alice-project-x")
-                self.assertEqual(out, "~/project-x")
+            out = _prettify_project_name("C--Users-alice-project-x")
+            self.assertEqual(out, "~/project-x")
+
+    def test_windows_home_exact_match(self):
+        with patch("os.path.expanduser", return_value="C:\\Users\\alice"):
+            self.assertEqual(_prettify_project_name("C--Users-alice"), "~")
 
     def test_unrelated_path_passes_through(self):
         with patch("os.path.expanduser", return_value="/home/alice"):
