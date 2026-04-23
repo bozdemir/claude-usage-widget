@@ -345,12 +345,31 @@ class SkinPopupWidget(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.addWidget(self._scroll)
 
-        self.resize(600, 720)
+        self._apply_scrollbar_style()
+        self.resize(540, 720)
 
     def apply_config(self, config: dict[str, Any]) -> None:
         self._config = config
         self._skin = self._all_skins.get(str(config.get("theme", "")))
+        self._apply_scrollbar_style()
         self._content.update()
+
+    def _apply_scrollbar_style(self) -> None:
+        """Tint the scroll area's chrome with the active skin palette so
+        the default grey Qt widgets don't break the visual language."""
+        if self._skin is None:
+            return
+        t = self._skin.THEME
+        bg = t.get("bg", "#1a1a2e")
+        track = t.get("bar_track", "#333340")
+        thumb = t.get("accent", t.get("bar_blue", "#5B9BD5"))
+        self._scroll.setStyleSheet(
+            f"QScrollArea, QScrollArea QWidget {{ background: {bg}; border: 0; }}"
+            f"QScrollBar:vertical {{ background: {bg}; width: 10px; margin: 0; }}"
+            f"QScrollBar::handle:vertical {{ background: {thumb}; border-radius: 4px; min-height: 24px; }}"
+            f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; background: none; }}"
+            f"QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: {track}; }}"
+        )
 
     def update_stats(self, stats) -> None:
         from claude_usage.skins._adapter import build_popup_data
@@ -370,6 +389,21 @@ class SkinPopupWidget(QWidget):
             # almost always fits into.
             height = int(820 * self._scale)
         self._content.setFixedSize(width, height)
+        # Size the outer window to exactly wrap the content so we don't
+        # leave grey gutters around a small popup. Cap the height at 90%
+        # of the available screen so a very tall popup still scrolls
+        # inside a sane window frame.
+        try:
+            from PySide6.QtWidgets import QApplication
+            screen = QApplication.primaryScreen()
+            max_h = int(screen.availableGeometry().height() * 0.9) if screen else height
+        except Exception:
+            max_h = height
+        window_h = min(height, max_h)
+        # When content is shorter than max, snap window tight. When it's
+        # taller, leave the scroll area with its scrollbar so the user
+        # can still reach the bottom.
+        self.resize(width, window_h)
 
     def _paint_content(self, _event) -> None:
         if self._skin is None or self._data is None:
