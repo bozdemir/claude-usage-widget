@@ -11,19 +11,22 @@ A cross-platform desktop widget that displays your Claude Code usage limits in r
 - **Single `pip install`** -- no `apt`/`brew`/system libraries required, Qt is bundled
 - **Real API data** -- rate-limit utilisation read straight from `anthropic-ratelimit-unified-*` response headers
 - **OSD overlay** -- transparent, frameless, always-on-top; left-click opens the details popup, right-click shows a context menu
-- **Detail popup** -- usage bars, forecast, 5h/7d sparklines, 90-day heatmap, per-model cost breakdown, top projects, active sessions
+- **Live token stream** -- `● LIVE 5.3k tok/min` badge on the OSD while a Claude Code session is actively writing, derived from the conversation JSONLs
+- **Detail popup** -- usage bars, forecast, 5h/7d sparklines, 90-day heatmap, 52-week GitHub-style calendar, per-model cost breakdown, top projects, active sessions (resizable)
 - **Auto-refresh** -- every 30 seconds by default, fully configurable
-- **Resizable** -- scroll wheel on the OSD (0.6x -- 2.0x)
+- **Resizable** -- scroll wheel on the OSD (0.6x -- 2.0x); drag the popup window edges to widen it
 - **Draggable** -- left-click drag on the OSD
 - **Cost estimation** -- USD equivalent per model, cache savings, pay-as-you-go comparison for flat-fee subscribers
 - **Usage forecasting** -- burn-rate prediction: "At current rate: 2h 30m to limit"
 - **Per-project breakdown** -- top 5 projects by token usage today
+- **Prompt-cache opportunities** -- scans recent sessions for repeated prompt prefixes and suggests `cache_control` changes with a concrete $ savings estimate
+- **AI-generated weekly report** -- Claude Haiku writes a 3-4 sentence summary of your past week of usage (cached 1h; never leaks prompt text)
 - **Anomaly detection** -- flags days whose utilisation exceeds the 7/90-day baseline
 - **Cost optimisation tips** -- suggests cache-hit-rate improvements and model-mix changes
 - **Themes** -- default, catppuccin-mocha, dracula, nord, gruvbox-dark
 - **Threshold notifications** -- native desktop notifications on crossing 75% / 90%
 - **Webhooks** -- optional POST to Slack / Discord / custom URLs on threshold, daily, or anomaly events
-- **Localhost JSON API** -- optional `http://127.0.0.1:8765/usage` for tmux / polybar / waybar integrations
+- **Localhost JSON API** -- optional `http://127.0.0.1:8765/usage` for tmux / polybar / waybar integrations (prompt previews redacted at the serialization boundary)
 - **CLI mode** -- `--json`, `--field`, `--export csv` for scripts and status bars
 
 ## Requirements
@@ -38,7 +41,7 @@ A cross-platform desktop widget that displays your Claude Code usage limits in r
 ```bash
 pip install --user --upgrade claude-usage-widget
 claude-usage              # launches the OSD overlay
-claude-usage --version    # 0.3.0
+claude-usage --version    # 0.4.0
 ```
 
 That's it — no `apt`, no `brew`, no PyGObject, no rumps. PySide6 ships Qt in the wheel, so the widget is fully self-contained.
@@ -152,6 +155,22 @@ Qt's `QWidget` with `FramelessWindowHint | Tool | WindowStaysOnTopHint` plus `WA
 **Scale and opacity** -- the overlay stores a `scale` (0.6 -- 2.0, default 1.0) and `opacity` (0.15 -- 1.0, default 0.75). Scale multiplies every pixel dimension before drawing, so the widget resizes proportionally. Opacity is the alpha channel of the background fill only; bar and text remain at full alpha so they stay legible at low opacity.
 
 **Refresh cycle** -- a daemon thread wakes every `refresh_seconds` (default 30), performs the API call, and emits a Qt signal back to the GUI thread (`Signal(object)`). The GUI thread then updates the OSD and the popup together. User interactions (scroll, drag, right-click) update in place and request an immediate repaint.
+
+### Live token stream
+
+The OSD renders a `● LIVE ~5.3k tok/min` badge when a Claude Code session is actively writing. The detector scans `~/.claude/projects/*/*.jsonl` for assistant turns in the last 5 minutes (filtered cheaply by file mtime), sums their `output_tokens`, and divides by the window. The "live" dot only lights up when the newest turn is under 90 seconds old; the rate keeps showing for the full 5-minute window so bursts are visible in context.
+
+### Prompt-cache opportunities
+
+Scans your recent conversation history for repeated user-prompt prefixes (≥1024 tokens, ≥3 occurrences within the last 7 days) and estimates how much you'd save by enabling Anthropic's ephemeral prompt cache on them (`cache_creation` write once + `cache_read` for the rest). The top 5 are shown in the popup with a $ figure. Prompt previews stay local -- they're redacted from `--json` and the localhost API so raw prompt text never leaves your machine via those surfaces.
+
+### AI-generated weekly report
+
+A 3-4 sentence natural-language summary of the past week (top projects, total volume, cost/model mix) is generated on demand by Claude Haiku 4.5 and cached at `~/.claude/widget-cache/weekly-report.json` for one hour. The generator runs on a background thread so refresh stays synchronous. If the OAuth token is missing or Anthropic is unreachable, the section simply disappears -- no retries, no errors in your face.
+
+### Calendar heatmap (52 weeks × 7 days)
+
+GitHub-style yearly activity grid below the 90-day strip. Rows are weekdays (Sunday at the top), columns are ISO weeks with today anchored in the rightmost column at its real weekday. Cell alpha maps to per-day peak session utilisation.
 
 ## Troubleshooting
 

@@ -137,6 +137,9 @@ def _call_haiku(token: str, prompt: str) -> str | None:
         "max_tokens": MAX_TOKENS,
         "messages": [{"role": "user", "content": prompt}],
     }).encode()
+    # OAuth tokens use the same `x-api-key` slot as API keys but require the
+    # `oauth-2025-04-20` beta header to be accepted — matches the pattern
+    # used in collector.fetch_rate_limits for rate-limit polling.
     req = Request(
         "https://api.anthropic.com/v1/messages",
         data=body,
