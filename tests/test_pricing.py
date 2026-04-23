@@ -105,6 +105,31 @@ class TestCalculateCostUnknownModel:
         calculate_cost("", 0, 0)
         calculate_cost("totally-made-up", 1, 2, 3, 4)
 
+    def test_synthetic_model_is_zero_cost_and_silent(self):
+        """<synthetic> is Claude Code's placeholder for internal bookkeeping
+        (compact summaries, sidechain context, etc.). It should NOT trigger
+        an 'unknown model' warning and should contribute $0 to the total."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = calculate_cost(
+                "<synthetic>",
+                input_tokens=5000,
+                output_tokens=500,
+                cache_read=10_000,
+                cache_creation=2_000,
+            )
+        assert result["total"] == 0.0
+        assert not any(issubclass(w.category, UserWarning) for w in caught)
+
+    def test_plain_unknown_model_name_is_zero_cost_and_silent(self):
+        """Claude Code occasionally writes literal 'unknown' when it can't
+        determine the model — treat identical to <synthetic>."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = calculate_cost("unknown", 10_000, 1_000)
+        assert result["total"] == 0.0
+        assert not any(issubclass(w.category, UserWarning) for w in caught)
+
 
 class TestCalculateCostZero:
     def test_all_zero_tokens(self):

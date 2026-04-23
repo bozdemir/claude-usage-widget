@@ -48,6 +48,22 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
         "cache_read": 0.10,
         "cache_creation": 1.25,
     },
+    # Claude Code internal bookkeeping entries (compact summaries, sidechain
+    # context, auto-generated placeholders) — not billed to the user, so we
+    # map them to zero rates rather than emitting an "unknown model" warning
+    # on every refresh.
+    "<synthetic>": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_creation": 0.0,
+    },
+    "unknown": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_creation": 0.0,
+    },
 }
 
 # Fallback model used whenever a caller passes an unknown model identifier.
