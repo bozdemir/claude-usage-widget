@@ -294,6 +294,8 @@ def draw_kpi_big(
     label: str, value: str, sub: str,
     theme: dict, scale: float = 1.0,
 ) -> float:
+    """Big-number KPI tile: tiny caps label on top, large mono value, optional
+    sub-line. Returns the new y cursor."""
     s = scale
     label_f = ui_font(9 * s, family=theme["_ui_family"])
     value_f = mono_font(28 * s, bold=True, family=theme["_mono_family"])
@@ -372,6 +374,8 @@ def draw_sparkline_row(
     theme: dict, scale: float = 1.0,
     color_hex: str | None = None,
 ) -> float:
+    """Sparkline strip with a small caps caption underneath. Returns the
+    new y cursor."""
     s = scale
     color_hex = color_hex or theme["accent"]
     draw_sparkline_bars(p, x, y, w, h, values, color_hex, gap=1.0 * s)
@@ -389,6 +393,8 @@ def draw_project_list(
     theme: dict, scale: float = 1.0,
     numbered: bool = True,
 ) -> float:
+    """Two-column "name … tokens" rows separated by hairlines. Returns the
+    new y cursor."""
     s = scale
     f = mono_font(11 * s, family=theme["_mono_family"])
     fm = QFontMetrics(f)

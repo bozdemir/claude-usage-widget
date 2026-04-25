@@ -36,6 +36,7 @@ class WeeklyReport:
     model: str = REPORT_MODEL
 
     def is_fresh(self, now: float | None = None) -> bool:
+        """True if this cached report is still inside the TTL window."""
         ts = now if now is not None else time.time()
         delta = ts - self.generated_at
         # Reject future-dated reports (clock skew, shared-disk copies from a

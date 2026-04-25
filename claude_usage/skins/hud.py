@@ -87,6 +87,8 @@ def _draw_ticks(p: QPainter, cx: float, cy: float, r: float,
 def paint_gauge(p: QPainter, cx: float, cy: float, pct: float,
                 label: str, sub: str, scale: float = 1.0,
                 size: int | None = None, stroke: int | None = None) -> None:
+    """Single 270° HUD gauge with tick marks, big % readout, and an
+    optional sub-line beneath the value."""
     t = THEME; m = METRICS
     s = scale
     size = (size or m["ring_size"]) * s
@@ -124,6 +126,8 @@ def paint_gauge(p: QPainter, cx: float, cy: float, pct: float,
 
 
 def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
+    """HUD OSD: cockpit-style — title bar, two big 270° gauges flanking a
+    centre live-tokens column, amber-tiered ticker footer."""
     s = scale; m = METRICS; t = THEME
     pad = m["osd_padding"] * s
     # panel

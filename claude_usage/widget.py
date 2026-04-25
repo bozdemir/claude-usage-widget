@@ -143,10 +143,12 @@ class _ProgressBar(QWidget):
         self.setFixedHeight(height)
 
     def set_fraction(self, value: float) -> None:
+        """Set fill fraction (clamped to [0, 1]) and request a repaint."""
         self._fraction = max(0.0, min(1.0, float(value)))
         self.update()
 
     def set_theme(self, theme: dict[str, str]) -> None:
+        """Swap the colour palette and request a repaint."""
         self._theme = theme
         self.update()
 
@@ -176,6 +178,7 @@ class _Sparkline(QWidget):
         self.setFixedHeight(SPARKLINE_HEIGHT)
 
     def set_buckets(self, buckets: list[float]) -> None:
+        """Replace the bucket series and request a repaint."""
         self._buckets = list(buckets or [])
         self.update()
 
@@ -213,6 +216,7 @@ class _Heatmap(QWidget):
         self.setFixedHeight(HEATMAP_HEIGHT)
 
     def set_buckets(self, buckets: list[float]) -> None:
+        """Replace the bucket series and request a repaint."""
         self._buckets = list(buckets or [])
         self.update()
 
@@ -284,6 +288,7 @@ class _CalendarHeatmap(QWidget):
         self.setFixedSize(total_w, total_h)
 
     def set_buckets(self, buckets: list[float]) -> None:
+        """Replace the bucket series and request a repaint."""
         self._buckets = list(buckets or [])
         self.update()
 
@@ -357,6 +362,8 @@ class SkinPopupWidget(QWidget):
         self._resize_content()
 
     def apply_config(self, config: dict[str, Any]) -> None:
+        """Re-bind the active skin module and restyle when the user picks
+        a different theme at runtime."""
         self._config = config
         self._skin = self._all_skins.get(str(config.get("theme", "")))
         self._apply_scrollbar_style()
@@ -380,6 +387,8 @@ class SkinPopupWidget(QWidget):
         )
 
     def update_stats(self, stats) -> None:
+        """Project the latest UsageStats into the skin's popup-data shape
+        and trigger a repaint."""
         from claude_usage.skins._adapter import build_popup_data
         self._data = build_popup_data(stats)
         # First-data-in: stop the loading animation and repaint immediately
@@ -704,6 +713,8 @@ class UsagePopup(QWidget):
         self._rebuild_from(stats)
 
     def showEvent(self, event) -> None:  # noqa: N802
+        """Flush any deferred stats build on first reveal — see
+        :meth:`update_stats` for why hidden popups skip the rebuild."""
         # First show after stats arrived while we were hidden — flush.
         if self._pending_stats is not None and self._layout.count() == 0:
             self._rebuild_from(self._pending_stats)

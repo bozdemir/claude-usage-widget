@@ -18,6 +18,8 @@ def hex_to_qcolor(hex_str: str, alpha: float = 1.0) -> QColor:
 
 
 def mono_font(size_pt: float, bold: bool = False, family: str = "JetBrains Mono") -> QFont:
+    """Build a monospace QFont, falling back to the platform default if the
+    requested family isn't installed."""
     f = QFont(family)
     # Fall back to platform mono if family missing.
     f.setStyleHint(QFont.Monospace)
@@ -28,6 +30,7 @@ def mono_font(size_pt: float, bold: bool = False, family: str = "JetBrains Mono"
 
 
 def ui_font(size_pt: float, weight: int = QFont.Normal, family: str = "Inter") -> QFont:
+    """Build a sans-serif UI QFont with a sensible system fallback."""
     f = QFont(family)
     f.setStyleHint(QFont.SansSerif)
     f.setPointSizeF(size_pt)
@@ -66,6 +69,8 @@ def draw_block_bar(
     fill: QColor,
     radius: float = 0.0,
 ) -> None:
+    """Solid-fill horizontal progress bar. Pass ``radius=0`` for a hard
+    rectangle (brutalist/receipt) or ``h/2`` for a fully rounded capsule."""
     p.setPen(Qt.NoPen)
     p.setBrush(track)
     if radius:

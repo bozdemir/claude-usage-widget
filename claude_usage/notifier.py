@@ -32,6 +32,12 @@ class CrossingDetector:
         self._last: dict[str, float] = {}
 
     def check(self, scope: str, util: float) -> list[float]:
+        """Update *scope*'s last value and return thresholds it just crossed.
+
+        First-ever call for a scope returns ``[]`` — we need a baseline before
+        a "crossing" can be defined; otherwise the first observation would
+        always fire every threshold ≤ the current value.
+        """
         prev = self._last.get(scope)
         self._last[scope] = util
         if prev is None:
@@ -106,6 +112,8 @@ class UsageNotifier:
         self._on_threshold = on_threshold
 
     def check_stats(self, stats) -> None:
+        """Run the detector for each scope and dispatch notifications +
+        the optional ``on_threshold`` callback for any new crossings."""
         for scope, label, attr in self.SCOPES:
             util = getattr(stats, attr, 0.0) or 0.0
             for t in self.detector.check(scope, util):

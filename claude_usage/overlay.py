@@ -269,6 +269,7 @@ class UsageOverlay(QWidget):
         self.update()
 
     def view_mode(self) -> str:
+        """Return the active view mode (``"bars"`` or ``"gauge"``)."""
         return self._view_mode
 
     def set_ticker_enabled(self, enabled: bool) -> None:
@@ -290,6 +291,7 @@ class UsageOverlay(QWidget):
         self.update()
 
     def is_ticker_enabled(self) -> bool:
+        """Return True if the user has the cost-ticker strip enabled."""
         return self._ticker_enabled
 
     def _advance_ticker(self) -> None:
@@ -400,6 +402,8 @@ class UsageOverlay(QWidget):
         self._dragging = False
 
     def wheelEvent(self, event: QWheelEvent) -> None:
+        """Mouse wheel rescales the OSD; disabled while minimized so the
+        thin capsule doesn't grow unexpectedly under the cursor."""
         if self._minimized:
             return
         # angleDelta().y() is +120 per "tick" upward, -120 downward.

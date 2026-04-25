@@ -86,6 +86,8 @@ class UsageAPIServer:
 
     @property
     def port(self) -> int:
+        """The bound port. Differs from the requested port when the caller
+        passes 0 and the OS picks a free one — only known after start()."""
         if self._server is None:
             return self._requested_port
         return self._server.server_address[1]
@@ -132,6 +134,9 @@ class UsageAPIServer:
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, fmt, *args) -> None:  # noqa: N802
+                # Silence the default per-request stderr access log — the
+                # widget runs in a desktop session and an interactive
+                # terminal shouldn't fill up with HTTP chatter.
                 return
 
             def _reject_if_bad_host(self) -> bool:

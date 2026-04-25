@@ -35,6 +35,12 @@ def paint_popup(
     bar_style: str = "block",
     masthead_style: str = "default",   # "default" | "receipt" | "brutalist"
 ) -> float:
+    """Render the shared masthead → sections → footer layout into *rect*.
+
+    Direction modules call this with the variant flags that pick their
+    chrome (masthead style, section header style, bar style); the body
+    layout is identical across directions. Returns the final y cursor.
+    """
     s = scale; t = theme
     pad = POPUP_PADDING * s
 

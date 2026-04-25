@@ -59,6 +59,8 @@ FONTS = {"family_mono": "Space Mono", "body_pt": 10, "title_pt": 11}
 
 
 def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
+    """Brutalist OSD: white panel, heavy 2px black border, Swiss-grid rules
+    between sections, crimson accent for the LIVE badge and session bar."""
     s = scale; t = THEME
     pad = METRICS["osd_padding"] * s
 

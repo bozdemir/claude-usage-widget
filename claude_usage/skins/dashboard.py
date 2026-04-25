@@ -77,6 +77,8 @@ def _draw_ring_full(p: QPainter, cx: float, cy: float, r: float,
 
 
 def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
+    """Dashboard OSD: subagent badge + LIVE indicator header, two big-number
+    rows (session/weekly) with thin bars, scrolling ticker footer."""
     s = scale; t = THEME; m = METRICS
     pad = m["osd_padding"] * s
 

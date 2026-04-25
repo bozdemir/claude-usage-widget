@@ -80,6 +80,8 @@ def _draw_dashed_rule(p: QPainter, x1: float, y: float, x2: float,
 
 
 def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
+    """Receipt OSD: thermal-paper look — centred masthead, dashed rules,
+    paper-grain stripes, ticker tape between weekly bar and "thank you"."""
     s = scale; t = THEME; m = METRICS
     pad = m["osd_padding"] * s
 

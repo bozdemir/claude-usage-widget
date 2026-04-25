@@ -54,6 +54,8 @@ FONTS = {"family_mono": "JetBrains Mono", "family_ui": "Inter",
 
 
 def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
+    """Strip OSD: dense single-row layout — title segment + session segment
+    + weekly segment + live segment, separated by vertical rules."""
     s = scale; t = THEME; m = METRICS
 
     # panel
