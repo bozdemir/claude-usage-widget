@@ -194,7 +194,10 @@ def draw_ticker_marquee(
     p.save()
     p.setClipRect(QRectF(x, y_baseline - fm.ascent(), clip_w, height + 2))
     cur_off = float(offset) % strip_w
-    x_start = x + clip_w - cur_off
+    # Anchor copy 0 at the left edge so the strip is always covered. As
+    # `cur_off` grows, the strip slides leftward; copy 1 (positioned at
+    # x_start + strip_w) seamlessly takes over once copy 0 has wrapped.
+    x_start = x - cur_off
     copies = max(2, int(clip_w // max(strip_w, 1)) + 2)
     for repeat in range(copies):
         gx = x_start + repeat * strip_w

@@ -54,9 +54,15 @@ def _send_linux(title: str, body: str) -> None:
 
 def _send_macos(title: str, body: str) -> None:
     """Fire a desktop notification via ``osascript`` (AppleScript)."""
-    # Escape quotes so AppleScript doesn't break.
-    t = title.replace('"', '\\"')
-    b = body.replace('"', '\\"')
+    # AppleScript string literals escape quotes by DOUBLING (`""`), not via
+    # backslash. Newlines also break the single-line `-e` script so we
+    # collapse them to spaces. This guards against arbitrary content
+    # (project paths, error messages) breaking the script or worse,
+    # injecting AppleScript via crafted strings.
+    def _escape(s: str) -> str:
+        return s.replace('"', '""').replace("\n", " ").replace("\r", " ")
+    t = _escape(title)
+    b = _escape(body)
     script = f'display notification "{b}" with title "{t}"'
     try:
         subprocess.run(

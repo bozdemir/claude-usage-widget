@@ -67,7 +67,10 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     p.drawRect(rect)
     pen = QPen(hex_to_qcolor(t["ink"])); pen.setWidthF(METRICS["border_width"] * s)
     p.setPen(pen); p.setBrush(Qt.NoBrush)
-    p.drawRect(rect.adjusted(1 * s, 1 * s, -1 * s, -1 * s))
+    # Inset by half the pen width so the stroke falls entirely inside the
+    # rect at any scale (Qt strokes are centred on the path).
+    inset = METRICS["border_width"] / 2 * s
+    p.drawRect(rect.adjusted(inset, inset, -inset, -inset))
 
     x = rect.x() + pad; y = rect.y() + pad
     w = rect.width() - pad * 2

@@ -104,6 +104,13 @@ def forecast_time_to_limit(
     hits_in = int(seconds_to_limit)
     result["hits_limit_in_seconds"] = hits_in
 
+    # Guard against missing/stale reset timestamp (no rate-limit headers
+    # received yet, or value cached from a window that already rolled).
+    # Without this, a `reset_ts=0` produces a wildly negative
+    # `seconds_to_reset` and `will_hit_before_reset` is always False even
+    # when the user is genuinely about to hit the cap.
+    if reset_ts <= 0:
+        return result
     seconds_to_reset = reset_ts - time.time()
     result["will_hit_before_reset"] = hits_in < seconds_to_reset
     return result

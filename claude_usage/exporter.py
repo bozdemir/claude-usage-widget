@@ -11,7 +11,7 @@ import csv
 import json
 import os
 import time as _time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import IO, Iterator
 
 
@@ -22,7 +22,7 @@ def _iter_samples(path: str, cutoff_ts: float) -> Iterator[dict]:
     """Yield JSON-decoded samples from *path* with ts >= cutoff_ts."""
     if not os.path.isfile(path):
         return
-    with open(path) as f:
+    with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -72,7 +72,7 @@ def export_history(
             ts = float(s.get("ts", 0))
             writer.writerow([
                 ts,
-                datetime.fromtimestamp(ts).isoformat(timespec="seconds"),
+                datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="seconds"),
                 float(s.get("session", 0.0)),
                 float(s.get("weekly", 0.0)),
             ])

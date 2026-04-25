@@ -154,11 +154,6 @@ def _launch_gui() -> None:
     # WMs use this to decide whether to show a dock icon.
     app.setApplicationName("claude-usage")
     app.setDesktopFileName("claude-usage")
-    if app is None:
-        # QApplication() returned None — usually because the xcb plugin
-        # couldn't load.  Print a helpful hint before Qt's own abort kicks in.
-        _print_qt_install_hint(RuntimeError("QApplication failed to initialise"))
-        sys.exit(1)
     app.setQuitOnLastWindowClosed(False)
 
     config = load_config(_default_config_path())

@@ -240,7 +240,7 @@ def draw_section_header(
 
     if style == "terminal":
         num = f"[{number:02d}]"
-        nf = mono_font(10 * s, family=theme["_mono_family"])
+        nf = mono_font(10 * s, family=theme.get("_mono_family", "JetBrains Mono"))
         adv = draw_text(p, x, y + fm.ascent(), num,
                         hex_to_qcolor(theme["text_dim"]), nf)
         adv += draw_text(p, x + adv + 8 * s, y + fm.ascent(), title,
@@ -258,7 +258,7 @@ def draw_section_header(
         p.setPen(pen)
         p.drawLine(QPointF(x, y), QPointF(x + w, y))
         y2 = y + 8 * s
-        nf = mono_font(10 * s, bold=True, family=theme["_mono_family"])
+        nf = mono_font(10 * s, bold=True, family=theme.get("_mono_family", "Space Mono"))
         adv = draw_text(p, x, y2 + fm.ascent(), f"§{number:02d}",
                         hex_to_qcolor(theme["accent"]), nf,
                         letter_spacing_px=1.5 * s)
@@ -322,6 +322,10 @@ def draw_pct_row(
     """Full-width row: label + pct + reset on one line, bar below.
     Returns new y cursor."""
     s = scale
+    # Clamp once so every code path below (text, bars, both styles) shares
+    # the same sanitised value — over-quota (>100%) is real when the plan's
+    # extra_usage allows pay-as-you-go past the cap.
+    pct = max(0.0, min(1.0, float(pct)))
     fill_hex = fill_hex or theme["accent"]
     label_f = ui_font(10 * s, family=theme["_ui_family"])
     pct_f = mono_font(12 * s, bold=True, family=theme["_mono_family"])

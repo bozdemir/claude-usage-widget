@@ -8,7 +8,7 @@ import math
 import os
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -588,8 +588,10 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
     stats.subscription_type = _load_subscription_type(claude_dir)
 
     # Build date prefix strings used to filter conversation entries by timestamp.
-    # A single pass over the files collects both today and week totals at once.
-    now = datetime.now()
+    # JSONL timestamps are ISO-8601 with a `Z` suffix (UTC), so we MUST build
+    # `today_str` / `week_dates` in UTC — otherwise users west of UTC double-
+    # count their evenings and miss part of their morning.
+    now = datetime.now(timezone.utc)
     today_str = now.strftime("%Y-%m-%d")
     week_start = now - timedelta(days=6)
     week_dates = [(week_start + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
