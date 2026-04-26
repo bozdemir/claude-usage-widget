@@ -990,6 +990,10 @@ class ClaudeUsageApp(QObject):
         self._alive = True
         self._refreshing = False
         self._last_daily_report_date: str = ""
+        # Wall-clock of the last successful collect, used for the menu's
+        # "Updated Xs ago" footer.  Never read by anything else.
+        import time as _time
+        self._last_refresh_ts: float = 0.0
 
         # UI components — we keep BOTH popup implementations around:
         # the default one (full QLayout + child widgets) handles the five
@@ -1063,58 +1067,83 @@ class ClaudeUsageApp(QObject):
     def _build_context_menu(self) -> None:
         m = self._context_menu
 
-        act_details = QAction("Details…", m)
-        act_details.triggered.connect(self._show_popup)
-        m.addAction(act_details)
+        # ── Header (non-interactive, dim) ────────────────────────────
+        # Live-stats summary updated in `_sync_menu_state`. Disabled so
+        # clicks/keyboard nav skip over it.
+        self._act_stats_header = QAction("Loading…", m)
+        self._act_stats_header.setEnabled(False)
+        m.addAction(self._act_stats_header)
 
-        act_refresh = QAction("Refresh", m)
-        act_refresh.triggered.connect(self._refresh_async)
-        m.addAction(act_refresh)
+        # Update banner — hidden until the GitHub release check finds a
+        # newer tag. Clickable: copies the upgrade hint to clipboard.
+        self._act_update_banner = QAction("", m)
+        self._act_update_banner.setVisible(False)
+        self._act_update_banner.triggered.connect(self._on_update_banner_click)
+        m.addAction(self._act_update_banner)
 
         m.addSeparator()
 
-        opacity_menu = m.addMenu("OSD Opacity")
-        for pct in (100, 75, 50, 25):
-            a = QAction(f"{pct}%", opacity_menu)
-            a.triggered.connect(lambda _checked=False, v=pct / 100.0: self.overlay.set_opacity(v))
-            opacity_menu.addAction(a)
+        # ── Primary actions ──────────────────────────────────────────
+        act_details = QAction("◉  Details…", m)
+        act_details.triggered.connect(self._show_popup)
+        m.addAction(act_details)
 
-        # View mode submenu — bars vs gauges, radio-grouped.
-        from PySide6.QtGui import QActionGroup as _QActionGroup
+        self._act_refresh = QAction("↻  Refresh", m)
+        self._act_refresh.triggered.connect(self._refresh_async)
+        m.addAction(self._act_refresh)
+
+        m.addSeparator()
+
+        # ── Display submenus (dynamic titles in _sync_menu_state) ────
+        self._opacity_menu = m.addMenu("◐  OSD Opacity")
+        self._opacity_actions: dict[int, QAction] = {}
+        from PySide6.QtGui import QActionGroup
+        opacity_group = QActionGroup(self._opacity_menu)
+        opacity_group.setExclusive(True)
+        for pct in (100, 75, 50, 25):
+            a = QAction(f"{pct}%", self._opacity_menu)
+            a.setCheckable(True)
+            a.setActionGroup(opacity_group)
+            a.triggered.connect(
+                lambda _checked=False, v=pct / 100.0, p=pct:
+                self._on_pick_opacity(v, p)
+            )
+            self._opacity_menu.addAction(a)
+            self._opacity_actions[pct] = a
+
         from claude_usage.overlay import VIEW_MODES
-        view_menu = m.addMenu("OSD View")
-        self._view_group = _QActionGroup(view_menu)
-        self._view_group.setExclusive(True)
+        self._view_menu = m.addMenu("⚏  OSD View")
+        view_group = QActionGroup(self._view_menu)
+        view_group.setExclusive(True)
         self._view_actions: dict[str, QAction] = {}
         for mode in VIEW_MODES:
-            a = QAction(mode.capitalize(), view_menu)
+            a = QAction(mode.capitalize(), self._view_menu)
             a.setCheckable(True)
-            a.setActionGroup(self._view_group)
+            a.setActionGroup(view_group)
             a.triggered.connect(lambda _checked=False, md=mode: self._on_pick_view_mode(md))
-            view_menu.addAction(a)
+            self._view_menu.addAction(a)
             self._view_actions[mode] = a
 
         # Theme submenu — radio group so only one is ticked at a time. The
         # selection auto-persists to the user config so a restart keeps it.
-        from PySide6.QtGui import QActionGroup
         from claude_usage.themes import THEMES
-        theme_menu = m.addMenu("Theme")
-        self._theme_group = QActionGroup(theme_menu)
+        self._theme_menu = m.addMenu("◭  Theme")
+        self._theme_group = QActionGroup(self._theme_menu)
         self._theme_group.setExclusive(True)
         self._theme_actions: dict[str, QAction] = {}
         for name in sorted(THEMES.keys()):
-            a = QAction(name, theme_menu)
+            a = QAction(name, self._theme_menu)
             a.setCheckable(True)
             a.setActionGroup(self._theme_group)
             a.triggered.connect(lambda _checked=False, n=name: self._on_pick_theme(n))
-            theme_menu.addAction(a)
+            self._theme_menu.addAction(a)
             self._theme_actions[name] = a
 
-        act_minimize = QAction("Minimize / Restore", m)
+        act_minimize = QAction("▭  Minimize / Restore", m)
         act_minimize.triggered.connect(self.overlay.toggle_minimized)
         m.addAction(act_minimize)
 
-        self._act_ticker = QAction("Show cost ticker", m)
+        self._act_ticker = QAction("✦  Show cost ticker", m)
         self._act_ticker.setCheckable(True)
         self._act_ticker.setChecked(self.overlay.is_ticker_enabled())
         self._act_ticker.toggled.connect(self._on_toggle_ticker)
@@ -1123,9 +1152,17 @@ class ClaudeUsageApp(QObject):
 
         m.addSeparator()
 
-        act_quit = QAction("Quit", m)
+        # ── Footer (non-interactive, dim) ────────────────────────────
+        self._act_refresh_footer = QAction("Updated never", m)
+        self._act_refresh_footer.setEnabled(False)
+        m.addAction(self._act_refresh_footer)
+
+        act_quit = QAction("⏻  Quit", m)
         act_quit.triggered.connect(self._on_quit)
         m.addAction(act_quit)
+
+        # Apply theme-tinted styling — kills the default Qt grey palette.
+        self._apply_menu_qss()
 
     def _on_toggle_ticker(self, checked: bool) -> None:
         self.overlay.set_ticker_enabled(checked)
@@ -1147,23 +1184,211 @@ class ClaudeUsageApp(QObject):
         self.skin_popup.apply_config(merged)
         self.config["theme"] = name
         self._persist_config()
+        # Retint the context menu so it follows the new palette instead of
+        # staying on the previous theme's colors.
+        self._apply_menu_qss()
 
     def _on_pick_view_mode(self, mode: str) -> None:
         self.overlay.set_view_mode(mode)
         self.config["osd_view_mode"] = mode
         self._persist_config()
 
+    def _on_pick_opacity(self, value: float, pct: int) -> None:
+        self.overlay.set_opacity(value)
+        self.config["osd_opacity"] = float(value)
+        self._persist_config()
+
+    def _on_update_banner_click(self) -> None:
+        """When the user clicks the update banner, copy the upgrade hint
+        to the system clipboard so they can paste it straight into a shell."""
+        try:
+            QApplication.clipboard().setText(
+                "pip install --upgrade claude-usage-widget"
+            )
+        except Exception:
+            pass
+
+    # ----------------------------------------------------------- menu styling
+
+    def _menu_palette(self) -> dict[str, str]:
+        """Pull menu colors from the active theme — works for both classic
+        themes (`bg`, `bar_blue`, `separator`, ...) and skin themes which
+        carry richer keys (`accent`, `border`, ...). Falls back gracefully
+        when a key is absent."""
+        from claude_usage.skins import SKIN_MODULES
+        name = str(self.config.get("theme", "default"))
+        skin = SKIN_MODULES.get(name)
+        if skin is not None:
+            t = skin.THEME
+            return {
+                "bg":     t.get("panel", t.get("bg", "#1a1a2e")),
+                "text":   t.get("text_primary", "#e0e0e8"),
+                "dim":    t.get("text_dim", "#8a8a9a"),
+                "accent": t.get("accent", t.get("bar_blue", "#5B9BD5")),
+                "border": t.get("border", t.get("separator", "#2a2a38")),
+            }
+        # Classic theme — narrower schema.
+        from claude_usage.themes import get_theme
+        t = get_theme(name)
+        return {
+            "bg":     t.get("bg", "#1a1a2e"),
+            "text":   t.get("text_primary", "#e0e0e8"),
+            "dim":    t.get("text_dim", "#8a8a9a"),
+            "accent": t.get("bar_blue", "#5B9BD5"),
+            "border": t.get("separator", "#2a2a38"),
+        }
+
+    @staticmethod
+    def _hex_to_rgba(hex_str: str, alpha: float) -> str:
+        """`#rrggbb` + alpha → CSS `rgba(r, g, b, a)`. Used for hover tints
+        on top of the menu background — Qt QSS supports `rgba()`."""
+        h = hex_str.lstrip("#")
+        if len(h) == 3:
+            h = "".join(c * 2 for c in h)
+        try:
+            r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        except ValueError:
+            return hex_str
+        return f"rgba({r},{g},{b},{alpha:.2f})"
+
+    def _apply_menu_qss(self) -> None:
+        """Tint the context menu with the active theme. Without this Qt
+        falls back to the system's default grey menu, which clashes with
+        every skin we ship."""
+        c = self._menu_palette()
+        accent_hover = self._hex_to_rgba(c["accent"], 0.18)
+        accent_check = self._hex_to_rgba(c["accent"], 0.85)
+        qss = f"""
+        QMenu {{
+            background-color: {c["bg"]};
+            color: {c["text"]};
+            border: 1px solid {c["border"]};
+            padding: 6px 0;
+            font-size: 12px;
+        }}
+        QMenu::item {{
+            padding: 6px 28px 6px 18px;
+            background: transparent;
+            color: {c["text"]};
+        }}
+        QMenu::item:selected {{
+            background-color: {accent_hover};
+            color: {c["text"]};
+        }}
+        QMenu::item:disabled {{
+            color: {c["dim"]};
+            background: transparent;
+        }}
+        QMenu::separator {{
+            height: 1px;
+            background: {c["border"]};
+            margin: 6px 14px;
+        }}
+        QMenu::indicator {{
+            width: 12px;
+            height: 12px;
+            margin-left: 6px;
+        }}
+        QMenu::indicator:checked {{
+            background: {accent_check};
+            border: 1px solid {c["accent"]};
+            border-radius: 6px;
+        }}
+        QMenu::indicator:unchecked {{
+            background: transparent;
+            border: 1px solid {c["dim"]};
+            border-radius: 6px;
+        }}
+        QMenu::right-arrow {{
+            image: none;
+            width: 0;
+            height: 0;
+            border-style: solid;
+            border-width: 4px 0 4px 6px;
+            border-color: transparent transparent transparent {c["dim"]};
+            margin-right: 8px;
+        }}
+        """
+        self._context_menu.setStyleSheet(qss)
+        # Submenus inherit the parent's QSS in Qt 6 only when explicitly
+        # set, so cascade it.
+        for sub in (
+            getattr(self, "_opacity_menu", None),
+            getattr(self, "_view_menu", None),
+            getattr(self, "_theme_menu", None),
+        ):
+            if sub is not None:
+                sub.setStyleSheet(qss)
+
     def _sync_menu_state(self) -> None:
-        """Refresh the tick marks on checkable items when the menu opens."""
-        self._act_ticker.setChecked(self.overlay.is_ticker_enabled())
+        """Refresh dynamic labels and tick marks each time the menu opens —
+        live-stats header, submenu titles showing the current selection,
+        update banner visibility, and the "Updated Xs ago" footer."""
+        # Stats header — "Session 42% · Weekly 71% · ● 10.5k t/m".
+        s_pct = int((getattr(self.stats, "session_utilization", 0.0) or 0.0) * 100)
+        w_pct = int((getattr(self.stats, "weekly_utilization", 0.0) or 0.0) * 100)
+        live = getattr(self.stats, "live_activity", None)
+        live_txt = ""
+        if live is not None and getattr(live, "is_live", False):
+            tpm = float(getattr(live, "tokens_per_minute", 0.0) or 0.0)
+            live_txt = f"  ·  ● {tpm / 1000:.1f}k t/m"
+        if self._last_refresh_ts <= 0:
+            self._act_stats_header.setText("Loading…")
+        else:
+            self._act_stats_header.setText(
+                f"Session {s_pct}%  ·  Weekly {w_pct}%{live_txt}"
+            )
+
+        # Update banner — only visible when the GitHub release check
+        # found something newer than __version__.
+        tag = getattr(self, "_latest_tag", None)
+        if tag:
+            self._act_update_banner.setText(
+                f"↑  Update available: {tag}  (click to copy upgrade cmd)"
+            )
+            self._act_update_banner.setVisible(True)
+        else:
+            self._act_update_banner.setVisible(False)
+
+        # Refresh action — show "(refreshing…)" suffix while in flight.
+        self._act_refresh.setText(
+            "↻  Refresh (refreshing…)" if self._refreshing else "↻  Refresh"
+        )
+
+        # Submenu titles — surface the current selection so the user
+        # doesn't have to drill in to know what's active.
         current_theme = str(self.config.get("theme", "default"))
+        self._theme_menu.setTitle(f"◭  Theme · {current_theme}")
+        current_view = self.overlay.view_mode()
+        self._view_menu.setTitle(f"⚏  OSD View · {current_view}")
+        opacity_pct = int(round(float(self.config.get("osd_opacity", 1.0)) * 100))
+        self._opacity_menu.setTitle(f"◐  OSD Opacity · {opacity_pct}%")
+
+        # Tick marks on radio-grouped items.
+        self._act_ticker.setChecked(self.overlay.is_ticker_enabled())
         theme_act = self._theme_actions.get(current_theme)
         if theme_act is not None:
             theme_act.setChecked(True)
-        current_view = self.overlay.view_mode()
         view_act = self._view_actions.get(current_view)
         if view_act is not None:
             view_act.setChecked(True)
+        op_act = self._opacity_actions.get(opacity_pct)
+        if op_act is not None:
+            op_act.setChecked(True)
+
+        # Footer — "Updated 12s ago" / "5m ago" / "1h 23m ago".
+        if self._last_refresh_ts <= 0:
+            self._act_refresh_footer.setText("Updated never")
+        else:
+            import time as _t
+            secs = max(0, int(_t.time() - self._last_refresh_ts))
+            if secs < 60:
+                ago = f"{secs}s ago"
+            elif secs < 3600:
+                ago = f"{secs // 60}m ago"
+            else:
+                ago = f"{secs // 3600}h {(secs % 3600) // 60}m ago"
+            self._act_refresh_footer.setText(f"Updated {ago}")
 
     def _persist_config(self) -> None:
         """Write the in-memory config to the user's XDG config file.
@@ -1202,6 +1427,8 @@ class ClaudeUsageApp(QObject):
         if not self._alive:
             return
         self.stats = stats
+        import time as _t
+        self._last_refresh_ts = _t.time()
 
         self.overlay.update_stats(stats)
         self.popup.update_stats(stats)
