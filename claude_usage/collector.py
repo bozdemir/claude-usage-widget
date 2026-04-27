@@ -472,27 +472,32 @@ def _load_credentials(claude_dir: str) -> str | None:
 
 
 def fetch_rate_limits(claude_dir: str) -> dict[str, Any]:
-    """Fetch rate-limit data from the Anthropic API using OAuth credentials.
+    """Fetch the user's plan utilization from Anthropic.
 
-    Makes a minimal API call (``max_tokens=1`` to the cheapest model) purely to
-    receive response headers -- the actual reply text is discarded.  ``urllib``
-    is used instead of ``subprocess``/``curl`` so the bearer token never appears
-    in the process argument list (visible via ``/proc/cmdline`` on Linux).
-
-    On HTTP 429 the rate-limit headers are still present on the error response,
-    so we parse them instead of treating the 429 as a fatal failure.
+    Calls Claude Code's own ``/api/oauth/usage`` endpoint, which returns the
+    five-hour and seven-day plan-level utilization the Claude UI shows. The
+    legacy path (issuing a tiny ``/v1/messages`` call to read response
+    headers) was per-API-key rate limits — a different thing — so it
+    chronically under-reported real usage. We keep that path as a fallback
+    for any future schema break in the OAuth endpoint.
     """
     token = _load_credentials(claude_dir)
     if not token:
         return {"error": "No credentials found -- run 'claude' to log in"}
 
-    # Cheapest model, smallest completion -- we only care about the response headers
+    # Primary path — the OAuth usage endpoint Claude Code itself uses.
+    primary = _fetch_oauth_usage(token)
+    if "error" not in primary:
+        return primary
+
+    # Fallback: tiny /v1/messages call to harvest rate-limit headers. These
+    # cover API-key-level limits (not plan limits) but are better than
+    # nothing if the OAuth endpoint is unreachable or 4xxs.
     body = json.dumps({
         "model": "claude-haiku-4-5-20251001",
         "max_tokens": 1,
         "messages": [{"role": "user", "content": "h"}],
     }).encode()
-
     req = Request(
         "https://api.anthropic.com/v1/messages",
         data=body,
@@ -503,7 +508,6 @@ def fetch_rate_limits(claude_dir: str) -> dict[str, Any]:
             "content-type": "application/json",
         },
     )
-
     try:
         with urlopen(req, timeout=15) as resp:
             headers = {k.lower(): v for k, v in resp.getheaders()}
@@ -511,7 +515,6 @@ def fetch_rate_limits(claude_dir: str) -> dict[str, Any]:
         if e.code == 401:
             return {"error": "Credentials expired -- re-authenticate with 'claude'"}
         if e.code == 429:
-            # Rate-limit headers are still populated on 429 responses
             headers = {k.lower(): v for k, v in e.headers.items()}
             prefix = "anthropic-ratelimit-unified-"
             if any(k.startswith(prefix) for k in headers):
@@ -520,8 +523,71 @@ def fetch_rate_limits(claude_dir: str) -> dict[str, Any]:
         return {"error": f"API error {e.code}"}
     except (URLError, OSError, TimeoutError):
         return {"error": "API request failed -- check network"}
-
     return _parse_rate_limit_headers(headers)
+
+
+def _fetch_oauth_usage(token: str) -> dict[str, Any]:
+    """Hit ``/api/oauth/usage`` and translate the response into the same
+    shape ``_parse_rate_limit_headers`` produces, so callers don't care
+    which path won.
+
+    The response uses 0-100 percentages and ISO-8601 ``resets_at`` strings;
+    we normalise both to the internal 0-1 fraction + unix-seconds epoch.
+    """
+    req = Request(
+        "https://api.anthropic.com/api/oauth/usage",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "anthropic-beta": "oauth-2025-04-20",
+            "User-Agent": "claude-usage-widget",
+        },
+    )
+    try:
+        with urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read(65536).decode("utf-8", errors="replace"))
+    except HTTPError as e:
+        if e.code == 401:
+            return {"error": "Credentials expired -- re-authenticate with 'claude'"}
+        return {"error": f"OAuth usage error {e.code}"}
+    except (URLError, OSError, TimeoutError, json.JSONDecodeError):
+        return {"error": "OAuth usage request failed"}
+
+    if not isinstance(payload, dict):
+        return {"error": "Unexpected /api/oauth/usage payload"}
+
+    def _pct_to_frac(v: Any) -> float:
+        try:
+            f = float(v) / 100.0
+        except (TypeError, ValueError):
+            return 0.0
+        if math.isnan(f) or math.isinf(f):
+            return 0.0
+        return max(0.0, min(f, 1.0))
+
+    def _iso_to_epoch(v: Any) -> int:
+        if not isinstance(v, str) or not v:
+            return 0
+        try:
+            # Python's fromisoformat handles "+00:00" suffixes natively.
+            from datetime import datetime
+            return int(datetime.fromisoformat(v).timestamp())
+        except (ValueError, TypeError):
+            return 0
+
+    five = payload.get("five_hour") or {}
+    seven = payload.get("seven_day") or {}
+    extra = payload.get("extra_usage") or {}
+
+    return {
+        "session_utilization": _pct_to_frac(five.get("utilization", 0)),
+        "session_reset": _iso_to_epoch(five.get("resets_at")),
+        "weekly_utilization": _pct_to_frac(seven.get("utilization", 0)),
+        "weekly_reset": _iso_to_epoch(seven.get("resets_at")),
+        "overage_status": (
+            "allowed" if extra.get("is_enabled") else "rejected"
+        ),
+        "fallback_status": "",
+    }
 
 
 def _parse_rate_limit_headers(headers: dict[str, str]) -> dict[str, Any]:
