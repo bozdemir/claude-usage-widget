@@ -689,6 +689,20 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
 
     if "error" in rate_limits:
         stats.rate_limit_error = rate_limits["error"]
+        # API call failed (transient network glitch, OAuth hiccup, etc.).
+        # Without this, both utilization fields stay at the dataclass
+        # default 0.0 and the widget paints "0% / 0%" until the next
+        # successful refresh — a long-standing visible-flicker bug. Fall
+        # back to the most recent on-disk sample so the OSD shows the
+        # *last known* numbers instead of a misleading zero.
+        try:
+            recent = load_samples(samples_path)
+        except OSError:
+            recent = []
+        if recent:
+            last = recent[-1]
+            stats.session_utilization = float(last.get("session", 0.0) or 0.0)
+            stats.weekly_utilization = float(last.get("weekly", 0.0) or 0.0)
     else:
         stats.session_utilization = rate_limits["session_utilization"]
         stats.session_reset = rate_limits["session_reset"]
