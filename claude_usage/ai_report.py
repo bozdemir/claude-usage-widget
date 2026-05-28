@@ -55,7 +55,7 @@ def load_cached_report(claude_dir: str, now: float | None = None) -> WeeklyRepor
     if not os.path.isfile(path):
         return None
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
         return None
