@@ -21,6 +21,7 @@ from claude_usage.live_stream import LiveActivity, detect_live_activity
 from claude_usage.subagents import count_active_subagents
 from claude_usage.ticker import TickerItem, scan_ticker_items
 from claude_usage.trends import daily_heatmap, hourly_histogram, monthly_summary
+from claude_usage.news_fetcher import NewsItem, get_news_items
 
 HISTORY_FILENAME = "usage-history.jsonl"
 HISTORY_KEEP_DAYS = 90  # keep 90 days for trend/anomaly analysis
@@ -86,6 +87,8 @@ class UsageStats:
     weekly_report_text: str = ""
     # Rolling per-turn cost feed for the OSD's scrolling ticker tape
     ticker_items: list[TickerItem] = field(default_factory=list)
+    # Recent Anthropic/Claude news from RSS, shown in the ticker tape
+    news_items: list[NewsItem] = field(default_factory=list)
     # Count of subagent JSONLs touched in the last minute — surfaced as the
     # "⚙ N" rozet next to the CLAUDE title when > 0.
     active_subagent_count: int = 0
@@ -774,6 +777,13 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
         stats.active_subagent_count = count_active_subagents(claude_dir, now=now_ts)
     except OSError:
         stats.active_subagent_count = 0
+
+    # Recent Anthropic news — served from 1-hour local cache; network call
+    # is non-blocking because collect_all already runs in a daemon thread.
+    try:
+        stats.news_items = get_news_items()
+    except Exception:
+        stats.news_items = []
 
     # Claude-authored weekly report — we only *read* the on-disk cache here;
     # regeneration happens in a background thread from the widget so the

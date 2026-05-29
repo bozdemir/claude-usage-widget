@@ -51,7 +51,7 @@ THEME = {
 }
 
 METRICS = {
-    "osd_width": 360, "osd_height": 224, "osd_radius": 0, "osd_padding": 12,
+    "osd_width": 360, "osd_height": 200, "osd_radius": 0, "osd_padding": 12,
     "border_width": 2, "ticker_h": 22,
 }
 

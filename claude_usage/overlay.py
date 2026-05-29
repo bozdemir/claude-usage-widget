@@ -45,6 +45,8 @@ from claude_usage.ticker import TickerItem
 BASE_WIDTH = 260
 BASE_HEIGHT = 100
 TICKER_STRIP_HEIGHT = 22
+NEWS_STRIP_HEIGHT = 16  # second ticker row for latest headline
+NEWS_REFRESH_MS = 10 * 60 * 1000  # 10 minutes
 # Gauge view is slightly taller than bars because the rings + label + reset
 # stack vertically inside each column. No ticker in this view (it would
 # collide with the reset line under each ring).
@@ -178,10 +180,15 @@ class UsageOverlay(QWidget):
         # Ticker tape: newest-first. The paint loop walks them oldest→newest
         # so the newest item rides in from the right edge like a news ticker.
         self._ticker_items: list[TickerItem] = []
-        self._ticker_offset: float = 0.0  # pixels scrolled so far; grows each frame
+        self._news_items: list[NewsItem] = []
+        self._ticker_offset: float = 0.0
+        self._news_offset: float = 0.0   # separate scroll offset for news strip
+        self._latest_headline: str = ""  # single headline shown in news strip
+        self._latest_news_url: str = ""  # URL opened on click
         # User toggle — default on, overridable via config; runtime flip
         # lives in the right-click menu.
         self._ticker_enabled: bool = bool(cfg.get("show_ticker", True))
+        self._news_enabled: bool = bool(cfg.get("show_news", True))
         # "bars" (default) or "gauge" — the right-click menu toggles this and
         # persists to config.
         raw_mode = str(cfg.get("osd_view_mode", VIEW_MODE_BARS))
@@ -217,6 +224,12 @@ class UsageOverlay(QWidget):
         self._ticker_timer.setInterval(TICKER_FRAME_INTERVAL_MS)
         self._ticker_timer.timeout.connect(self._advance_ticker)
 
+        # News strip: refresh headline every 10 min, independent of stats refresh.
+        self._news_refresh_timer = QTimer(self)
+        self._news_refresh_timer.setInterval(NEWS_REFRESH_MS)
+        self._news_refresh_timer.timeout.connect(self._refresh_headline)
+        self._news_refresh_timer.start()
+
     # ------------------------------------------------------------------ API
 
     def update_stats(self, stats: UsageStats) -> None:
@@ -235,6 +248,11 @@ class UsageOverlay(QWidget):
             self._live_tpm = 0.0
         self._active_subagents = max(0, int(getattr(stats, "active_subagent_count", 0) or 0))
         self._ticker_items = list(getattr(stats, "ticker_items", []) or [])
+        new_news = list(getattr(stats, "news_items", []) or [])
+        if new_news:
+            self._news_items = new_news
+            self._latest_headline = new_news[0].title
+            self._latest_news_url = new_news[0].url
         # Animate whenever we have items and a view that actually draws the
         # ticker — default bars mode, or a skin that opts in via its
         # module-level WANTS_TICKER flag.
@@ -294,10 +312,31 @@ class UsageOverlay(QWidget):
         """Return True if the user has the cost-ticker strip enabled."""
         return self._ticker_enabled
 
+    def set_news_enabled(self, enabled: bool) -> None:
+        self._news_enabled = bool(enabled)
+        self.update()
+
+    def is_news_enabled(self) -> bool:
+        return self._news_enabled
+
     def _advance_ticker(self) -> None:
         """One frame of ticker scroll — called by the animation timer."""
         self._ticker_offset += TICKER_SCROLL_PX_PER_SEC * (TICKER_FRAME_INTERVAL_MS / 1000.0)
+        self._news_offset += TICKER_SCROLL_PX_PER_SEC * (TICKER_FRAME_INTERVAL_MS / 1000.0)
         self.update()
+
+    def _refresh_headline(self) -> None:
+        """Fetch latest news headline in a background thread."""
+        import threading
+        def _worker():
+            from claude_usage.news_fetcher import get_news_items
+            items = get_news_items(force_refresh=True)
+            if items:
+                self._news_items = items
+                self._latest_headline = items[0].title
+                self._latest_news_url = items[0].url
+                self._news_offset = 0.0
+        threading.Thread(target=_worker, daemon=True).start()
 
     def set_opacity(self, value: float) -> None:
         """Set background opacity (0.15 -- 1.0)."""
@@ -344,8 +383,6 @@ class UsageOverlay(QWidget):
 
         width = int(BASE_WIDTH * self._scale)
         if self._view_mode == VIEW_MODE_GAUGE:
-            # Gauge mode has no ticker — the reset line under each ring
-            # already occupies that footer real estate.
             base = GAUGE_HEIGHT
         else:
             # Receipt skin always reserves the footer strip for its barcode,
@@ -395,8 +432,14 @@ class UsageOverlay(QWidget):
         if event.button() != Qt.LeftButton:
             return
         if self._press_pos is not None and not self._dragging:
-            # It was a click (no drag) — open detail popup.
-            self.clicked.emit()
+            # Check if click landed on the news strip (bottom NEWS_STRIP_HEIGHT px).
+            click_y = event.position().y()
+            h = self.height()
+            if click_y >= h - NEWS_STRIP_HEIGHT * self._scale and self._latest_news_url:
+                import webbrowser
+                webbrowser.open(self._latest_news_url)
+            else:
+                self.clicked.emit()
         self._press_pos = None
         self._press_win_pos = None
         self._dragging = False
@@ -447,7 +490,26 @@ class UsageOverlay(QWidget):
                 self._last_stats, ticker_offset=self._ticker_offset,
             )
             try:
-                self._skin.paint_osd(p, QRectF(0, 0, w, h), data, self._scale)
+                s = self._scale
+                skin_h = int(self._skin.METRICS["osd_height"] * s)
+                self._skin.paint_osd(p, QRectF(0, 0, w, skin_h), data, self._scale)
+                # Draw news inside the skin's frame: above the skin's own ticker.
+                if getattr(self._skin, "WANTS_TICKER", False):
+                    pad_x = 14 * s
+                    if "news_bottom_pad" in self._skin.METRICS:
+                        news_y = skin_h - self._skin.METRICS["news_bottom_pad"] * s
+                    else:
+                        ticker_h = self._skin.METRICS.get("ticker_h", NEWS_STRIP_HEIGHT) * s
+                        news_y = skin_h - ticker_h - NEWS_STRIP_HEIGHT * s + 3 * s
+                    # Use same font as the skin's own ticker
+                    skin_fonts = getattr(self._skin, "FONTS", {})
+                    from claude_usage.skins._paint import mono_font as _skin_mono
+                    news_font = _skin_mono(
+                        9 * s,
+                        bold=True,
+                        family=skin_fonts.get("family_mono", "monospace"),
+                    )
+                    self._draw_news_strip(p, news_y, w, pad_x, s, font=news_font)
                 return
             except Exception:
                 # Swallow skin-paint errors and fall through to default paint
@@ -664,12 +726,13 @@ class UsageOverlay(QWidget):
         # thermal-chit design. The actual 1D barcode lives in the popup
         # footer (see widget.py), not here — it's a statement stamp, not
         # part of the at-a-glance overlay.
+        footer_y = y2 + 15 * s + bar_h + 6 * s
         if self._style.decoration == "receipt":
-            footer_y = y2 + 15 * s + bar_h + 6 * s
             self._paint_receipt_footer(p, pad_x, footer_y, w - 2 * pad_x, s)
         elif self._ticker_enabled:
-            ticker_y = y2 + 15 * s + bar_h + 6 * s
-            self._draw_ticker(p, ticker_y, w, pad_x, s)
+            self._draw_ticker(p, footer_y, w, pad_x, s)
+        # News strip: right after the ticker row
+        self._draw_news_strip(p, footer_y + 16 * s, w, pad_x, s)
 
     def _draw_ticker(
         self,
@@ -679,8 +742,10 @@ class UsageOverlay(QWidget):
         pad_x: float,
         s: float,
     ) -> None:
-        """Right-to-left scrolling tape of recent per-turn costs."""
-        if not self._ticker_items:
+        """Right-to-left scrolling tape of recent per-turn costs and news."""
+        has_costs = bool(self._ticker_items)
+        has_news = bool(self._news_items)
+        if not has_costs and not has_news:
             return
 
         # Tape geometry: clipped to the interior width so text doesn't spill
@@ -698,18 +763,12 @@ class UsageOverlay(QWidget):
         sep_gap = int(14 * s)
         baseline = y + tape_h - 3 * s
 
-        # Build display items oldest-first so the newest rides in from the
-        # right edge as offset grows. Duplicated list makes seamless looping
-        # cheap: as soon as the first copy fully scrolls off-screen, the
-        # second is already visible at its tail.
-        ordered = list(reversed(self._ticker_items))
-        strings = [self._format_ticker_item(it) for it in ordered]
+        # Cost items only — news is shown separately in the news strip below.
+        cost_ordered = list(reversed(self._ticker_items))
+        strings = [self._format_ticker_item(it) for it in cost_ordered]
         widths = [fm.horizontalAdvance(s_) + sep_gap for s_ in strings]
         strip_width = sum(widths) or 1
 
-        # x_start: the left edge of the first copy of the strip in absolute
-        # coordinates. Subtract the scrolling offset (modulo strip_width) so
-        # it drifts left indefinitely without integer overflow.
         x_start = tape_x + tape_w - (self._ticker_offset % strip_width)
         cost_colors = {
             "hot":    _hex_to_qcolor(self._theme["crit"]),
@@ -718,12 +777,10 @@ class UsageOverlay(QWidget):
             "dim":    _hex_to_qcolor(self._theme["text_dim"]),
         }
         thresholds = _ticker_quartile_thresholds(self._ticker_items)
-        # Enough copies to cover the viewport even when the strip is short —
-        # two copies only works when strip_width ≥ tape_w.
         copies = max(2, int(tape_w // strip_width) + 2)
         for repeat in range(copies):
             x = x_start + repeat * strip_width
-            for item, text, width in zip(ordered, strings, widths):
+            for item, text, width in zip(cost_ordered, strings, widths):
                 if x + width < tape_x:
                     x += width
                     continue
@@ -733,6 +790,49 @@ class UsageOverlay(QWidget):
                 p.drawText(QPointF(x, baseline), text)
                 x += width
 
+        p.restore()
+
+    def _draw_news_strip(
+        self,
+        p: QPainter,
+        y: float,
+        w: int,
+        pad_x: float,
+        s: float,
+        font: "QFont | None" = None,
+    ) -> None:
+        """Scrolling strip showing the latest news headline.
+
+        When news is disabled: text is shown statically from the left edge
+        (no scroll). When enabled: scrolls right-to-left as normal.
+        """
+        if not self._latest_headline:
+            return
+        tape_x = pad_x
+        tape_w = max(0.0, w - 2 * pad_x)
+        tape_h = 13 * s
+        p.save()
+        p.setClipRect(QRectF(tape_x, y - tape_h * 0.1, tape_w, tape_h * 1.2))
+        if font is None:
+            font = _mono_font(max(7, int(7.5 * s)))
+        p.setFont(font)
+        fm = p.fontMetrics()
+        baseline = y + tape_h - 3 * s
+        text = "📰 " + self._latest_headline + "    "
+        text_w = fm.horizontalAdvance(text) or 1
+        news_color = _hex_to_qcolor(self._theme.get("text_link", self._theme.get("warn", "#f59e0b")))
+        p.setPen(news_color)
+        if self._news_enabled:
+            x_start = tape_x + tape_w - (self._news_offset % text_w)
+            copies = max(2, int(tape_w // text_w) + 2)
+            for i in range(copies):
+                x = x_start + i * text_w
+                if x + text_w < tape_x or x > tape_x + tape_w:
+                    continue
+                p.drawText(QPointF(x, baseline), text)
+        else:
+            # Disabled: show static text from left edge (no scroll).
+            p.drawText(QPointF(tape_x, baseline), text)
         p.restore()
 
     @staticmethod
