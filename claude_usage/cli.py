@@ -10,7 +10,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import sys
+import time
 from dataclasses import asdict, is_dataclass
 from typing import Sequence
 
@@ -63,6 +65,21 @@ def _default_config_path() -> str:
     return user
 
 
+def collect_with_backoff(config: dict, max_retries: int = 5, base_delay: float = 2.0) -> UsageStats:
+    """Collects usage stats using exponential backoff with jitter for transient fault tolerance."""
+    retries = 0
+    while retries < max_retries:
+        try:
+            return collect_all(config)
+        except Exception as e:
+            retries += 1
+            if retries == max_retries:
+                raise e
+            delay = (base_delay ** retries) + random.uniform(0.0, 1.0)
+            time.sleep(delay)
+    return collect_all(config)
+
+
 def run_cli(argv: Sequence[str]) -> int:
     """Dispatch a single CLI invocation. Returns a process exit code.
 
@@ -85,7 +102,10 @@ def run_cli(argv: Sequence[str]) -> int:
 
     if args.json or args.once or args.field:
         config = load_config(_default_config_path())
-        stats = collect_all(config)
+        
+        # Wrapped with exponential backoff resiliency
+        stats = collect_with_backoff(config)
+        
         data = _usage_stats_to_dict(stats)
         # Same privacy redaction as the localhost API — never leak raw prompt
         # text through --json / --field output.
