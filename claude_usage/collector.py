@@ -6,7 +6,9 @@ import glob
 import json
 import math
 import os
+import random
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -30,6 +32,16 @@ SESSION_BUCKETS = 30
 WEEKLY_WINDOW_SECONDS = 7 * 86400
 ANALYTICS_WINDOW_SECONDS = 90 * 86400
 WEEKLY_BUCKETS = 28
+
+# Transient-fault retry policy for the usage endpoint. Bounds are
+# deliberately TIGHT: both the GUI (every 30s) and CLI status-bar scripts
+# (polled by tmux/waybar every few seconds via --field) call this, so the
+# worst-case added latency must stay well under a second. We retry only on
+# transient network errors (connection reset, DNS blip, timeout) — never on
+# HTTP 4xx, which won't get better by retrying. Exponential 0.2s→0.4s with
+# jitter spreads retries so a flock of widgets doesn't thundering-herd.
+_USAGE_MAX_RETRIES = 2          # 1 initial attempt + 2 retries = 3 tries max
+_USAGE_BASE_DELAY = 0.2         # seconds; doubled each retry, plus jitter
 
 
 @dataclass
@@ -545,14 +557,32 @@ def _fetch_oauth_usage(token: str) -> dict[str, Any]:
             "User-Agent": "claude-usage-widget",
         },
     )
-    try:
-        with urlopen(req, timeout=10) as resp:
-            payload = json.loads(resp.read(65536).decode("utf-8", errors="replace"))
-    except HTTPError as e:
-        if e.code == 401:
-            return {"error": "Credentials expired -- re-authenticate with 'claude'"}
-        return {"error": f"OAuth usage error {e.code}"}
-    except (URLError, OSError, TimeoutError, json.JSONDecodeError):
+    # Exponential backoff with jitter on transient faults only. HTTPError is
+    # a subclass of URLError, so we catch it FIRST and return immediately —
+    # a 401/4xx won't fix itself, retrying just wastes the user's time.
+    # TimeoutError likewise subclasses OSError; we treat both as transient.
+    payload = None
+    for attempt in range(_USAGE_MAX_RETRIES + 1):
+        try:
+            with urlopen(req, timeout=10) as resp:
+                payload = json.loads(resp.read(65536).decode("utf-8", errors="replace"))
+            break
+        except HTTPError as e:
+            if e.code == 401:
+                return {"error": "Credentials expired -- re-authenticate with 'claude'"}
+            return {"error": f"OAuth usage error {e.code}"}
+        except json.JSONDecodeError:
+            # Malformed body — a retry might catch a truncated response, but
+            # don't loop forever; one more attempt is plenty.
+            if attempt >= _USAGE_MAX_RETRIES:
+                return {"error": "OAuth usage request failed"}
+        except (URLError, OSError, TimeoutError):
+            if attempt >= _USAGE_MAX_RETRIES:
+                return {"error": "OAuth usage request failed"}
+        # Transient failure with retries left — back off, then try again.
+        delay = _USAGE_BASE_DELAY * (2 ** attempt) + random.uniform(0.0, 0.1)
+        time.sleep(delay)
+    if payload is None:
         return {"error": "OAuth usage request failed"}
 
     if not isinstance(payload, dict):
