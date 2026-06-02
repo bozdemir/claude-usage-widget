@@ -64,6 +64,14 @@ DEFAULT_CONFIG: Config = {
     "show_ticker": True,
     # OSD view mode — "bars" (default) or "gauge". See overlay.VIEW_MODES.
     "osd_view_mode": "bars",
+    # Where the OSD anchors on screen. One of the four corners, or "custom"
+    # to use the exact osd_x / osd_y coordinates below (set automatically
+    # when you drag the overlay). See overlay.OSD_POSITIONS.
+    "osd_position": "top-right",
+    # Absolute screen coordinates used only when osd_position == "custom".
+    # null means "not set yet" — the overlay falls back to top-right.
+    "osd_x": None,
+    "osd_y": None,
 }
 
 

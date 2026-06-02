@@ -128,7 +128,7 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 pip install --user --upgrade claude-usage-widget
 claude-usage              # launches the OSD overlay (foreground)
 claude-usage --detach     # …or run it in the background and free the shell
-claude-usage --version    # 0.7.1
+claude-usage --version    # 0.8.0
 ```
 
 That's it — no `apt`, no `brew`, no PyGObject, no rumps. PySide6 ships Qt in the wheel, so the widget is fully self-contained.
@@ -168,6 +168,7 @@ python3 main.py
 - **Refresh** -- force an immediate data refresh
 - **OSD Opacity** -- 100% / 75% / 50% / 25%
 - **OSD View ▸** -- switch between **Bars** (default — progress bars + cost ticker) and **Gauge** (two circular rings); auto-persisted
+- **OSD Position ▸** -- snap the overlay to **Top Left / Top Right / Bottom Left / Bottom Right**, or drag it anywhere for a remembered **Custom** position; auto-persisted
 - **Theme ▸** -- pick one of the 5 palettes; the choice persists to `~/.config/claude-usage/config.json` so a restart keeps it
 - **Minimize / Restore** -- collapse the OSD to a thin progress strip
 - **Show cost ticker** -- toggle the scrolling per-turn cost strip on the OSD
@@ -207,6 +208,8 @@ cp config.json.example config.json
 | `theme` | `default` | Color theme for the OSD and popup. One of `default`, `catppuccin-mocha`, `dracula`, `nord`, `gruvbox-dark`, `terminal`, `dashboard`, `hud`, `receipt`, `strip`, `brutalist` |
 | `show_ticker` | `true` | Whether the scrolling per-turn cost ticker is painted at the bottom of the OSD. Toggle at runtime via right-click → "Show cost ticker". |
 | `show_news` | `false` | Whether the live Anthropic/Claude news headline strip is shown on the OSD. Off by default because it makes outbound calls to a 3rd-party feed. Toggle at runtime via right-click → "Show news ticker". |
+| `osd_position` | `top-right` | Where the OSD anchors: `top-left`, `top-right`, `bottom-left`, `bottom-right`, or `custom`. Set from right-click → "OSD Position", or automatically to `custom` when you drag the overlay. |
+| `osd_x` / `osd_y` | `null` | Exact screen coordinates used only when `osd_position` is `custom`. Written automatically on drag. |
 
 Keys omitted from `config.json` fall back to built-in defaults. `claude_dir` is not included in the example file because the default is correct for most setups.
 

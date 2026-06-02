@@ -1041,6 +1041,7 @@ class ClaudeUsageApp(QObject):
         # --- Wire signals ---
         self.overlay.clicked.connect(self._on_overlay_click)
         self.overlay.rightClicked.connect(self._on_overlay_right_click)
+        self.overlay.movedTo.connect(self._on_overlay_moved)
         self.stats_ready.connect(self._apply_stats)
 
         # Show the overlay and kick off the first refresh.
@@ -1124,6 +1125,32 @@ class ClaudeUsageApp(QObject):
             self._view_menu.addAction(a)
             self._view_actions[mode] = a
 
+        # Position submenu — four corner presets plus a read-only "Custom"
+        # entry that lights up once the user has dragged the overlay.
+        from claude_usage.overlay import OSD_POSITIONS, OSD_POSITION_CUSTOM
+        self._position_menu = m.addMenu("⊞  OSD Position")
+        position_group = QActionGroup(self._position_menu)
+        position_group.setExclusive(True)
+        self._position_actions: dict[str, QAction] = {}
+        _pos_labels = {
+            "top-left": "Top Left", "top-right": "Top Right",
+            "bottom-left": "Bottom Left", "bottom-right": "Bottom Right",
+            OSD_POSITION_CUSTOM: "Custom (dragged)",
+        }
+        for pos in OSD_POSITIONS:
+            a = QAction(_pos_labels.get(pos, pos), self._position_menu)
+            a.setCheckable(True)
+            a.setActionGroup(position_group)
+            if pos == OSD_POSITION_CUSTOM:
+                # Custom isn't directly selectable — it's set by dragging.
+                a.setEnabled(False)
+            else:
+                a.triggered.connect(
+                    lambda _checked=False, pp=pos: self._on_pick_position(pp)
+                )
+            self._position_menu.addAction(a)
+            self._position_actions[pos] = a
+
         # Theme submenu — radio group so only one is ticked at a time. The
         # selection auto-persists to the user config so a restart keeps it.
         from claude_usage.themes import THEMES
@@ -1203,6 +1230,20 @@ class ClaudeUsageApp(QObject):
     def _on_pick_view_mode(self, mode: str) -> None:
         self.overlay.set_view_mode(mode)
         self.config["osd_view_mode"] = mode
+        self._persist_config()
+
+    def _on_pick_position(self, position: str) -> None:
+        """Snap the overlay to a corner preset and persist the choice."""
+        self.overlay.set_position(position)
+        self.config["osd_position"] = position
+        self._persist_config()
+
+    def _on_overlay_moved(self, x: int, y: int) -> None:
+        """Persist the dragged position as 'custom' coordinates so the
+        overlay returns to exactly where the user left it after a restart."""
+        self.config["osd_position"] = "custom"
+        self.config["osd_x"] = int(x)
+        self.config["osd_y"] = int(y)
         self._persist_config()
 
     def _on_pick_opacity(self, value: float, pct: int) -> None:
@@ -1328,6 +1369,7 @@ class ClaudeUsageApp(QObject):
             getattr(self, "_opacity_menu", None),
             getattr(self, "_view_menu", None),
             getattr(self, "_theme_menu", None),
+            getattr(self, "_position_menu", None),
         ):
             if sub is not None:
                 sub.setStyleSheet(qss)
@@ -1375,6 +1417,8 @@ class ClaudeUsageApp(QObject):
         self._view_menu.setTitle(f"⚏  OSD View · {current_view}")
         opacity_pct = int(round(float(self.config.get("osd_opacity", 1.0)) * 100))
         self._opacity_menu.setTitle(f"◐  OSD Opacity · {opacity_pct}%")
+        current_pos = self.overlay.position()
+        self._position_menu.setTitle(f"⊞  OSD Position · {current_pos}")
 
         # Tick marks on radio-grouped items.
         self._act_ticker.setChecked(self.overlay.is_ticker_enabled())
@@ -1388,6 +1432,15 @@ class ClaudeUsageApp(QObject):
         op_act = self._opacity_actions.get(opacity_pct)
         if op_act is not None:
             op_act.setChecked(True)
+        # Position: enable the Custom entry once a drag has set it, and tick
+        # whichever preset (or Custom) is active.
+        from claude_usage.overlay import OSD_POSITION_CUSTOM
+        custom_act = self._position_actions.get(OSD_POSITION_CUSTOM)
+        if custom_act is not None:
+            custom_act.setEnabled(current_pos == OSD_POSITION_CUSTOM)
+        pos_act = self._position_actions.get(current_pos)
+        if pos_act is not None:
+            pos_act.setChecked(True)
 
         # Footer — "Updated 12s ago" / "5m ago" / "1h 23m ago".
         if self._last_refresh_ts <= 0:

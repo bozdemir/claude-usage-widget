@@ -56,6 +56,18 @@ GAUGE_HEIGHT = 130
 VIEW_MODE_BARS = "bars"
 VIEW_MODE_GAUGE = "gauge"
 VIEW_MODES = (VIEW_MODE_BARS, VIEW_MODE_GAUGE)
+# Screen-anchor presets the OSD can snap to. "custom" means use the exact
+# osd_x / osd_y coordinates from config (set when the user drags the widget).
+OSD_POSITION_TOP_LEFT = "top-left"
+OSD_POSITION_TOP_RIGHT = "top-right"
+OSD_POSITION_BOTTOM_LEFT = "bottom-left"
+OSD_POSITION_BOTTOM_RIGHT = "bottom-right"
+OSD_POSITION_CUSTOM = "custom"
+OSD_POSITIONS = (
+    OSD_POSITION_TOP_LEFT, OSD_POSITION_TOP_RIGHT,
+    OSD_POSITION_BOTTOM_LEFT, OSD_POSITION_BOTTOM_RIGHT,
+    OSD_POSITION_CUSTOM,
+)
 OSD_MARGIN = 16
 OSD_RADIUS = 12
 OSD_BAR_HEIGHT = 6
@@ -150,6 +162,9 @@ class UsageOverlay(QWidget):
     clicked = Signal()
     # Emitted when the user right-clicks. Handler should show a context menu.
     rightClicked = Signal(QPoint)
+    # Emitted after a drag-to-move finishes, with the new top-left (x, y).
+    # The controller persists these as the "custom" position in config.
+    movedTo = Signal(int, int)
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__()
@@ -196,6 +211,21 @@ class UsageOverlay(QWidget):
         # persists to config.
         raw_mode = str(cfg.get("osd_view_mode", VIEW_MODE_BARS))
         self._view_mode: str = raw_mode if raw_mode in VIEW_MODES else VIEW_MODE_BARS
+
+        # Screen anchor — one of OSD_POSITIONS. "custom" reads the saved
+        # osd_x / osd_y coordinates (written when the user drags the widget).
+        raw_pos = str(cfg.get("osd_position", OSD_POSITION_TOP_RIGHT))
+        self._position: str = raw_pos if raw_pos in OSD_POSITIONS else OSD_POSITION_TOP_RIGHT
+        self._custom_xy: tuple[int, int] | None = None
+        cx, cy = cfg.get("osd_x"), cfg.get("osd_y")
+        if cx is not None and cy is not None:
+            try:
+                self._custom_xy = (int(cx), int(cy))
+            except (TypeError, ValueError):
+                self._custom_xy = None
+        # Emitted after a drag so the controller can persist the new
+        # custom coordinates to config. (scope, x, y) — scope is "custom".
+        # Wired in widget.py.
 
         # Drag tracking
         self._press_pos: QPoint | None = None        # mouse pos on press (global)
@@ -391,14 +421,50 @@ class UsageOverlay(QWidget):
             self.resize(width, height)
 
     def _move_to_default_position(self) -> None:
-        """Anchor the overlay at the top-right of the primary screen."""
+        """Anchor the overlay according to the configured ``_position``.
+
+        Corner presets are recomputed against the current screen geometry so
+        they stay correct across resolution changes; "custom" restores the
+        exact coordinates the user last dragged to (clamped onto a visible
+        screen so an unplugged monitor can't strand the widget off-screen).
+        """
         screen = QApplication.primaryScreen()
         if screen is None:
             return
         geo = screen.availableGeometry()
-        x = geo.x() + geo.width() - self.width() - OSD_MARGIN
-        y = geo.y() + OSD_MARGIN
+        w, h = self.width(), self.height()
+
+        if self._position == OSD_POSITION_CUSTOM and self._custom_xy is not None:
+            x, y = self._custom_xy
+            # Clamp so at least part of the widget stays on-screen.
+            x = max(geo.x(), min(x, geo.x() + geo.width() - w))
+            y = max(geo.y(), min(y, geo.y() + geo.height() - h))
+            self.move(x, y)
+            return
+
+        left = geo.x() + OSD_MARGIN
+        right = geo.x() + geo.width() - w - OSD_MARGIN
+        top = geo.y() + OSD_MARGIN
+        bottom = geo.y() + geo.height() - h - OSD_MARGIN
+        anchors = {
+            OSD_POSITION_TOP_LEFT: (left, top),
+            OSD_POSITION_TOP_RIGHT: (right, top),
+            OSD_POSITION_BOTTOM_LEFT: (left, bottom),
+            OSD_POSITION_BOTTOM_RIGHT: (right, bottom),
+        }
+        x, y = anchors.get(self._position, (right, top))
         self.move(x, y)
+
+    def set_position(self, position: str) -> None:
+        """Switch to a named anchor preset and reposition immediately."""
+        if position not in OSD_POSITIONS:
+            return
+        self._position = position
+        self._move_to_default_position()
+
+    def position(self) -> str:
+        """Return the current anchor preset name (one of OSD_POSITIONS)."""
+        return self._position
 
     # --------------------------------------------------------------- events
 
@@ -431,6 +497,13 @@ class UsageOverlay(QWidget):
                 webbrowser.open(self._latest_news_url)
             else:
                 self.clicked.emit()
+        elif self._dragging:
+            # Drag finished — remember exactly where the user dropped it as
+            # the new "custom" position so it survives a restart.
+            tl = self.frameGeometry().topLeft()
+            self._position = OSD_POSITION_CUSTOM
+            self._custom_xy = (tl.x(), tl.y())
+            self.movedTo.emit(tl.x(), tl.y())
         self._press_pos = None
         self._press_win_pos = None
         self._dragging = False
