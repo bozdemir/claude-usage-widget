@@ -18,7 +18,7 @@ def append_sample(path: str, ts: float, session_util: float, weekly_util: float)
         "weekly": float(weekly_util),
     })
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "a") as f:
+    with open(path, "a", encoding="utf-8") as f:
         f.write(line + "\n")
 
 
@@ -27,7 +27,7 @@ def load_samples(path: str, since_ts: float = 0.0) -> list[dict]:
     if not os.path.isfile(path):
         return []
     out = []
-    with open(path) as f:
+    with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -51,7 +51,7 @@ def prune(path: str, keep_seconds: float, now: float) -> int:
     dirname = os.path.dirname(path) or "."
     fd, tmp_path = tempfile.mkstemp(dir=dirname, prefix=".history-", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             for entry in kept:
                 f.write(json.dumps(entry) + "\n")
         os.replace(tmp_path, path)

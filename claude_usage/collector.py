@@ -109,7 +109,7 @@ def parse_history(path: str) -> UsageStats:
     today_session_ids: set[str] = set()
     week_session_ids: set[str] = set()
 
-    with open(path) as f:
+    with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -303,7 +303,7 @@ def _parse_conversation_tokens(
     breakdowns.
     """
     try:
-        f = open(path)
+        f = open(path, encoding="utf-8", errors="replace")
     except OSError:
         return
 
@@ -418,7 +418,7 @@ def _load_subscription_type(claude_dir: str) -> str:
     if not os.path.isfile(creds_path):
         return ""
     try:
-        with open(creds_path) as f:
+        with open(creds_path, encoding="utf-8", errors="replace") as f:
             creds = json.load(f)
         return str(creds.get("claudeAiOauth", {}).get("subscriptionType", ""))
     except (json.JSONDecodeError, OSError):
@@ -439,7 +439,7 @@ def _load_credentials(claude_dir: str) -> str | None:
     creds_path = os.path.join(claude_dir, ".credentials.json")
     if os.path.isfile(creds_path):
         try:
-            with open(creds_path) as f:
+            with open(creds_path, encoding="utf-8", errors="replace") as f:
                 creds = json.load(f)
             return creds["claudeAiOauth"]["accessToken"]
         except (json.JSONDecodeError, KeyError, OSError):
