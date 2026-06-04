@@ -98,6 +98,7 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 - **Per-turn cost ticker** -- a scrolling strip at the bottom of the OSD shows the USD cost of each assistant turn as it lands (`$0.156 ← Bash · 116`), colour-coded by quartile within the visible window so the tape always stays visually varied. Toggle via right-click → "Show cost ticker" or set `"show_ticker": false` in `config.json`.
 - **Live news ticker (opt-in)** -- a second scrolling strip shows the latest Anthropic/Claude headlines sourced from Hacker News (top stories with 50+ upvotes). Fetched lazily, cached locally for 1 hour. Click the strip to open the article in your browser. **Off by default** because it makes outbound calls to a 3rd-party feed; enable via right-click → "Show news ticker" or set `"show_news": true` in `config.json`.
 - **Subagent rozet** -- when you spawn parallel subagents via the Task tool, the `CLAUDE` title gets a `⚙ N` counter next to it showing how many are currently writing. Hidden when zero so single-session use isn't cluttered.
+- **System-tray / menu-bar indicator** -- an optional tray entry shows `C: 42% | W: 71%` and a Show/Hide + Quit menu. Cross-platform: a live text label in the top bar on **Linux/GNOME** (AyatanaAppIndicator3), and a menu-bar icon on **macOS** / notification-area icon on **Windows** (Qt `QSystemTrayIcon`, no extra dependency). Auto-detected — if no tray backend is present the widget just runs without it.
 - **Detail popup** -- usage bars, forecast, 5h/7d sparklines, 90-day heatmap, 52-week GitHub-style calendar, per-model cost breakdown, top projects, active sessions (resizable)
 - **Auto-refresh** -- every 30 seconds by default, fully configurable
 - **Resizable** -- scroll wheel on the OSD (0.6x -- 2.0x); drag the popup window edges to widen it
@@ -267,11 +268,20 @@ The OSD renders a `● LIVE ~5.3k tok/min` badge when a Claude Code session is a
 
 ### Per-turn cost ticker
 
-A thin scrolling strip along the bottom of the OSD shows the USD cost of each assistant turn as it lands (`$0.156 ← Bash · 116`). The same JSONL scan that powers the live-tokens badge reads `usage.{input, output, cache_read, cache_creation}_tokens` from each unique message (dedup'd by Anthropic's `message.id`) and multiplies by the Anthropic-published rates in `pricing.py`. Multi-tool turns collapse to a compact `Read+2` label. Items are colour-coded by quartile rank within the current 40-item buffer (dim → blue → amber → red), so you always see four tiers regardless of whether you're on Haiku, Sonnet, or Opus — the tape stays meaningful when every turn happens to land in a narrow dollar band. Disable with the right-click menu or `show_ticker: false` in `config.json`.
+A thin scrolling strip along the bottom of the OSD shows the USD cost of each assistant turn as it lands (`$0.156 ← Bash · 116`). The same JSONL scan that powers the live-tokens badge reads `usage.{input, output, cache_read, cache_creation}_tokens` from each unique message (dedup'd by Anthropic's `message.id`) and multiplies by the Anthropic-published rates in `pricing.py` (kept current with the [official pricing page](https://claude.com/pricing) — Opus 4.8 / 4.7 / 4.6, Sonnet 4.6, Haiku 4.5; unknown models fall back to Sonnet rates with a one-time warning). Multi-tool turns collapse to a compact `Read+2` label. Items are colour-coded by quartile rank within the current 40-item buffer (dim → blue → amber → red), so you always see four tiers regardless of whether you're on Haiku, Sonnet, or Opus — the tape stays meaningful when every turn happens to land in a narrow dollar band. Disable with the right-click menu or `show_ticker: false` in `config.json`.
 
 ### Subagent rozet
 
 Right next to the `CLAUDE` title, a `⚙ N` badge shows how many Task-tool subagents are actively writing. Detection is a stat-only glob of `~/.claude/projects/<proj>/<uuid>/subagents/agent-*.jsonl` filtered to files whose mtime is within the last 60 s — no file contents opened, negligible cost on every refresh. The rozet is hidden when the count is zero so single-session users aren't nagged by a permanent `⚙ 0`.
+
+### System-tray / menu-bar indicator
+
+`tray_indicator.py` picks the best backend available for your platform, falling back gracefully:
+
+1. **Linux / GNOME / Ubuntu** — `AyatanaAppIndicator3` (via PyGObject) renders a live `C: 42% | W: 71%` text label right in the top bar. A GTK main loop runs in a daemon thread; label updates are marshalled to it through `GLib.idle_add`.
+2. **macOS / Windows / other Linux DEs** — Qt's built-in `QSystemTrayIcon` puts an icon in the menu bar (macOS) or notification area (Windows). macOS can't show a live text label beside a tray icon, so the stats appear in the dropdown menu and the hover tooltip instead. No extra dependency — Qt is already bundled with PySide6.
+
+Both backends expose the same menu — **Show/Hide widget** and **Quit claude-usage** (which fully shuts the widget down, not just the tray). If neither backend is available the widget runs normally without a tray. The OSD overlay always shows the live numbers regardless.
 
 ### Prompt-cache opportunities
 

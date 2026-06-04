@@ -19,6 +19,14 @@ from typing import Dict, Mapping
 # Prices are USD per 1,000,000 tokens.
 # Source: https://www.anthropic.com/pricing (April 2026)
 MODEL_PRICING: Dict[str, Dict[str, float]] = {
+    # Opus 4.8: same pricing tier as 4.7/4.6 — $5 input, $25 output,
+    # $6.25 5-min cache write, $0.50 cache read (per claude.com/pricing).
+    "claude-opus-4-8": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.50,
+        "cache_creation": 6.25,
+    },
     # Opus 4.7 (April 2026): $5 input, $25 output — consistent across
     # Anthropic API, Bedrock, Vertex AI, and Foundry.
     "claude-opus-4-7": {

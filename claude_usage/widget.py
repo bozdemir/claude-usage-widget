@@ -982,6 +982,8 @@ class ClaudeUsageApp(QObject):
 
     # Emitted on the GUI thread once background collection completes.
     stats_ready = Signal(object)
+    # Cross-thread bridge: GTK tray → Qt main thread toggle.
+    _tray_toggle = Signal()
 
     def __init__(self, config: dict[str, Any]) -> None:
         super().__init__()
@@ -1037,6 +1039,16 @@ class ClaudeUsageApp(QObject):
                     file=sys.stderr,
                 )
                 self._api_server = None
+
+        # Optional system-tray / menu-bar indicator. GTK AppIndicator on
+        # Linux/GNOME, QSystemTrayIcon on macOS/Windows — no-op if neither
+        # backend is available.
+        from claude_usage.tray_indicator import try_create as _tray_create
+        self._tray_toggle.connect(self._on_tray_toggle_widget)
+        self._tray = _tray_create(
+            on_toggle_widget=self._tray_toggle.emit,
+            on_quit=self._on_quit,
+        )
 
         # --- Wire signals ---
         self.overlay.clicked.connect(self._on_overlay_click)
@@ -1500,6 +1512,8 @@ class ClaudeUsageApp(QObject):
         self.popup.update_stats(stats)
         self.skin_popup.update_stats(stats)
         self.notifier.check_stats(stats)
+        if self._tray is not None:
+            self._tray.update(stats)
 
         # Webhook: anomaly
         if getattr(stats.anomaly, "is_anomaly", False):
@@ -1598,12 +1612,25 @@ class ClaudeUsageApp(QObject):
         except Exception:
             pass
 
+    @Slot()
+    def _on_tray_toggle_widget(self) -> None:
+        """Toggle the OSD overlay visibility; called via signal from the GTK tray."""
+        if self.overlay.isVisible():
+            self.overlay.hide()
+        else:
+            self.overlay.show()
+
     def _on_quit(self) -> None:
         self._alive = False
         self._timer.stop()
         if self._api_server is not None:
             try:
                 self._api_server.stop()
+            except Exception:
+                pass
+        if self._tray is not None:
+            try:
+                self._tray.destroy()
             except Exception:
                 pass
         QApplication.instance().quit()
