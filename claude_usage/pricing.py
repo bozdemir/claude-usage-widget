@@ -66,8 +66,21 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
     },
 }
 
-# Fallback model used whenever a caller passes an unknown model identifier.
+# Fallback model used whenever a caller passes an unknown model identifier
+# that we can't even resolve to a family (see _family_fallback_model).
 _FALLBACK_MODEL = "claude-sonnet-4-6"
+
+# Per-family fallback used when an exact model id is unknown but its family
+# name is recognisable from the id (e.g. a freshly released "claude-opus-4-8"
+# before the table above is updated). Anthropic embeds the family in every
+# model id, so matching on it keeps a new point release billed at its real
+# tier instead of being silently under-reported at Sonnet rates. Each value
+# points at the most recent known member of that family.
+_FAMILY_FALLBACK: Dict[str, str] = {
+    "opus": "claude-opus-4-7",
+    "sonnet": "claude-sonnet-4-6",
+    "haiku": "claude-haiku-4-5-20251001",
+}
 
 # Conversion factor: prices are per one million tokens.
 _PER_MILLION = 1_000_000.0
@@ -76,18 +89,39 @@ _PER_MILLION = 1_000_000.0
 _WARNED_MODELS: set[str] = set()
 
 
+def _family_fallback_model(model: str) -> str | None:
+    """Best-effort map an unknown model id to a known same-family model.
+
+    Anthropic model ids embed the family name (``claude-opus-4-8``,
+    ``claude-sonnet-4-6``), so a substring match lets a newly released point
+    version inherit the correct pricing tier until ``MODEL_PRICING`` is
+    updated. Returns ``None`` when no family token is recognised.
+    """
+    lowered = model.lower()
+    for family, representative in _FAMILY_FALLBACK.items():
+        if family in lowered:
+            return representative
+    return None
+
+
 def _resolve_pricing(model: str) -> Dict[str, float]:
-    """Return the pricing table for ``model``, warning once per unknown model."""
+    """Return the pricing table for ``model``, warning once per unknown model.
+
+    Unknown exact ids are first resolved by *family* (so a new Opus release is
+    billed at the Opus tier, not Sonnet's), and only fall back to the generic
+    :data:`_FALLBACK_MODEL` when even the family is unrecognisable.
+    """
     pricing = MODEL_PRICING.get(model)
     if pricing is not None:
         return pricing
+    fallback = _family_fallback_model(model) or _FALLBACK_MODEL
     if model not in _WARNED_MODELS:
         _WARNED_MODELS.add(model)
         warnings.warn(
-            f"Unknown model {model!r}; falling back to {_FALLBACK_MODEL} pricing.",
+            f"Unknown model {model!r}; falling back to {fallback} pricing.",
             stacklevel=3,
         )
-    return MODEL_PRICING[_FALLBACK_MODEL]
+    return MODEL_PRICING[fallback]
 
 
 def calculate_cost(
