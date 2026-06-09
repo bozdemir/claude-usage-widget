@@ -1042,10 +1042,18 @@ class ClaudeUsageApp(QObject):
         self.overlay.clicked.connect(self._on_overlay_click)
         self.overlay.rightClicked.connect(self._on_overlay_right_click)
         self.overlay.movedTo.connect(self._on_overlay_moved)
+        self.overlay.scaledTo.connect(self._on_overlay_scaled)
+        self.overlay.minimizedChanged.connect(self._on_overlay_minimized_changed)
         self.stats_ready.connect(self._apply_stats)
 
-        # Show the overlay and kick off the first refresh.
+        # Show the overlay, then restore last-session UI state so the widget
+        # reopens exactly as the user left it (scale is restored in the
+        # overlay's own __init__ from osd_scale).
         self.overlay.show()
+        if config.get("osd_minimized", False):
+            self.overlay.toggle_minimized()
+        if not config.get("osd_visible", True):
+            self.overlay.hide()
         self._refresh_async()
 
         # Periodic refresh timer (runs on the GUI thread).
@@ -1244,6 +1252,16 @@ class ClaudeUsageApp(QObject):
         self.config["osd_position"] = "custom"
         self.config["osd_x"] = int(x)
         self.config["osd_y"] = int(y)
+        self._persist_config()
+
+    def _on_overlay_scaled(self, scale: float) -> None:
+        """Persist the wheel-set zoom so the OSD reopens at the same size."""
+        self.config["osd_scale"] = round(float(scale), 3)
+        self._persist_config()
+
+    def _on_overlay_minimized_changed(self, minimized: bool) -> None:
+        """Persist the collapsed/expanded state across restarts."""
+        self.config["osd_minimized"] = bool(minimized)
         self._persist_config()
 
     def _on_pick_opacity(self, value: float, pct: int) -> None:
@@ -1601,6 +1619,12 @@ class ClaudeUsageApp(QObject):
     def _on_quit(self) -> None:
         self._alive = False
         self._timer.stop()
+        # Remember whether the OSD was visible so the next launch matches.
+        try:
+            self.config["osd_visible"] = bool(self.overlay.isVisible())
+            self._persist_config()
+        except Exception:
+            pass
         if self._api_server is not None:
             try:
                 self._api_server.stop()

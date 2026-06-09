@@ -72,6 +72,11 @@ DEFAULT_CONFIG: Config = {
     # null means "not set yet" — the overlay falls back to top-right.
     "osd_x": None,
     "osd_y": None,
+    # Session UI state restored on the next launch. osd_scale is also read
+    # by the overlay at startup; these two are written automatically as the
+    # user minimizes / hides the OSD so it reopens the way they left it.
+    "osd_minimized": False,
+    "osd_visible": True,
 }
 
 
