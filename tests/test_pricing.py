@@ -105,6 +105,28 @@ class TestCalculateCostUnknownModel:
         calculate_cost("", 0, 0)
         calculate_cost("totally-made-up", 1, 2, 3, 4)
 
+    def test_unknown_opus_falls_back_to_opus_pricing(self):
+        """A not-yet-tabled Opus release (e.g. claude-opus-4-8) must be billed
+        at the Opus tier ($5/M input, $25/M output), NOT the generic Sonnet
+        fallback — otherwise Opus usage is silently under-reported by ~40%."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = calculate_cost("claude-opus-4-8", 1_000_000, 1_000_000)
+        assert _approx(result["input"], 5.0)
+        assert _approx(result["output"], 25.0)
+        # The warning should name the family fallback, not Sonnet.
+        assert any("claude-opus-4-7" in str(w.message) for w in caught)
+
+    def test_unknown_haiku_falls_back_to_haiku_pricing(self):
+        """An unknown Haiku id resolves to the Haiku tier ($1/M input)."""
+        result = calculate_cost("claude-haiku-9-9", 1_000_000, 0)
+        assert _approx(result["input"], 1.0)
+
+    def test_unrecognisable_family_still_falls_back_to_sonnet(self):
+        """No family token in the id → the generic Sonnet fallback ($3/M)."""
+        result = calculate_cost("claude-imaginary-9", 1_000_000, 0)
+        assert _approx(result["input"], 3.0)
+
     def test_synthetic_model_is_zero_cost_and_silent(self):
         """<synthetic> is Claude Code's placeholder for internal bookkeeping
         (compact summaries, sidechain context, etc.). It should NOT trigger
