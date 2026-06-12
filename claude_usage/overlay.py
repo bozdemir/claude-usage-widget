@@ -250,6 +250,11 @@ class UsageOverlay(QWidget):
         # NET_WM hint: tell the window manager this is a Notification, so dock
         # / taskbar / Alt-Tab overlays all skip it.
         self.setAttribute(Qt.WA_X11NetWmWindowTypeNotification, True)
+        # macOS hides Qt.Tool windows whenever the owning app is deactivated
+        # (i.e. you click another app), so the OSD would silently vanish on
+        # focus loss even though the process keeps running. This attribute
+        # opts out of that Cocoa behaviour; it's a no-op on other platforms.
+        self.setAttribute(Qt.WA_MacAlwaysShowToolWindow, True)
 
         # Initial size + position (top-right of primary screen).
         self._apply_size()
