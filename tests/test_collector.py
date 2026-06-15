@@ -4,6 +4,7 @@ Covers history parsing, token aggregation, session detection, subagent
 filtering, rate-limit header parsing, and the collect_all integration path.
 """
 
+import io
 import json
 import os
 import shutil
@@ -16,9 +17,12 @@ from unittest.mock import patch
 from claude_usage.collector import (
     UsageStats,
     _collect_tokens_single_pass,
+    _fetch_oauth_usage,
     _parse_rate_limit_headers,
+    _parse_retry_after,
     collect_all,
     collect_tokens_from_conversations,
+    fetch_rate_limits,
     get_active_sessions,
     parse_history,
 )
@@ -845,6 +849,107 @@ class TestRateLimitParsing(unittest.TestCase):
         self.assertEqual(result["weekly_reset"], 0)
         self.assertEqual(result["overage_status"], "")
         self.assertEqual(result["fallback_status"], "")
+
+
+# ---------------------------------------------------------------------------
+# OAuth usage 429 handling (issue #11)
+# ---------------------------------------------------------------------------
+
+
+class TestOAuthUsage429(unittest.TestCase):
+    """A 429 from /api/oauth/usage must be treated as a transient throttle —
+    retried, then surfaced as a calm 'rate limited' state — never mislabeled
+    'credentials expired', and never falling through to the x-api-key path."""
+
+    def _http_error(self, code: int, retry_after: str | None = None):
+        from urllib.error import HTTPError
+        hdrs = {"Retry-After": retry_after} if retry_after is not None else {}
+        return HTTPError("https://api", code, "err", hdrs, io.BytesIO(b"{}"))
+
+    def test_429_retries_then_returns_rate_limited(self) -> None:
+        import claude_usage.collector as c
+        calls = {"n": 0}
+
+        def always_429(req, timeout=10):
+            calls["n"] += 1
+            raise self._http_error(429, retry_after="0")
+
+        with patch.object(c, "urlopen", always_429), \
+             patch.object(c.time, "sleep", lambda s: None):
+            result = _fetch_oauth_usage("valid-token")
+
+        self.assertTrue(result.get("rate_limited"))
+        self.assertNotIn("expired", result["error"].lower())
+        self.assertGreater(calls["n"], 1)  # actually retried
+
+    def test_429_recovers_on_retry(self) -> None:
+        import claude_usage.collector as c
+        seq = [self._http_error(429), None]  # fail once, then succeed
+
+        def flaky(req, timeout=10):
+            item = seq.pop(0)
+            if item is not None:
+                raise item
+            return _CtxResp(json.dumps({
+                "five_hour": {"utilization": 30.0, "resets_at": "2099-01-01T00:00:00+00:00"},
+                "seven_day": {"utilization": 10.0, "resets_at": "2099-01-02T00:00:00+00:00"},
+            }).encode())
+
+        with patch.object(c, "urlopen", flaky), \
+             patch.object(c.time, "sleep", lambda s: None):
+            result = _fetch_oauth_usage("valid-token")
+
+        self.assertNotIn("error", result)
+        self.assertAlmostEqual(result["session_utilization"], 0.30, places=5)
+
+    def test_401_still_reports_credentials_expired(self) -> None:
+        import claude_usage.collector as c
+
+        def always_401(req, timeout=10):
+            raise self._http_error(401)
+
+        with patch.object(c, "urlopen", always_401):
+            result = _fetch_oauth_usage("bad-token")
+        self.assertIn("expired", result["error"].lower())
+
+    def test_fetch_rate_limits_skips_xapikey_on_429(self) -> None:
+        """When the OAuth path is rate-limited, fetch_rate_limits must NOT try
+        the /v1/messages x-api-key fallback (it can't auth an OAuth token and
+        would mislabel the throttle as 'credentials expired')."""
+        import claude_usage.collector as c
+
+        def boom(*a, **k):
+            raise AssertionError("x-api-key fallback must not run on 429")
+
+        with patch.object(c, "_load_credentials", lambda d: "tok"), \
+             patch.object(c, "_fetch_oauth_usage",
+                          lambda t: {"error": "Rate limited", "rate_limited": True}), \
+             patch.object(c, "urlopen", boom):
+            result = fetch_rate_limits("/fake/dir")
+        self.assertTrue(result.get("rate_limited"))
+
+    def test_parse_retry_after(self) -> None:
+        self.assertEqual(_parse_retry_after({"Retry-After": "5"}), 5.0)
+        self.assertEqual(_parse_retry_after({"retry-after": "2.5"}), 2.5)
+        self.assertIsNone(_parse_retry_after({}))
+        self.assertIsNone(_parse_retry_after({"Retry-After": "Wed, 21 Oct 2099 07:28:00 GMT"}))
+        self.assertIsNone(_parse_retry_after(None))
+
+
+class _CtxResp:
+    """Minimal context-manager stand-in for urlopen's response object."""
+
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self, n: int = -1) -> bytes:
+        return self._body
 
 
 # ---------------------------------------------------------------------------

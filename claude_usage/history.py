@@ -10,13 +10,30 @@ import os
 import tempfile
 
 
-def append_sample(path: str, ts: float, session_util: float, weekly_util: float) -> None:
-    """Append one sample to the JSONL history file."""
-    line = json.dumps({
+def append_sample(
+    path: str,
+    ts: float,
+    session_util: float,
+    weekly_util: float,
+    session_reset: int = 0,
+    weekly_reset: int = 0,
+) -> None:
+    """Append one sample to the JSONL history file.
+
+    ``session_reset`` / ``weekly_reset`` are unix-second reset timestamps;
+    they're stored so a later throttled/failed API poll can restore the
+    last-known countdown instead of blanking it. Old readers that only look
+    at ts/session/weekly ignore the extra keys."""
+    entry = {
         "ts": float(ts),
         "session": float(session_util),
         "weekly": float(weekly_util),
-    })
+    }
+    if session_reset:
+        entry["session_reset"] = int(session_reset)
+    if weekly_reset:
+        entry["weekly_reset"] = int(weekly_reset)
+    line = json.dumps(entry)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write(line + "\n")

@@ -504,6 +504,12 @@ def fetch_rate_limits(claude_dir: str) -> dict[str, Any]:
     primary = _fetch_oauth_usage(token)
     if "error" not in primary:
         return primary
+    # If we were merely rate-limited, return that calm state directly. The
+    # /v1/messages fallback below sends the OAuth token as an x-api-key,
+    # which always 401s for OAuth users and would mislabel a throttle as
+    # "credentials expired" — exactly the bug we're avoiding here.
+    if primary.get("rate_limited"):
+        return primary
 
     # Fallback: tiny /v1/messages call to harvest rate-limit headers. These
     # cover API-key-level limits (not plan limits) but are better than
@@ -541,6 +547,24 @@ def fetch_rate_limits(claude_dir: str) -> dict[str, Any]:
     return _parse_rate_limit_headers(headers)
 
 
+def _parse_retry_after(headers) -> float | None:
+    """Return the Retry-After delay in seconds, or None if absent/invalid.
+
+    The HTTP spec allows either an integer seconds value or an HTTP-date;
+    Anthropic sends seconds, so we only handle that form (an HTTP-date would
+    parse to None and fall back to the exponential schedule)."""
+    if headers is None:
+        return None
+    raw = headers.get("Retry-After") or headers.get("retry-after")
+    if not raw:
+        return None
+    try:
+        secs = float(raw)
+        return secs if secs >= 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _fetch_oauth_usage(token: str) -> dict[str, Any]:
     """Hit ``/api/oauth/usage`` and translate the response into the same
     shape ``_parse_rate_limit_headers`` produces, so callers don't care
@@ -557,10 +581,13 @@ def _fetch_oauth_usage(token: str) -> dict[str, Any]:
             "User-Agent": "claude-usage-widget",
         },
     )
-    # Exponential backoff with jitter on transient faults only. HTTPError is
-    # a subclass of URLError, so we catch it FIRST and return immediately —
-    # a 401/4xx won't fix itself, retrying just wastes the user's time.
-    # TimeoutError likewise subclasses OSError; we treat both as transient.
+    # Exponential backoff with jitter on transient faults. HTTPError is a
+    # subclass of URLError, so we catch it FIRST. A 401 (bad token) won't fix
+    # itself — return immediately. A 429 (rate limited) IS the one 4xx that's
+    # transient, so we retry it (honouring Retry-After when present) and, if
+    # it persists, surface a calm "rate limited" state — NOT the misleading
+    # "credentials expired", and crucially without falling through to the
+    # x-api-key path which can't authenticate an OAuth token anyway.
     payload = None
     for attempt in range(_USAGE_MAX_RETRIES + 1):
         try:
@@ -570,6 +597,19 @@ def _fetch_oauth_usage(token: str) -> dict[str, Any]:
         except HTTPError as e:
             if e.code == 401:
                 return {"error": "Credentials expired -- re-authenticate with 'claude'"}
+            if e.code == 429:
+                if attempt >= _USAGE_MAX_RETRIES:
+                    # Distinct, non-alarming state — the caller keeps the
+                    # last-known values instead of blanking the UI.
+                    return {"error": "Rate limited -- using last known values",
+                            "rate_limited": True}
+                # Honour Retry-After (seconds) if the server sent one, else
+                # fall back to the exponential schedule below.
+                retry_after = _parse_retry_after(e.headers)
+                delay = (retry_after if retry_after is not None
+                         else _USAGE_BASE_DELAY * (2 ** attempt) + random.uniform(0.0, 0.1))
+                time.sleep(min(delay, 5.0))  # cap so a huge Retry-After can't stall the poll
+                continue
             return {"error": f"OAuth usage error {e.code}"}
         except json.JSONDecodeError:
             # Malformed body — a retry might catch a truncated response, but
@@ -736,6 +776,15 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
             last = recent[-1]
             stats.session_utilization = float(last.get("session", 0.0) or 0.0)
             stats.weekly_utilization = float(last.get("weekly", 0.0) or 0.0)
+            # Restore the reset countdowns too — otherwise they stay 0 and
+            # every formatter blanks the reset label on a single throttled
+            # poll (issue #11). The most recent sample that recorded them
+            # wins; scan backwards since older samples predate this field.
+            for prev in reversed(recent):
+                if prev.get("session_reset") or prev.get("weekly_reset"):
+                    stats.session_reset = int(prev.get("session_reset", 0) or 0)
+                    stats.weekly_reset = int(prev.get("weekly_reset", 0) or 0)
+                    break
     else:
         stats.session_utilization = rate_limits["session_utilization"]
         stats.session_reset = rate_limits["session_reset"]
@@ -744,7 +793,12 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
         stats.overage_status = rate_limits["overage_status"]
         stats.fallback_status = rate_limits["fallback_status"]
         try:
-            append_sample(samples_path, now_ts, stats.session_utilization, stats.weekly_utilization)
+            append_sample(
+                samples_path, now_ts,
+                stats.session_utilization, stats.weekly_utilization,
+                session_reset=stats.session_reset,
+                weekly_reset=stats.weekly_reset,
+            )
             prune(samples_path, keep_seconds=HISTORY_KEEP_DAYS * 86400, now=now_ts)
         except OSError:
             pass
