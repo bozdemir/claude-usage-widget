@@ -342,6 +342,9 @@ class SkinPopupWidget(QWidget):
         self.setWindowTitle("Claude Usage")
         self.setWindowFlags(Qt.Tool | Qt.WindowStaysOnTopHint | Qt.WindowCloseButtonHint)
         self.setAttribute(Qt.WA_X11NetWmWindowTypeUtility, True)
+        # macOS auto-hides Qt.Tool windows when the app deactivates; keep this
+        # popup visible when the user clicks away (no-op off macOS).
+        self.setAttribute(Qt.WA_MacAlwaysShowToolWindow, True)
 
         # Inner content widget sized to measure_popup output; wrapped in
         # a scroll area so the window is resizable without losing content.
@@ -533,6 +536,9 @@ class UsagePopup(QWidget):
         # Reinforce "don't show me in the dock" via the NET_WM window-type
         # hint. Utility windows are excluded from KDE/GNOME taskbars by spec.
         self.setAttribute(Qt.WA_X11NetWmWindowTypeUtility, True)
+        # macOS auto-hides Qt.Tool windows when the app deactivates; keep this
+        # popup visible when the user clicks away (no-op off macOS).
+        self.setAttribute(Qt.WA_MacAlwaysShowToolWindow, True)
 
         # Style sheet — applied once per instance.
         self.setStyleSheet(self._build_qss())
