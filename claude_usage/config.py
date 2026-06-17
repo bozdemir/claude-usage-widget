@@ -35,9 +35,15 @@ DEFAULT_CONFIG: Config = {
     "daily_token_limit": 5_000_000,
     "weekly_token_limit": 25_000_000,
 
-    # How often (in seconds) the widget re-reads the usage logs and refreshes
-    # its display.  30 s keeps the data reasonably fresh without hammering disk.
-    "refresh_seconds": 30,
+    # Base poll interval (seconds): how often the widget refreshes usage.
+    # 60 s keeps the data fresh while staying well under the /api/oauth/usage
+    # budget (a low-volume endpoint shared with Claude Code).
+    "refresh_seconds": 60,
+
+    # Max poll interval (seconds) the adaptive backoff climbs to when the API
+    # rate-limits/errors; it snaps back to refresh_seconds on the next clean
+    # refresh.
+    "refresh_max_seconds": 300,
 
     # Opacity of the floating OSD overlay window (0.0 = fully transparent,
     # 1.0 = fully opaque).  0.75 keeps it readable without obscuring content.

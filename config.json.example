@@ -3,7 +3,7 @@
     "weekly_message_limit": 1000,
     "daily_token_limit": 5000000,
     "weekly_token_limit": 25000000,
-    "refresh_seconds": 30,
+    "refresh_seconds": 60,
     "refresh_max_seconds": 300,
     "osd_opacity": 0.75,
     "osd_scale": 1.0,

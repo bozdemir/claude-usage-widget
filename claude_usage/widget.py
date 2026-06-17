@@ -1068,7 +1068,7 @@ class ClaudeUsageApp(QObject):
         # back rate-limited or otherwise errored. Anthropic's /api/oauth/usage
         # is a low-budget endpoint shared with Claude Code — hammering it at a
         # fixed 30s while it 429s only keeps us throttled (and stale) longer.
-        refresh_secs = int(config.get("refresh_seconds", 30))
+        refresh_secs = int(config.get("refresh_seconds", 60))
         self._base_refresh_ms = max(1, refresh_secs) * 1000
         self._max_refresh_ms = max(
             self._base_refresh_ms, int(config.get("refresh_max_seconds", 300)) * 1000
