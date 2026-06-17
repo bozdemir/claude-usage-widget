@@ -1062,10 +1062,19 @@ class ClaudeUsageApp(QObject):
             self.overlay.hide()
         self._refresh_async()
 
-        # Periodic refresh timer (runs on the GUI thread).
-        refresh_secs = int(config.get("refresh_seconds", 30))
+        # Periodic refresh timer (runs on the GUI thread). The poll interval
+        # is adaptive: it stays at the base while refreshes succeed, but backs
+        # off exponentially (up to refresh_max_seconds) whenever a poll comes
+        # back rate-limited or otherwise errored. Anthropic's /api/oauth/usage
+        # is a low-budget endpoint shared with Claude Code — hammering it at a
+        # fixed 30s while it 429s only keeps us throttled (and stale) longer.
+        refresh_secs = int(config.get("refresh_seconds", 60))
+        self._base_refresh_ms = max(1, refresh_secs) * 1000
+        self._max_refresh_ms = max(
+            self._base_refresh_ms, int(config.get("refresh_max_seconds", 300)) * 1000
+        )
         self._timer = QTimer()
-        self._timer.setInterval(refresh_secs * 1000)
+        self._timer.setInterval(self._base_refresh_ms)
         self._timer.timeout.connect(self._refresh_async)
         self._timer.start()
 
@@ -1499,6 +1508,10 @@ class ClaudeUsageApp(QObject):
         if self._refreshing or not self._alive:
             return
         self._refreshing = True
+        # Flip the OSD status dot to grey while the poll is in flight; the
+        # result (green/red) is applied when update_stats lands. Safe here —
+        # _refresh_async runs on the GUI thread (timer / menu actions).
+        self.overlay.set_updating()
 
         def _worker() -> None:
             try:
@@ -1519,6 +1532,17 @@ class ClaudeUsageApp(QObject):
         self.stats = stats
         import time as _t
         self._last_refresh_ts = _t.time()
+
+        # Adaptive poll interval: a clean refresh snaps straight back to the
+        # base cadence; an errored/rate-limited one doubles the interval (up to
+        # the cap) so we stop hammering an endpoint that's already throttling
+        # us. setInterval here is safe — this slot runs on the GUI thread.
+        if stats.rate_limit_error:
+            next_ms = min(self._timer.interval() * 2, self._max_refresh_ms)
+        else:
+            next_ms = self._base_refresh_ms
+        if next_ms != self._timer.interval():
+            self._timer.setInterval(next_ms)
 
         self.overlay.update_stats(stats)
         self.popup.update_stats(stats)

@@ -94,12 +94,13 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 - **Single `pip install`** -- no `apt`/`brew`/system libraries required, Qt is bundled
 - **Real API data** -- rate-limit utilisation read straight from `anthropic-ratelimit-unified-*` response headers
 - **OSD overlay** -- transparent, frameless, always-on-top; left-click opens the details popup, right-click shows a context menu
+- **Status dot** -- a small indicator in the top-left corner of the OSD shows the refresh state at a glance: **green** = up to date, **grey** = refreshing, **red** = the last poll errored (e.g. rate-limited; full message in the detail popup). Works in bars, gauge, and every skin.
 - **Live token stream** -- `● LIVE 5.3k tok/min` badge on the OSD while a Claude Code session is actively writing, derived from the conversation JSONLs
 - **Per-turn cost ticker** -- a scrolling strip at the bottom of the OSD shows the USD cost of each assistant turn as it lands (`$0.156 ← Bash · 116`), colour-coded by quartile within the visible window so the tape always stays visually varied. Toggle via right-click → "Show cost ticker" or set `"show_ticker": false` in `config.json`.
 - **Live news ticker (opt-in)** -- a second scrolling strip shows the latest Anthropic/Claude headlines sourced from Hacker News (top stories with 50+ upvotes). Fetched lazily, cached locally for 1 hour. Click the strip to open the article in your browser. **Off by default** because it makes outbound calls to a 3rd-party feed; enable via right-click → "Show news ticker" or set `"show_news": true` in `config.json`.
 - **Subagent rozet** -- when you spawn parallel subagents via the Task tool, the `CLAUDE` title gets a `⚙ N` counter next to it showing how many are currently writing. Hidden when zero so single-session use isn't cluttered.
 - **Detail popup** -- usage bars, forecast, 5h/7d sparklines, 90-day heatmap, 52-week GitHub-style calendar, per-model cost breakdown, top projects, active sessions (resizable)
-- **Auto-refresh** -- every 30 seconds by default, fully configurable
+- **Auto-refresh** -- every 60 seconds by default, fully configurable
 - **Resizable** -- scroll wheel on the OSD (0.6x -- 2.0x); drag the popup window edges to widen it
 - **Draggable** -- left-click drag on the OSD
 - **Cost estimation** -- USD equivalent per model, cache savings, pay-as-you-go comparison for flat-fee subscribers
@@ -189,7 +190,8 @@ cp config.json.example config.json
     "weekly_message_limit": 1000,
     "daily_token_limit": 5000000,
     "weekly_token_limit": 25000000,
-    "refresh_seconds": 30,
+    "refresh_seconds": 60,
+    "refresh_max_seconds": 300,
     "osd_opacity": 0.75,
     "osd_scale": 1.0
 }
@@ -197,7 +199,8 @@ cp config.json.example config.json
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `refresh_seconds` | `30` | How often to fetch new data from the API (seconds) |
+| `refresh_seconds` | `60` | Base poll interval — how often to fetch new data from the API (seconds) |
+| `refresh_max_seconds` | `300` | Max poll interval when the API rate-limits/errors; the interval backs off exponentially toward this cap and snaps back to `refresh_seconds` on the next clean refresh |
 | `osd_opacity` | `0.75` | OSD background opacity (0.15--1.0) |
 | `osd_scale` | `1.0` | OSD scale factor (0.6--2.0) |
 | `daily_message_limit` | `200` | Daily message limit for local tracking in the popup |
@@ -262,7 +265,7 @@ Qt's `QWidget` with `FramelessWindowHint | Tool | WindowStaysOnTopHint` plus `WA
 
 **Scale and opacity** -- the overlay stores a `scale` (0.6 -- 2.0, default 1.0) and `opacity` (0.15 -- 1.0, default 0.75). Scale multiplies every pixel dimension before drawing, so the widget resizes proportionally. Opacity is the alpha channel of the background fill only; bar and text remain at full alpha so they stay legible at low opacity.
 
-**Refresh cycle** -- a daemon thread wakes every `refresh_seconds` (default 30), performs the API call, and emits a Qt signal back to the GUI thread (`Signal(object)`). The GUI thread then updates the OSD and the popup together. User interactions (scroll, drag, right-click) update in place and request an immediate repaint.
+**Refresh cycle** -- a daemon thread wakes on the poll timer, performs the API call, and emits a Qt signal back to the GUI thread (`Signal(object)`). The GUI thread then updates the OSD and the popup together. The poll interval is adaptive: it runs at `refresh_seconds` (default 60) while refreshes succeed, and backs off exponentially toward `refresh_max_seconds` (default 300) whenever a poll is rate-limited or errors, snapping back to the base on the next clean refresh — Anthropic's `/api/oauth/usage` is a low-budget endpoint shared with Claude Code, so a fixed fast poll against it just prolongs throttling. User interactions (scroll, drag, right-click) update in place and request an immediate repaint.
 
 ### Live token stream
 

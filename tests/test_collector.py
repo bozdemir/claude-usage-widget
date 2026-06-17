@@ -857,16 +857,21 @@ class TestRateLimitParsing(unittest.TestCase):
 
 
 class TestOAuthUsage429(unittest.TestCase):
-    """A 429 from /api/oauth/usage must be treated as a transient throttle —
-    retried, then surfaced as a calm 'rate limited' state — never mislabeled
-    'credentials expired', and never falling through to the x-api-key path."""
+    """A 429 from /api/oauth/usage must surface a calm 'rate limited' state —
+    never mislabeled 'credentials expired', never falling through to the
+    x-api-key path. A budget-based 429 (no/zero Retry-After) must NOT be
+    retried in-poll: this endpoint replies 'Retry-After: 0' once its quota is
+    spent, and a retry burst there just burns the budget and keeps us
+    throttled. Only an explicit positive Retry-After is worth waiting out."""
 
     def _http_error(self, code: int, retry_after: str | None = None):
         from urllib.error import HTTPError
         hdrs = {"Retry-After": retry_after} if retry_after is not None else {}
         return HTTPError("https://api", code, "err", hdrs, io.BytesIO(b"{}"))
 
-    def test_429_retries_then_returns_rate_limited(self) -> None:
+    def test_429_zero_retry_after_returns_without_burst(self) -> None:
+        # Retry-After: 0 means the budget is gone — return immediately, exactly
+        # one request, no multi-request burst per poll.
         import claude_usage.collector as c
         calls = {"n": 0}
 
@@ -880,11 +885,44 @@ class TestOAuthUsage429(unittest.TestCase):
 
         self.assertTrue(result.get("rate_limited"))
         self.assertNotIn("expired", result["error"].lower())
+        self.assertEqual(calls["n"], 1)  # no burst
+
+    def test_429_no_retry_after_returns_without_burst(self) -> None:
+        # Missing Retry-After header is treated the same as zero.
+        import claude_usage.collector as c
+        calls = {"n": 0}
+
+        def always_429(req, timeout=10):
+            calls["n"] += 1
+            raise self._http_error(429)  # no Retry-After
+
+        with patch.object(c, "urlopen", always_429), \
+             patch.object(c.time, "sleep", lambda s: None):
+            result = _fetch_oauth_usage("valid-token")
+
+        self.assertTrue(result.get("rate_limited"))
+        self.assertEqual(calls["n"], 1)
+
+    def test_429_positive_retry_after_is_retried(self) -> None:
+        # An explicit positive Retry-After IS honoured and retried.
+        import claude_usage.collector as c
+        calls = {"n": 0}
+
+        def always_429(req, timeout=10):
+            calls["n"] += 1
+            raise self._http_error(429, retry_after="1")
+
+        with patch.object(c, "urlopen", always_429), \
+             patch.object(c.time, "sleep", lambda s: None):
+            result = _fetch_oauth_usage("valid-token")
+
+        self.assertTrue(result.get("rate_limited"))
         self.assertGreater(calls["n"], 1)  # actually retried
 
     def test_429_recovers_on_retry(self) -> None:
         import claude_usage.collector as c
-        seq = [self._http_error(429), None]  # fail once, then succeed
+        # Fail once with a positive Retry-After (so we retry), then succeed.
+        seq = [self._http_error(429, retry_after="1"), None]
 
         def flaky(req, timeout=10):
             item = seq.pop(0)
@@ -1027,6 +1065,61 @@ class TestCollectAll(unittest.TestCase):
             self.assertEqual(stats.today_tokens, 0)
             self.assertEqual(stats.week_tokens, 0)
             self.assertEqual(stats.active_sessions, [])
+
+
+class TestCollectAllStaleFallback(unittest.TestCase):
+    """When a poll is rate-limited/errored, collect_all falls back to the last
+    on-disk sample — but a window whose reset time has already passed has rolled
+    over, so its true utilization is 0, not the stale sample value. Without this
+    the OSD shows a whole expired cycle's usage until the API recovers."""
+
+    @patch("claude_usage.collector.fetch_rate_limits")
+    def test_expired_session_window_falls_back_to_zero(self, mock_fetch: Any) -> None:
+        from claude_usage.history import append_sample
+
+        mock_fetch.return_value = {"error": "Rate limited -- using last known values",
+                                   "rate_limited": True}
+        now = datetime.now().timestamp()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            samples_path = os.path.join(tmpdir, "usage-history.jsonl")
+            # Last sample: a busy session whose 5h window already reset an hour
+            # ago, but whose 7d window is still days out.
+            append_sample(
+                samples_path, now - 7200, 0.82, 0.40,
+                session_reset=int(now - 3600),       # expired
+                weekly_reset=int(now + 3 * 86400),   # still current
+            )
+
+            stats = collect_all({"claude_dir": tmpdir})
+
+            # Expired 5h window -> zeroed, countdown cleared.
+            self.assertEqual(stats.session_utilization, 0.0)
+            self.assertEqual(stats.session_reset, 0)
+            # Still-current 7d window -> stale value preserved.
+            self.assertAlmostEqual(stats.weekly_utilization, 0.40)
+            self.assertEqual(stats.weekly_reset, int(now + 3 * 86400))
+
+    @patch("claude_usage.collector.fetch_rate_limits")
+    def test_current_window_preserves_last_known(self, mock_fetch: Any) -> None:
+        from claude_usage.history import append_sample
+
+        mock_fetch.return_value = {"error": "Rate limited -- using last known values",
+                                   "rate_limited": True}
+        now = datetime.now().timestamp()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            samples_path = os.path.join(tmpdir, "usage-history.jsonl")
+            append_sample(
+                samples_path, now - 60, 0.55, 0.25,
+                session_reset=int(now + 1800),       # still current
+                weekly_reset=int(now + 3 * 86400),
+            )
+
+            stats = collect_all({"claude_dir": tmpdir})
+
+            # Both windows still current -> last-known values survive (issue #11).
+            self.assertAlmostEqual(stats.session_utilization, 0.55)
+            self.assertEqual(stats.session_reset, int(now + 1800))
+            self.assertAlmostEqual(stats.weekly_utilization, 0.25)
 
 
 if __name__ == "__main__":
