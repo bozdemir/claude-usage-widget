@@ -598,17 +598,19 @@ def _fetch_oauth_usage(token: str) -> dict[str, Any]:
             if e.code == 401:
                 return {"error": "Credentials expired -- re-authenticate with 'claude'"}
             if e.code == 429:
-                if attempt >= _USAGE_MAX_RETRIES:
-                    # Distinct, non-alarming state — the caller keeps the
-                    # last-known values instead of blanking the UI.
+                # A 429 here is budget-based, not a momentary blip: this
+                # endpoint replies "Retry-After: 0" (or sends no Retry-After
+                # at all) once the window's quota is spent. Retrying such a
+                # 429 immediately just fires a multi-request burst per poll
+                # that burns the budget faster and keeps us throttled. So we
+                # only wait out an *explicit positive* Retry-After; anything
+                # else bails straight to the calm last-known state. The caller
+                # keeps the last-known values instead of blanking the UI.
+                retry_after = _parse_retry_after(e.headers)
+                if not retry_after or retry_after <= 0 or attempt >= _USAGE_MAX_RETRIES:
                     return {"error": "Rate limited -- using last known values",
                             "rate_limited": True}
-                # Honour Retry-After (seconds) if the server sent one, else
-                # fall back to the exponential schedule below.
-                retry_after = _parse_retry_after(e.headers)
-                delay = (retry_after if retry_after is not None
-                         else _USAGE_BASE_DELAY * (2 ** attempt) + random.uniform(0.0, 0.1))
-                time.sleep(min(delay, 5.0))  # cap so a huge Retry-After can't stall the poll
+                time.sleep(min(retry_after, 5.0))  # cap so a huge Retry-After can't stall the poll
                 continue
             return {"error": f"OAuth usage error {e.code}"}
         except json.JSONDecodeError:
@@ -774,17 +776,31 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
             recent = []
         if recent:
             last = recent[-1]
-            stats.session_utilization = float(last.get("session", 0.0) or 0.0)
-            stats.weekly_utilization = float(last.get("weekly", 0.0) or 0.0)
+            sess_util = float(last.get("session", 0.0) or 0.0)
+            week_util = float(last.get("weekly", 0.0) or 0.0)
             # Restore the reset countdowns too — otherwise they stay 0 and
             # every formatter blanks the reset label on a single throttled
             # poll (issue #11). The most recent sample that recorded them
             # wins; scan backwards since older samples predate this field.
+            sess_reset = week_reset = 0
             for prev in reversed(recent):
                 if prev.get("session_reset") or prev.get("weekly_reset"):
-                    stats.session_reset = int(prev.get("session_reset", 0) or 0)
-                    stats.weekly_reset = int(prev.get("weekly_reset", 0) or 0)
+                    sess_reset = int(prev.get("session_reset", 0) or 0)
+                    week_reset = int(prev.get("weekly_reset", 0) or 0)
                     break
+            # A window whose reset time has already passed has rolled over:
+            # its true utilization is back to 0, not the stale last sample.
+            # Showing the old percentage here is exactly the "display lags a
+            # whole cycle behind after a reset" bug — clamp expired windows to
+            # zero so a throttled poll never resurrects a finished window.
+            if sess_reset and now_ts >= sess_reset:
+                sess_util, sess_reset = 0.0, 0
+            if week_reset and now_ts >= week_reset:
+                week_util, week_reset = 0.0, 0
+            stats.session_utilization = sess_util
+            stats.weekly_utilization = week_util
+            stats.session_reset = sess_reset
+            stats.weekly_reset = week_reset
     else:
         stats.session_utilization = rate_limits["session_utilization"]
         stats.session_reset = rate_limits["session_reset"]
