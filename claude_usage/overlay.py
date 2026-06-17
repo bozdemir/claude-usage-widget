@@ -20,7 +20,6 @@ from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
-    QFontMetricsF,
     QMouseEvent,
     QPainter,
     QPaintEvent,
@@ -197,10 +196,6 @@ class UsageOverlay(QWidget):
         self._live_tpm: float = 0.0      # tokens/min over the last few minutes
         self._is_live: bool = False       # show the "● LIVE" dot
         self._active_subagents: int = 0  # count of running Task-tool subagents
-        # Refresh status, surfaced as a small dot in the top-left corner so the
-        # error state is noticeable from the OSD itself (the detail popup has
-        # the full message). "updating" until the first poll lands.
-        self._status: str = "updating"  # "ok" | "updating" | "error"
         # Ticker tape: newest-first. The paint loop walks them oldest→newest
         # so the newest item rides in from the right edge like a news ticker.
         self._ticker_items: list[TickerItem] = []
@@ -281,18 +276,9 @@ class UsageOverlay(QWidget):
 
     # ------------------------------------------------------------------ API
 
-    def set_updating(self) -> None:
-        """Mark a refresh as in flight (status dot turns grey) and repaint."""
-        if self._status != "updating":
-            self._status = "updating"
-            self.update()
-
     def update_stats(self, stats: UsageStats) -> None:
         """Apply the latest :class:`UsageStats` and trigger a repaint."""
         self._last_stats = stats
-        # A completed poll resolves the status dot: red when the API errored
-        # (rate-limited, expired creds, network), green otherwise.
-        self._status = "error" if stats.rate_limit_error else "ok"
         self._session_pct = max(0.0, min(1.0, float(stats.session_utilization)))
         self._weekly_pct = max(0.0, min(1.0, float(stats.weekly_utilization)))
         self._session_reset = int(stats.session_reset)
@@ -552,34 +538,6 @@ class UsageOverlay(QWidget):
 
     # ----------------------------------------------------------- painting
 
-    def _status_color(self) -> QColor:
-        """Map the refresh status to a theme-aware dot colour."""
-        if self._status == "error":
-            return _hex_to_qcolor(self._theme["crit"])         # red
-        if self._status == "updating":
-            return _hex_to_qcolor(self._theme["text_dim"])      # grey
-        return _hex_to_qcolor(self._theme.get("live_indicator", "#4ade80"))  # green
-
-    def _draw_status_dot(self, p: QPainter) -> None:
-        """Draw the refresh-status dot in the top-left corner.
-
-        Drawn last, over whatever view/skin painted, so a single call covers
-        bars, gauge, and every skin identically. In bars mode it lands just
-        before the CLAUDE title; elsewhere it reads as a corner status LED.
-        """
-        s = self._scale
-        dot_d = 6 * s
-        cx = 9 * s
-        # Vertically centre on the CLAUDE title (the bars-view anchor). The
-        # title is all-caps drawn at baseline pad_y + 7*s, so centre on its cap
-        # height, not the full line box, or the dot reads as top-aligned.
-        title_pt = max(7, int(8 * s))
-        cap_h = QFontMetricsF(_mono_font(title_pt)).capHeight()
-        cy = (10 * s + 7 * s) - cap_h / 2
-        p.setPen(Qt.NoPen)
-        p.setBrush(self._status_color())
-        p.drawEllipse(QPointF(cx, cy), dot_d / 2, dot_d / 2)
-
     def paintEvent(self, event: QPaintEvent) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -628,7 +586,6 @@ class UsageOverlay(QWidget):
                         family=skin_fonts.get("family_mono", "monospace"),
                     )
                     self._draw_news_strip(p, news_y, w, pad_x, s, font=news_font)
-                self._draw_status_dot(p)
                 return
             except Exception:
                 # Swallow skin-paint errors and fall through to default paint
@@ -639,11 +596,9 @@ class UsageOverlay(QWidget):
 
         if self._view_mode == VIEW_MODE_GAUGE:
             self._paint_gauge(p, w, h)
-            self._draw_status_dot(p)
             return
 
         self._paint_full(p, w, h)
-        self._draw_status_dot(p)
 
     def _paint_minimized(self, p: QPainter, w: int, h: int) -> None:
         """Thin capsule showing session utilisation."""

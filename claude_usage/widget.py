@@ -1508,10 +1508,6 @@ class ClaudeUsageApp(QObject):
         if self._refreshing or not self._alive:
             return
         self._refreshing = True
-        # Flip the OSD status dot to grey while the poll is in flight; the
-        # result (green/red) is applied when update_stats lands. Safe here —
-        # _refresh_async runs on the GUI thread (timer / menu actions).
-        self.overlay.set_updating()
 
         def _worker() -> None:
             try:
