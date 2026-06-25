@@ -83,6 +83,10 @@ DEFAULT_CONFIG: Config = {
     # user minimizes / hides the OSD so it reopens the way they left it.
     "osd_minimized": False,
     "osd_visible": True,
+    # Keep the OSD pinned above other windows. Turn off (right-click ->
+    # "Always on top") to let it sit as a normal background desktop widget
+    # that the window manager stacks like any other window.
+    "osd_always_on_top": True,
 }
 
 

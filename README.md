@@ -128,7 +128,7 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 pip install --user --upgrade claude-usage-widget
 claude-usage              # launches the OSD overlay (foreground)
 claude-usage --detach     # …or run it in the background and free the shell
-claude-usage --version    # 0.9.0
+claude-usage --version    # 0.9.1
 ```
 
 That's it — no `apt`, no `brew`, no PyGObject, no rumps. PySide6 ships Qt in the wheel, so the widget is fully self-contained.
@@ -173,6 +173,7 @@ python3 main.py
 - **Minimize / Restore** -- collapse the OSD to a thin progress strip
 - **Show cost ticker** -- toggle the scrolling per-turn cost strip on the OSD
 - **Show news ticker** -- toggle the Anthropic/Claude news headline strip on the OSD
+- **Always on top** -- keep the OSD pinned above other windows (default), or turn it off to let it sit as a normal background desktop widget the window manager stacks behind your focused windows; persisted
 - **Quit** -- exit the widget
 
 ## Configuration
@@ -215,6 +216,7 @@ cp config.json.example config.json
 | `osd_scale` | `1.0` | OSD zoom level (0.6–2.0). Updated automatically when you scroll the mouse wheel over the OSD, so it reopens at the same size. |
 | `osd_minimized` | `false` | Whether the OSD is in its collapsed thin-strip form. Written automatically via right-click → "Minimize / Restore". |
 | `osd_visible` | `true` | Whether the OSD overlay is shown. Written on quit so the widget reopens in the same visible/hidden state. |
+| `osd_always_on_top` | `true` | Keep the OSD pinned above other windows. Set to `false` (or right-click → "Always on top") to let it sit as a normal background desktop widget. |
 
 Keys omitted from `config.json` fall back to built-in defaults. `claude_dir` is not included in the example file because the default is correct for most setups.
 

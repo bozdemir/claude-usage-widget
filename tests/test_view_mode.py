@@ -10,6 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import unittest
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from claude_usage.overlay import (
@@ -67,6 +68,42 @@ class TestViewMode(unittest.TestCase):
     def test_all_modes_are_in_public_tuple(self) -> None:
         self.assertIn(VIEW_MODE_BARS, VIEW_MODES)
         self.assertIn(VIEW_MODE_GAUGE, VIEW_MODES)
+
+
+class TestAlwaysOnTop(unittest.TestCase):
+    """The OSD can be unpinned to act as a background desktop widget (#13)."""
+
+    def setUp(self) -> None:
+        _get_app()
+
+    def test_default_is_on_top(self) -> None:
+        ov = UsageOverlay({})
+        self.assertTrue(ov.is_always_on_top())
+        self.assertTrue(ov.windowFlags() & Qt.WindowStaysOnTopHint)
+        self.assertTrue(ov.windowFlags() & Qt.BypassWindowManagerHint)
+
+    def test_config_can_disable(self) -> None:
+        ov = UsageOverlay({"osd_always_on_top": False})
+        self.assertFalse(ov.is_always_on_top())
+        # Both the stays-on-top and the WM-bypass hints are dropped so the WM
+        # can stack it behind focused windows.
+        self.assertFalse(ov.windowFlags() & Qt.WindowStaysOnTopHint)
+        self.assertFalse(ov.windowFlags() & Qt.BypassWindowManagerHint)
+
+    def test_toggle_round_trips(self) -> None:
+        ov = UsageOverlay({})
+        ov.set_always_on_top(False)
+        self.assertFalse(ov.is_always_on_top())
+        self.assertFalse(ov.windowFlags() & Qt.WindowStaysOnTopHint)
+        ov.set_always_on_top(True)
+        self.assertTrue(ov.is_always_on_top())
+        self.assertTrue(ov.windowFlags() & Qt.WindowStaysOnTopHint)
+
+    def test_frameless_and_tool_always_present(self) -> None:
+        for on in (True, False):
+            ov = UsageOverlay({"osd_always_on_top": on})
+            self.assertTrue(ov.windowFlags() & Qt.FramelessWindowHint)
+            self.assertTrue(ov.windowFlags() & Qt.Tool)
 
 
 if __name__ == "__main__":

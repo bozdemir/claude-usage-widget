@@ -237,14 +237,13 @@ class UsageOverlay(QWidget):
         self._press_win_pos: QPoint | None = None    # window pos on press
         self._dragging: bool = False
 
-        # Window setup — frameless, transparent, always on top, no taskbar.
-        self.setWindowFlags(
-            Qt.FramelessWindowHint
-            | Qt.Tool                      # tool window, should stay above normal ones
-            | Qt.WindowStaysOnTopHint
-            | Qt.WindowDoesNotAcceptFocus  # typing doesn't steal focus from other apps
-            | Qt.BypassWindowManagerHint   # KDE/GNOME: skip window-manager decoration entirely
-        )
+        # Whether to pin above all other windows. Off => a normal background
+        # desktop widget the WM can stack behind focused windows.
+        self._always_on_top: bool = bool(cfg.get("osd_always_on_top", True))
+
+        # Window setup — frameless, transparent, no taskbar; "always on top"
+        # is conditional (see _window_flags).
+        self.setWindowFlags(self._window_flags())
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         # NET_WM hint: tell the window manager this is a Notification, so dock
@@ -476,6 +475,49 @@ class UsageOverlay(QWidget):
     def position(self) -> str:
         """Return the current anchor preset name (one of OSD_POSITIONS)."""
         return self._position
+
+    def _window_flags(self) -> Qt.WindowFlags:
+        """Build the window flags for the current always-on-top setting.
+
+        When pinned (default) we also set ``BypassWindowManagerHint`` so the
+        OSD floats above everything on KDE/GNOME without the WM re-stacking or
+        decorating it. When the user turns always-on-top OFF, we drop BOTH
+        that and ``WindowStaysOnTopHint`` so the window manager treats it like
+        a normal frameless tool window — i.e. it sinks behind whatever you're
+        working in, the whole point of a background desktop widget. (Without
+        dropping Bypass too, an unmanaged X11 window would stay stuck on top
+        regardless, which is the exact complaint in issue #13.)
+        """
+        flags = (
+            Qt.FramelessWindowHint
+            | Qt.Tool                      # tool window, off the taskbar
+            | Qt.WindowDoesNotAcceptFocus  # typing never steals focus
+        )
+        if self._always_on_top:
+            flags |= Qt.WindowStaysOnTopHint | Qt.BypassWindowManagerHint
+        return flags
+
+    def set_always_on_top(self, on: bool) -> None:
+        """Pin the OSD above other windows, or release it to normal stacking.
+
+        Changing window flags re-creates the native window (Qt hides it), so
+        we re-show without activating and restore the position afterwards."""
+        on = bool(on)
+        if on == self._always_on_top:
+            return
+        self._always_on_top = on
+        was_visible = self.isVisible()
+        self.setWindowFlags(self._window_flags())
+        # Flags reset some attributes on re-creation; re-assert the ones we
+        # rely on, then re-show (setWindowFlags hides the window).
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        if was_visible:
+            self.show()
+        self._move_to_default_position()
+
+    def is_always_on_top(self) -> bool:
+        """Return whether the OSD is pinned above other windows."""
+        return self._always_on_top
 
     # --------------------------------------------------------------- events
 

@@ -1205,6 +1205,12 @@ class ClaudeUsageApp(QObject):
         self._act_news.toggled.connect(self._on_toggle_news)
         m.addAction(self._act_news)
 
+        self._act_on_top = QAction("📌  Always on top", m)
+        self._act_on_top.setCheckable(True)
+        self._act_on_top.setChecked(self.overlay.is_always_on_top())
+        self._act_on_top.toggled.connect(self._on_toggle_always_on_top)
+        m.addAction(self._act_on_top)
+
         m.aboutToShow.connect(self._sync_menu_state)
 
         m.addSeparator()
@@ -1229,6 +1235,11 @@ class ClaudeUsageApp(QObject):
     def _on_toggle_news(self, checked: bool) -> None:
         self.overlay.set_news_enabled(checked)
         self.config["show_news"] = bool(checked)
+        self._persist_config()
+
+    def _on_toggle_always_on_top(self, checked: bool) -> None:
+        self.overlay.set_always_on_top(checked)
+        self.config["osd_always_on_top"] = bool(checked)
         self._persist_config()
 
     def _on_pick_theme(self, name: str) -> None:
@@ -1456,6 +1467,7 @@ class ClaudeUsageApp(QObject):
         # Tick marks on radio-grouped items.
         self._act_ticker.setChecked(self.overlay.is_ticker_enabled())
         self._act_news.setChecked(self.overlay.is_news_enabled())
+        self._act_on_top.setChecked(self.overlay.is_always_on_top())
         theme_act = self._theme_actions.get(current_theme)
         if theme_act is not None:
             theme_act.setChecked(True)
