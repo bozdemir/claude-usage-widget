@@ -92,14 +92,15 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 ## Features
 
 - **Single `pip install`** -- no `apt`/`brew`/system libraries required, Qt is bundled
-- **Real API data** -- rate-limit utilisation read straight from `anthropic-ratelimit-unified-*` response headers
-- **OSD overlay** -- transparent, frameless, always-on-top; left-click opens the details popup, right-click shows a context menu
+- **Real API data** -- 5h / 7d plan utilisation read from Claude Code's `/api/oauth/usage` endpoint (the same data the Claude UI shows)
+- **OSD overlay** -- transparent, frameless; left-click opens the details popup, right-click shows a context menu. Stays on top by default — toggle it off to use it as a background desktop widget.
 - **Live token stream** -- `● LIVE 5.3k tok/min` badge on the OSD while a Claude Code session is actively writing, derived from the conversation JSONLs
 - **Per-turn cost ticker** -- a scrolling strip at the bottom of the OSD shows the USD cost of each assistant turn as it lands (`$0.156 ← Bash · 116`), colour-coded by quartile within the visible window so the tape always stays visually varied. Toggle via right-click → "Show cost ticker" or set `"show_ticker": false` in `config.json`.
 - **Live news ticker (opt-in)** -- a second scrolling strip shows the latest Anthropic/Claude headlines sourced from Hacker News (top stories with 50+ upvotes). Fetched lazily, cached locally for 1 hour. Click the strip to open the article in your browser. **Off by default** because it makes outbound calls to a 3rd-party feed; enable via right-click → "Show news ticker" or set `"show_news": true` in `config.json`.
 - **Subagent rozet** -- when you spawn parallel subagents via the Task tool, the `CLAUDE` title gets a `⚙ N` counter next to it showing how many are currently writing. Hidden when zero so single-session use isn't cluttered.
 - **Detail popup** -- usage bars, forecast, 5h/7d sparklines, 90-day heatmap, 52-week GitHub-style calendar, per-model cost breakdown, top projects, active sessions (resizable)
-- **Auto-refresh** -- every 60 seconds by default, fully configurable
+- **Auto-refresh** -- every 60 seconds by default; the interval adapts automatically, backing off up to 300 s when the endpoint rate-limits and snapping back on the next clean refresh (`refresh_seconds` / `refresh_max_seconds`)
+- **Positioning** -- snap the OSD to any screen corner via right-click → "OSD Position", or drag it anywhere; the spot is remembered (`osd_position`, `osd_x`/`osd_y`)
 - **Resizable** -- scroll wheel on the OSD (0.6x -- 2.0x); drag the popup window edges to widen it
 - **Draggable** -- left-click drag on the OSD
 - **Cost estimation** -- USD equivalent per model, cache savings, pay-as-you-go comparison for flat-fee subscribers
@@ -109,7 +110,7 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 - **AI-generated weekly report** -- Claude Haiku writes a 3-4 sentence summary of your past week of usage (cached 1h; never leaks prompt text)
 - **Anomaly detection** -- flags days whose utilisation exceeds the 7/90-day baseline
 - **Cost optimisation tips** -- suggests cache-hit-rate improvements and model-mix changes
-- **Themes** -- default, catppuccin-mocha, dracula, nord, gruvbox-dark
+- **Themes** -- 11 in all: 5 classic palettes (default, catppuccin-mocha, dracula, nord, gruvbox-dark) plus 6 designed skins (terminal, dashboard, hud, receipt, strip, brutalist)
 - **Threshold notifications** -- native desktop notifications on crossing 75% / 90%
 - **Webhooks** -- optional POST to Slack / Discord / custom URLs on threshold, daily, or anomaly events
 - **Localhost JSON API** -- optional `http://127.0.0.1:8765/usage` for tmux / polybar / waybar integrations (prompt previews redacted at the serialization boundary)
@@ -118,7 +119,7 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 ## Requirements
 
 - Python 3.10+
-- Claude Code CLI installed and authenticated (OAuth) — the widget reads the same token from `~/.claude/.credentials.json` (or macOS Keychain)
+- Claude Code CLI installed and authenticated (OAuth) — the widget reads the same token, checking the `CLAUDE_CODE_OAUTH_TOKEN` environment variable first, then `~/.claude/.credentials.json`, then the macOS Keychain
 
 ## Installation
 
@@ -159,7 +160,7 @@ python3 main.py
 |---------------------|--------|
 | **Left-click**      | Open the details popup |
 | **Left-click drag** | Move the OSD |
-| **Right-click**     | Open context menu (Details, Refresh, Opacity, Minimize, Quit) |
+| **Right-click**     | Open context menu (Details, Refresh, OSD Opacity, OSD View, OSD Position, Theme, Minimize/Restore, Show cost ticker, Show news ticker, Always on top, Quit) |
 | **Scroll up / down**| Resize (0.6x -- 2.0x) |
 
 ### Context menu (right-click OSD)
@@ -169,7 +170,7 @@ python3 main.py
 - **OSD Opacity** -- 100% / 75% / 50% / 25%
 - **OSD View ▸** -- switch between **Bars** (default — progress bars + cost ticker) and **Gauge** (two circular rings); auto-persisted
 - **OSD Position ▸** -- snap the overlay to **Top Left / Top Right / Bottom Left / Bottom Right**, or drag it anywhere for a remembered **Custom** position; auto-persisted
-- **Theme ▸** -- pick one of the 5 palettes; the choice persists to `~/.config/claude-usage/config.json` so a restart keeps it
+- **Theme ▸** -- pick one of the 11 themes (5 classic palettes plus 6 skins: terminal, dashboard, hud, receipt, strip, brutalist); the choice persists to `~/.config/claude-usage/config.json` so a restart keeps it
 - **Minimize / Restore** -- collapse the OSD to a thin progress strip
 - **Show cost ticker** -- toggle the scrolling per-turn cost strip on the OSD
 - **Show news ticker** -- toggle the Anthropic/Claude news headline strip on the OSD
@@ -217,12 +218,18 @@ cp config.json.example config.json
 | `osd_minimized` | `false` | Whether the OSD is in its collapsed thin-strip form. Written automatically via right-click → "Minimize / Restore". |
 | `osd_visible` | `true` | Whether the OSD overlay is shown. Written on quit so the widget reopens in the same visible/hidden state. |
 | `osd_always_on_top` | `true` | Keep the OSD pinned above other windows. Set to `false` (or right-click → "Always on top") to let it sit as a normal background desktop widget. |
+| `osd_view_mode` | `bars` | OSD layout: `bars` (progress bars + cost ticker) or `gauge` (circular rings). |
+| `notifications_enabled` | `true` | Whether desktop notifications fire when usage crosses a threshold. |
+| `notify_thresholds` | `[0.75, 0.90]` | Utilisation fractions that fire a notification when first crossed. |
+| `api_server_enabled` | `false` | Enable the opt-in localhost JSON API (`/usage`, `/healthz`). |
+| `api_server_host` / `api_server_port` | `127.0.0.1` / `8765` | Bind address and port for the localhost API. |
+| `webhooks` | `{}` | Map of event → URL (`threshold_crossed`, `daily_report`, `anomaly`). |
 
 Keys omitted from `config.json` fall back to built-in defaults. `claude_dir` is not included in the example file because the default is correct for most setups.
 
 ## Themes
 
-The widget ships with 5 built-in color themes. Select one by adding `"theme": "<name>"` to your `config.json`:
+The widget ships with 11 built-in color themes — 5 classics plus 6 Claude-designed skins. Select one by adding `"theme": "<name>"` to your `config.json`:
 
 ```json
 {
@@ -249,16 +256,16 @@ Available themes (gallery above):
 
 ## How It Works
 
-The widget reads your Claude Code OAuth credentials from `~/.claude/.credentials.json` (Linux) or the macOS Keychain and makes a minimal API call (`max_tokens=1` to `claude-haiku-4-5-20251001`) to read the rate-limit response headers:
+The widget reads your Claude Code OAuth token using the same lookup order as Claude Code itself — the `CLAUDE_CODE_OAUTH_TOKEN` environment variable, then `~/.claude/.credentials.json`, then (macOS only) the Keychain — and calls Claude Code's own `/api/oauth/usage` endpoint, the same one the Claude UI uses, to read your plan-level utilization:
 
-```
-anthropic-ratelimit-unified-5h-utilization: 0.58
-anthropic-ratelimit-unified-5h-reset: 1776186000
-anthropic-ratelimit-unified-7d-utilization: 0.10
-anthropic-ratelimit-unified-7d-reset: 1776690000
+```json
+{
+  "five_hour": { "utilization": 58, "resets_at": "2026-04-14T10:00:00+00:00" },
+  "seven_day": { "utilization": 10, "resets_at": "2026-04-20T03:00:00+00:00" }
+}
 ```
 
-These are the same values shown on the [claude.ai usage page](https://claude.ai/settings/usage). The widget also reads local data from `~/.claude/` for message counts, token usage per model, and active session tracking.
+These are the same values shown on the [claude.ai usage page](https://claude.ai/settings/usage). (A tiny `/v1/messages` call that reads `anthropic-ratelimit-*` headers remains as a fallback if the OAuth endpoint is unreachable.) The widget also reads local data from `~/.claude/` for message counts, token usage per model, and active session tracking.
 
 ### How the OSD works
 
@@ -270,7 +277,7 @@ Qt's `QWidget` with `FramelessWindowHint | Tool | WindowStaysOnTopHint` plus `WA
 
 ### Live token stream
 
-The OSD renders a `● LIVE ~5.3k tok/min` badge when a Claude Code session is actively writing. The detector scans `~/.claude/projects/*/*.jsonl` for assistant turns in the last 5 minutes (filtered cheaply by file mtime), sums their `output_tokens`, and divides by the window. The "live" dot only lights up when the newest turn is under 90 seconds old; the rate keeps showing for the full 5-minute window so bursts are visible in context.
+The OSD renders a `● LIVE 5.3k tok/min` badge when a Claude Code session is actively writing. The detector scans `~/.claude/projects/*/*.jsonl` for assistant turns in the last 5 minutes (filtered cheaply by file mtime), sums their `output_tokens`, and divides by the window. The "live" dot only lights up when the newest turn is under 90 seconds old; the rate keeps showing for the full 5-minute window so bursts are visible in context.
 
 ### Per-turn cost ticker
 
@@ -316,8 +323,11 @@ sudo pacman -S libnotify          # Arch
 
 ### API authentication fails
 - Make sure the Claude Code CLI is installed and you are logged in (the `claude` command should work in a terminal).
-- Linux / Windows: the OAuth token is read from `~/.claude/.credentials.json`.
-- macOS: the OAuth token is read from the Keychain, with a fallback to `~/.claude/.credentials.json`.
+- The OAuth token is loaded in this order: the `CLAUDE_CODE_OAUTH_TOKEN` environment variable, then `~/.claude/.credentials.json`, then (macOS only) the login Keychain.
+- **macOS — blank session/weekly with "No credentials":** Claude Code often stores the token only in the Keychain, and a GUI launch (Finder / Homebrew / a login item) may not have access to it. Launch `claude-usage` once from a Terminal and click **Always Allow** on the Keychain prompt, or export `CLAUDE_CODE_OAUTH_TOKEN`.
+
+### Status shows "Rate limited"
+The usage figures come from Anthropic's `/api/oauth/usage` endpoint, a low-budget endpoint shared with Claude Code. Polling it too often can trip its rate limit; the widget handles this gracefully (it keeps showing your last-known numbers and backs the poll interval off automatically), so it's harmless. If you see it a lot, raise `refresh_seconds` in `config.json`.
 
 ## Contributing
 
