@@ -852,6 +852,65 @@ class TestRateLimitParsing(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Credential loading (macOS blank-usage hardening)
+# ---------------------------------------------------------------------------
+
+
+class TestLoadCredentials(unittest.TestCase):
+    """The token lookup mirrors Claude Code's order: env var -> flat file ->
+    macOS Keychain. Empty tokens count as 'not logged in'. Hardened after a
+    macOS audit traced always-blank session/weekly to silent credential
+    failures (the Keychain path being the only source on macOS)."""
+
+    def setUp(self) -> None:
+        from claude_usage.collector import _extract_token, _load_credentials
+        self._extract = _extract_token
+        self._load = _load_credentials
+        os.environ.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+
+    def tearDown(self) -> None:
+        os.environ.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+
+    def test_extract_valid(self) -> None:
+        blob = json.dumps({"claudeAiOauth": {"accessToken": "sk-tok"}})
+        self.assertEqual(self._extract(blob), "sk-tok")
+
+    def test_extract_empty_token_is_none(self) -> None:
+        blob = json.dumps({"claudeAiOauth": {"accessToken": "   "}})
+        self.assertIsNone(self._extract(blob))
+
+    def test_extract_missing_key_is_none(self) -> None:
+        self.assertIsNone(self._extract(json.dumps({"foo": 1})))
+
+    def test_extract_bad_json_is_none(self) -> None:
+        self.assertIsNone(self._extract("not json"))
+
+    def test_env_var_takes_priority(self) -> None:
+        os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = "env-tok"
+        # No file at this path, but the env var wins regardless.
+        self.assertEqual(self._load("/nonexistent-dir"), "env-tok")
+
+    def test_flat_file_token(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, ".credentials.json"), "w") as f:
+                f.write(json.dumps({"claudeAiOauth": {"accessToken": "file-tok"}}))
+            self.assertEqual(self._load(d), "file-tok")
+
+    def test_empty_file_token_is_none(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, ".credentials.json"), "w") as f:
+                f.write(json.dumps({"claudeAiOauth": {"accessToken": ""}}))
+            # No env var, empty file token, non-macOS -> None.
+            with patch("claude_usage.collector.sys.platform", "linux"):
+                self.assertIsNone(self._load(d))
+
+    def test_missing_everything_is_none(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            with patch("claude_usage.collector.sys.platform", "linux"):
+                self.assertIsNone(self._load(d))
+
+
+# ---------------------------------------------------------------------------
 # OAuth usage 429 handling (issue #11)
 # ---------------------------------------------------------------------------
 

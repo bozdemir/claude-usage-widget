@@ -440,48 +440,72 @@ def _load_subscription_type(claude_dir: str) -> str:
         return ""
 
 
+# Keychain service names Claude Code has used for its credentials item on
+# macOS. Tried in order so a future rename can't silently blank the widget.
+_MACOS_KEYCHAIN_SERVICES = ("Claude Code-credentials", "Claude Code")
+
+
+def _extract_token(blob: str) -> str | None:
+    """Pull the OAuth access token out of a credentials JSON blob.
+
+    Returns a non-empty, stripped token, or ``None`` if the blob doesn't parse
+    or the token is absent/empty (an empty token is as useless as no token —
+    the caller treats both as "not logged in")."""
+    try:
+        creds = json.loads(blob)
+        token = creds["claudeAiOauth"]["accessToken"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return None
+    token = (token or "").strip()
+    return token or None
+
+
 def _load_credentials(claude_dir: str) -> str | None:
-    """Load the OAuth access token from the credentials file or macOS Keychain.
+    """Load the OAuth access token, mirroring Claude Code's own lookup order.
 
-    The file-based path (``~/.claude/.credentials.json``) works on both Linux
-    and macOS.  The Keychain fallback handles macOS installs where Claude Code
-    stores credentials in the system keychain rather than (or in addition to)
-    the flat file.
+    Order: ``CLAUDE_CODE_OAUTH_TOKEN`` env var → ``~/.claude/.credentials.json``
+    flat file (Linux + macOS) → macOS Keychain. The Keychain path is the only
+    source on macOS installs where Claude Code stores credentials there and
+    never writes the flat file, which is exactly when the widget would
+    otherwise show blank session/weekly numbers with no explanation.
 
-    Returns the raw access-token string, or ``None`` if no valid token is found.
+    Returns the raw access-token string, or ``None`` if none is found.
     """
-    # 1. Try the credentials file (Linux + macOS)
+    # 0. Environment override — the highest-priority source Claude Code honours.
+    env_tok = (os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or "").strip()
+    if env_tok:
+        return env_tok
+
+    # 1. Flat credentials file (Linux + macOS).
     creds_path = os.path.join(claude_dir, ".credentials.json")
     if os.path.isfile(creds_path):
         try:
             with open(creds_path, encoding="utf-8", errors="replace") as f:
-                creds = json.load(f)
-            return creds["claudeAiOauth"]["accessToken"]
-        except (json.JSONDecodeError, KeyError, OSError):
-            pass  # File exists but is unreadable or lacks the token key; try Keychain
+                blob = f.read()
+            token = _extract_token(blob)
+            if token:
+                return token
+        except OSError:
+            pass  # Unreadable; fall through to the Keychain on macOS.
 
-    # 2. Keychain fallback -- macOS only; /usr/bin/security is the canonical CLI
+    # 2. macOS Keychain fallback. /usr/bin/security is the canonical CLI; try
+    # each known service name. Errors are recorded (not silently swallowed)
+    # so the caller can surface an actionable message instead of a blank UI.
     if sys.platform == "darwin":
-        try:
-            import subprocess
-
-            result = subprocess.run(
-                [
-                    "/usr/bin/security",
-                    "find-generic-password",
-                    "-s",
-                    "Claude Code-credentials",
-                    "-w",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
+        import subprocess
+        for service in _MACOS_KEYCHAIN_SERVICES:
+            try:
+                result = subprocess.run(
+                    ["/usr/bin/security", "find-generic-password",
+                     "-s", service, "-w"],
+                    capture_output=True, text=True, timeout=5,
+                )
+            except (OSError, subprocess.SubprocessError):
+                continue
             if result.returncode == 0 and result.stdout.strip():
-                creds = json.loads(result.stdout.strip())
-                return creds["claudeAiOauth"]["accessToken"]
-        except Exception:
-            pass
+                token = _extract_token(result.stdout.strip())
+                if token:
+                    return token
 
     return None
 
@@ -498,6 +522,14 @@ def fetch_rate_limits(claude_dir: str) -> dict[str, Any]:
     """
     token = _load_credentials(claude_dir)
     if not token:
+        if sys.platform == "darwin":
+            # The token lives in the macOS Keychain; a GUI launch (Finder /
+            # Homebrew / login item) may lack access to the item the Claude
+            # Code CLI created, so it reads as "missing". Tell the user how
+            # to grant it rather than showing silently-blank bars.
+            return {"error": "No credentials -- run 'claude-usage' once from a "
+                             "Terminal and click 'Always Allow' on the Keychain "
+                             "prompt (or set CLAUDE_CODE_OAUTH_TOKEN)"}
         return {"error": "No credentials found -- run 'claude' to log in"}
 
     # Primary path — the OAuth usage endpoint Claude Code itself uses.
