@@ -33,6 +33,7 @@ classifiers = [
 # Linux, osascript on macOS), so no extra deps for that either.
 dependencies = [
     "PySide6-Essentials>=6.5,<7",
+    "certifi>=2023.7.22",
 ]
 
 [project.urls]
