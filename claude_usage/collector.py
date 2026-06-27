@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import functools
 import glob
 import json
 import math
 import os
 import random
+import ssl
 import sys
 import time
 from dataclasses import dataclass, field
@@ -510,6 +512,24 @@ def _load_credentials(claude_dir: str) -> str | None:
     return None
 
 
+@functools.lru_cache(maxsize=1)
+def _ssl_context() -> ssl.SSLContext:
+    """HTTPS verification context with a CA bundle that works everywhere.
+
+    macOS Python from python.org (and other framework builds) does not verify
+    against the system keychain, so HTTPS to api.anthropic.com fails with
+    ``CERTIFICATE_VERIFY_FAILED`` and the widget shows blank session/weekly
+    numbers — exactly the "works on Linux, blank on macOS" symptom. certifi
+    ships a real CA bundle on every platform; fall back to the stdlib default
+    (already fine on Linux/Homebrew) if certifi is not installed.
+    """
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
 def fetch_rate_limits(claude_dir: str) -> dict[str, Any]:
     """Fetch the user's plan utilization from Anthropic.
 
@@ -562,7 +582,7 @@ def fetch_rate_limits(claude_dir: str) -> dict[str, Any]:
         },
     )
     try:
-        with urlopen(req, timeout=15) as resp:
+        with urlopen(req, timeout=15, context=_ssl_context()) as resp:
             headers = {k.lower(): v for k, v in resp.getheaders()}
     except HTTPError as e:
         if e.code == 401:
@@ -623,7 +643,7 @@ def _fetch_oauth_usage(token: str) -> dict[str, Any]:
     payload = None
     for attempt in range(_USAGE_MAX_RETRIES + 1):
         try:
-            with urlopen(req, timeout=10) as resp:
+            with urlopen(req, timeout=10, context=_ssl_context()) as resp:
                 payload = json.loads(resp.read(65536).decode("utf-8", errors="replace"))
             break
         except HTTPError as e:
