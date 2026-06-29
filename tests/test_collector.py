@@ -934,7 +934,7 @@ class TestOAuthUsage429(unittest.TestCase):
         import claude_usage.collector as c
         calls = {"n": 0}
 
-        def always_429(req, timeout=10):
+        def always_429(req, timeout=10, **kw):
             calls["n"] += 1
             raise self._http_error(429, retry_after="0")
 
@@ -951,7 +951,7 @@ class TestOAuthUsage429(unittest.TestCase):
         import claude_usage.collector as c
         calls = {"n": 0}
 
-        def always_429(req, timeout=10):
+        def always_429(req, timeout=10, **kw):
             calls["n"] += 1
             raise self._http_error(429)  # no Retry-After
 
@@ -967,7 +967,7 @@ class TestOAuthUsage429(unittest.TestCase):
         import claude_usage.collector as c
         calls = {"n": 0}
 
-        def always_429(req, timeout=10):
+        def always_429(req, timeout=10, **kw):
             calls["n"] += 1
             raise self._http_error(429, retry_after="1")
 
@@ -983,7 +983,7 @@ class TestOAuthUsage429(unittest.TestCase):
         # Fail once with a positive Retry-After (so we retry), then succeed.
         seq = [self._http_error(429, retry_after="1"), None]
 
-        def flaky(req, timeout=10):
+        def flaky(req, timeout=10, **kw):
             item = seq.pop(0)
             if item is not None:
                 raise item
@@ -1002,7 +1002,7 @@ class TestOAuthUsage429(unittest.TestCase):
     def test_401_still_reports_credentials_expired(self) -> None:
         import claude_usage.collector as c
 
-        def always_401(req, timeout=10):
+        def always_401(req, timeout=10, **kw):
             raise self._http_error(401)
 
         with patch.object(c, "urlopen", always_401):
