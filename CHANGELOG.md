@@ -3,6 +3,20 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## 0.9.2
+
+### Fixed
+- **macOS: blank session/weekly from TLS verification.** Added a certifi CA
+  bundle so HTTPS to `api.anthropic.com` verifies on macOS python.org builds
+  (which don't trust the system keychain), which otherwise failed with
+  `CERTIFICATE_VERIFY_FAILED` and blanked the bars. Complements the 0.9.1
+  credential fix — the two cover different macOS failure modes. ([#14](https://github.com/bozdemir/claude-usage-widget/pull/14))
+
+### Changed
+- `certifi` is now a (small, pure-Python) runtime dependency alongside
+  PySide6-Essentials; docs reframed from "single dependency" to "two
+  pure-pip wheels, no system libraries".
+
 ## 0.9.1
 
 ### Added
