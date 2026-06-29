@@ -28,9 +28,11 @@ classifiers = [
     "Topic :: System :: Monitoring",
 ]
 
-# Single runtime dependency: PySide6-Essentials bundles Qt (no apt/brew
-# needed).  Notifications use the platform's built-in CLI (notify-send on
-# Linux, osascript on macOS), so no extra deps for that either.
+# Two small, pure-pip runtime dependencies — no system libraries (no apt /
+# brew / PyGObject / rumps): PySide6-Essentials bundles Qt, and certifi
+# provides a CA bundle so HTTPS verification works on macOS python.org
+# builds (which don't trust the system keychain). Notifications use the
+# platform's built-in CLI (notify-send on Linux, osascript on macOS).
 dependencies = [
     "PySide6-Essentials>=6.5,<7",
     "certifi>=2023.7.22",

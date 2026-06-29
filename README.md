@@ -132,7 +132,7 @@ claude-usage --detach     # …or run it in the background and free the shell
 claude-usage --version    # 0.9.1
 ```
 
-That's it — no `apt`, no `brew`, no PyGObject, no rumps. PySide6 ships Qt in the wheel, so the widget is fully self-contained.
+That's it — no `apt`, no `brew`, no PyGObject, no rumps. `pip` pulls in just two pure-Python wheels (PySide6-Essentials, which ships Qt, and certifi for HTTPS), so the widget is self-contained with zero system libraries.
 
 ### macOS (Homebrew — optional)
 
@@ -335,7 +335,7 @@ Contributions are welcome. A few guidelines:
 
 - **Bug reports** — open an issue with your OS, Python version, and the full error output.
 - **Pull requests** — keep changes focused. One fix or feature per PR. Run the widget manually before submitting.
-- **No new runtime dependencies** — PySide6-Essentials is the only runtime dep. Everything else uses the Python stdlib and platform-native CLIs.
+- **Minimal runtime dependencies** — just PySide6-Essentials (Qt) and certifi (HTTPS CA bundle). No system libraries, no PyGObject/rumps; everything else uses the Python stdlib and platform-native CLIs. PRs that add heavier deps will be asked to make them optional.
 - **Code style** — follow the existing conventions. No formatter is enforced; just match the surrounding code.
 
 ## License
