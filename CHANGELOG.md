@@ -3,6 +3,41 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## 0.9.3
+
+### Fixed
+Twelve bugs from a comprehensive audit (10 parallel reviewers over the
+post-v0.6 churn):
+
+- **False "Credentials expired" on transient faults.** 5xx responses from
+  `/api/oauth/usage` are now retried with the existing backoff, and the
+  `/v1/messages` x-api-key fallback is skipped entirely for OAuth tokens —
+  it could only 401 and mislabeled any server blip as an auth failure.
+- **Minimized OSD hijacked clicks into the browser** when a news headline
+  was cached (the news click region went negative at the 6px minimized
+  height); the region now also requires the news feature to be enabled.
+- **"Always on top" toggle could break the window**: re-creating the native
+  window dropped the translucency / taskbar-skip / macOS-visibility
+  attributes, leaving an opaque black box or a taskbar entry. All are
+  re-asserted now.
+- **`--detach` crashed on macOS** (AppKit init in a fork()ed child aborts);
+  it now respawns a fresh process via `subprocess.Popen`.
+- **News strip fixes**: fetched with the certifi SSL context (was always
+  empty on macOS python.org builds), animated even when the cost ticker is
+  idle (was frozen off-screen), hidden after opting back out (a cached
+  headline kept rendering), and the cache honours `XDG_CONFIG_HOME`.
+- **Popup cost arithmetic**: per-model rate lines now use the same
+  family-fallback pricing as the computed totals, so "tokens × rate = $"
+  adds up for not-yet-tabled models (both classic and skin popups).
+- **Expired-window clamp bypass**: the last-known fallback now searches
+  session/weekly reset timestamps independently, so a sample carrying only
+  one key can't bury the other and resurrect a finished window.
+- **Receipt skin paper grain** was erased by the shared painter's
+  background fill every frame; custom drag positions stayed stale after a
+  wheel-resize; the scrolling popup's window chrome matched the real 10px
+  scrollbar width; `osd_visible: false` now restores as minimized (a truly
+  hidden restore had no UI path back).
+
 ## 0.9.2
 
 ### Fixed
