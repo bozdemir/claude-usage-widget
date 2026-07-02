@@ -562,6 +562,12 @@ def fetch_rate_limits(claude_dir: str) -> dict[str, Any]:
     # "credentials expired" — exactly the bug we're avoiding here.
     if primary.get("rate_limited"):
         return primary
+    # Same reasoning for EVERY other primary failure when the token is an
+    # OAuth token (sk-ant-oat…): it can never authenticate as an x-api-key,
+    # so the fallback would turn any transient 5xx/timeout into a false
+    # "Credentials expired". Only attempt the fallback for real API keys.
+    if token.startswith("sk-ant-oat"):
+        return primary
 
     # Fallback: tiny /v1/messages call to harvest rate-limit headers. These
     # cover API-key-level limits (not plan limits) but are better than
@@ -664,7 +670,13 @@ def _fetch_oauth_usage(token: str) -> dict[str, Any]:
                             "rate_limited": True}
                 time.sleep(min(retry_after, 5.0))  # cap so a huge Retry-After can't stall the poll
                 continue
-            return {"error": f"OAuth usage error {e.code}"}
+            if e.code >= 500 and attempt < _USAGE_MAX_RETRIES:
+                # 5xx is exactly the transient server fault the backoff was
+                # built for — fall through to the exponential sleep below
+                # instead of bailing on the first blip.
+                pass
+            else:
+                return {"error": f"OAuth usage error {e.code}"}
         except json.JSONDecodeError:
             # Malformed body — a retry might catch a truncated response, but
             # don't loop forever; one more attempt is plenty.
@@ -832,13 +844,18 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
             week_util = float(last.get("weekly", 0.0) or 0.0)
             # Restore the reset countdowns too — otherwise they stay 0 and
             # every formatter blanks the reset label on a single throttled
-            # poll (issue #11). The most recent sample that recorded them
-            # wins; scan backwards since older samples predate this field.
+            # poll (issue #11). Search each key INDEPENDENTLY: append_sample
+            # only writes a reset key when it was truthy, so a sample can
+            # carry one key without the other — stopping at the first sample
+            # with either key would silently zero the other one and let an
+            # expired window slip past the clamp below.
             sess_reset = week_reset = 0
             for prev in reversed(recent):
-                if prev.get("session_reset") or prev.get("weekly_reset"):
-                    sess_reset = int(prev.get("session_reset", 0) or 0)
-                    week_reset = int(prev.get("weekly_reset", 0) or 0)
+                if not sess_reset and prev.get("session_reset"):
+                    sess_reset = int(prev["session_reset"])
+                if not week_reset and prev.get("weekly_reset"):
+                    week_reset = int(prev["weekly_reset"])
+                if sess_reset and week_reset:
                     break
             # A window whose reset time has already passed has rolled over:
             # its true utilization is back to 0, not the stale last sample.

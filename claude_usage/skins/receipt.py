@@ -197,7 +197,8 @@ def paint_popup(p, rect, data, scale: float = 1.0) -> float:
     return _popup_generic.paint_popup(p, rect, data, scale, THEME,
                                       section_style="receipt",
                                       bar_style="rect_border",
-                                      masthead_style="receipt")
+                                      masthead_style="receipt",
+                                      skip_bg=True)
 
 
 def measure_popup(data, scale: float = 1.0) -> int:

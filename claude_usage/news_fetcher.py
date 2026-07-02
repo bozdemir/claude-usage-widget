@@ -21,7 +21,13 @@ NEWS_RSS_SOURCES = [
 ]
 CACHE_TTL_SECONDS = 3600  # 1 hour
 MAX_NEWS_ITEMS = 8
-_CACHE_FILE = os.path.expanduser("~/.config/claude-usage/news-cache.json")
+
+
+def _cache_file() -> str:
+    """Cache path under the same config root as config.py (honours
+    XDG_CONFIG_HOME, unlike a hardcoded ~/.config)."""
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, "claude-usage", "news-cache.json")
 
 
 @dataclass
@@ -33,7 +39,7 @@ class NewsItem:
 
 def _load_cache() -> tuple[float, list[NewsItem]] | None:
     try:
-        with open(_CACHE_FILE, encoding="utf-8") as f:
+        with open(_cache_file(), encoding="utf-8") as f:
             data = json.load(f)
         fetched_at = float(data["fetched_at"])
         items = [NewsItem(ts=float(i["ts"]), title=i["title"], url=i["url"]) for i in data["items"]]
@@ -44,8 +50,8 @@ def _load_cache() -> tuple[float, list[NewsItem]] | None:
 
 def _save_cache(items: list[NewsItem]) -> None:
     try:
-        os.makedirs(os.path.dirname(_CACHE_FILE), exist_ok=True)
-        with open(_CACHE_FILE, "w", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(_cache_file()), exist_ok=True)
+        with open(_cache_file(), "w", encoding="utf-8") as f:
             json.dump({
                 "fetched_at": time.time(),
                 "items": [{"ts": i.ts, "title": i.title, "url": i.url} for i in items],
@@ -98,10 +104,15 @@ def _parse_entries(raw: bytes) -> list[NewsItem]:
 
 
 def _fetch_rss() -> list[NewsItem]:
+    # Reuse the collector's certifi-backed SSL context: without it, macOS
+    # python.org builds fail CERTIFICATE_VERIFY_FAILED on every source and
+    # the bare except turns that into a permanently empty news strip.
+    from claude_usage.collector import _ssl_context
     for source_url in NEWS_RSS_SOURCES:
         try:
-            req = urllib.request.Request(source_url, headers={"User-Agent": "claude-usage-widget/0.6"})
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            req = urllib.request.Request(
+                source_url, headers={"User-Agent": "claude-usage-widget"})
+            with urllib.request.urlopen(req, timeout=8, context=_ssl_context()) as resp:
                 raw = resp.read()
             if raw:
                 return _parse_entries(raw)

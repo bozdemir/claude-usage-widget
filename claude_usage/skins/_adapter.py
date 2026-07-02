@@ -95,7 +95,7 @@ def build_popup_data(stats, now: float | None = None):
     the popup shape (e.g. the OSD-only paint dispatch) pay nothing for it.
     """
     from .popup_data import PopupData, CostRow, ProjectRow, TickerItem, ActiveSessionRow
-    from claude_usage.pricing import MODEL_PRICING
+    from claude_usage.pricing import get_pricing
 
     now_ts = now if now is not None else time.time()
     osd = from_usage_stats(stats, now=now_ts)
@@ -114,7 +114,9 @@ def build_popup_data(stats, now: float | None = None):
             reverse=True,
         )
         primary_model, counts = ranked[0]
-        rates = MODEL_PRICING.get(primary_model) or MODEL_PRICING["claude-sonnet-4-6"]
+        # Family-aware lookup keeps these rows consistent with the popup's
+        # big total (cost_today_usd), which is computed via calculate_cost.
+        rates = get_pricing(primary_model)
         per_m = 1_000_000.0
         spec = [
             ("input",        "input_tokens",           "input"),

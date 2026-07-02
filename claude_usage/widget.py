@@ -39,7 +39,7 @@ from claude_usage.collector import UsageStats, collect_all
 from claude_usage.forecast import format_forecast
 from claude_usage.notifier import UsageNotifier
 from claude_usage.overlay import UsageOverlay, _hex_to_qcolor
-from claude_usage.pricing import MODEL_PRICING, calculate_cost
+from claude_usage.pricing import MODEL_PRICING, calculate_cost, get_pricing
 from claude_usage.themes import ThemeStyle, get_style, get_theme
 
 
@@ -323,6 +323,11 @@ class SkinPopupWidget(QWidget):
     wraps it so tall popups still fit on small screens.
     """
 
+    # Width of the styled vertical scrollbar. The window-width chrome in
+    # _resize_content MUST use this same value or the extra pixels render
+    # as a bare grey strip beside the scrollbar.
+    _SCROLLBAR_W = 10
+
     def __init__(self, config: dict[str, Any]) -> None:
         super().__init__()
         from claude_usage.skins import SKIN_MODULES
@@ -383,7 +388,7 @@ class SkinPopupWidget(QWidget):
         thumb = t.get("accent", t.get("bar_blue", "#5B9BD5"))
         self._scroll.setStyleSheet(
             f"QScrollArea, QScrollArea QWidget {{ background: {bg}; border: 0; }}"
-            f"QScrollBar:vertical {{ background: {bg}; width: 10px; margin: 0; }}"
+            f"QScrollBar:vertical {{ background: {bg}; width: {self._SCROLLBAR_W}px; margin: 0; }}"
             f"QScrollBar::handle:vertical {{ background: {thumb}; border-radius: 4px; min-height: 24px; }}"
             f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; background: none; }}"
             f"QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: {track}; }}"
@@ -444,7 +449,7 @@ class SkinPopupWidget(QWidget):
             max_h = height
         # Add scrollbar width when the content is taller than the
         # available space so nothing gets hidden under a floating bar.
-        chrome_w = 14 if height > max_h else 0
+        chrome_w = self._SCROLLBAR_W if height > max_h else 0
         window_h = min(height, max_h)
         self.resize(width + chrome_w, window_h)
 
@@ -858,7 +863,9 @@ class UsagePopup(QWidget):
         for short, model, in_t, out_t, cr_t, cc_t, bk in rows:
             if bk["total"] < 0.01:
                 continue
-            rates = MODEL_PRICING.get(model, MODEL_PRICING["claude-sonnet-4-6"])
+            # Family-aware lookup — MUST match calculate_cost's fallback or
+            # the displayed "tokens × rate = $" lines contradict bk's values.
+            rates = get_pricing(model)
             self._add_dim_line(f"  {short}: ${bk['total']:.2f} total", margin_bottom=2)
             if in_t > 0:
                 self._add_dim_line(
@@ -988,6 +995,9 @@ class ClaudeUsageApp(QObject):
 
     # Emitted on the GUI thread once background collection completes.
     stats_ready = Signal(object)
+    # Cross-thread bridge for the GitHub release check: the daemon thread
+    # emits, Qt queue-delivers to the GUI thread, which owns _latest_tag.
+    update_available = Signal(str)
 
     def __init__(self, config: dict[str, Any]) -> None:
         super().__init__()
@@ -1051,6 +1061,7 @@ class ClaudeUsageApp(QObject):
         self.overlay.scaledTo.connect(self._on_overlay_scaled)
         self.overlay.minimizedChanged.connect(self._on_overlay_minimized_changed)
         self.stats_ready.connect(self._apply_stats)
+        self.update_available.connect(self._on_update_available)
 
         # Show the overlay, then restore last-session UI state so the widget
         # reopens exactly as the user left it (scale is restored in the
@@ -1059,7 +1070,13 @@ class ClaudeUsageApp(QObject):
         if config.get("osd_minimized", False):
             self.overlay.toggle_minimized()
         if not config.get("osd_visible", True):
-            self.overlay.hide()
+            # Restore "hidden" as MINIMIZED, not fully hidden: the context
+            # menu is only reachable by right-clicking the overlay, so a
+            # truly hidden restore would leave no UI path back — the user
+            # would have to hand-edit config.json. The 6px strip still takes
+            # right-clicks, so recovery is one click away.
+            if not self.overlay._minimized:
+                self.overlay.toggle_minimized()
         self._refresh_async()
 
         # Periodic refresh timer (runs on the GUI thread). The poll interval
@@ -1645,7 +1662,10 @@ class ClaudeUsageApp(QObject):
             from claude_usage.updater import check_latest_version
             tag, available = check_latest_version(v)
             if available and tag:
-                self._latest_tag = tag
+                # Runs on a daemon thread — hand the result to the GUI
+                # thread via a queued signal instead of writing _latest_tag
+                # directly (same idiom as stats_ready).
+                self.update_available.emit(tag)
                 # Show a one-time system notification.
                 self.notifier._send(
                     f"Claude Usage {tag} available",
@@ -1653,6 +1673,10 @@ class ClaudeUsageApp(QObject):
                 )
         except Exception:
             pass
+
+    def _on_update_available(self, tag: str) -> None:
+        """GUI-thread slot: record the newer release tag for the menu banner."""
+        self._latest_tag = tag
 
     def _on_quit(self) -> None:
         self._alive = False

@@ -1036,8 +1036,9 @@ class TestOAuthUsage429(unittest.TestCase):
 class _CtxResp:
     """Minimal context-manager stand-in for urlopen's response object."""
 
-    def __init__(self, body: bytes) -> None:
+    def __init__(self, body: bytes, headers: dict[str, str] | None = None) -> None:
         self._body = body
+        self._headers = dict(headers or {})
 
     def __enter__(self):
         return self
@@ -1047,6 +1048,12 @@ class _CtxResp:
 
     def read(self, n: int = -1) -> bytes:
         return self._body
+
+    def getheaders(self) -> list[tuple[str, str]]:
+        # Real urlopen responses expose getheaders(); the fetch_rate_limits
+        # fallback calls it, so the stand-in must mirror it or a signature
+        # drift there would be invisible to tests (the context= lesson).
+        return list(self._headers.items())
 
 
 # ---------------------------------------------------------------------------
@@ -1076,9 +1083,13 @@ class TestCollectAll(unittest.TestCase):
             with open(history_path, "w") as f:
                 f.write(json.dumps({"display": "hi", "timestamp": now, "sessionId": "s1", "project": "/p"}) + "\n")
 
-            # Create a conversation file with tokens
+            # Create a conversation file with tokens. The date prefix MUST be
+            # UTC — collect_all buckets by UTC date, so a local-time prefix
+            # makes this test false-safe: green on UTC CI, red for anyone
+            # west of UTC after their local evening.
             proj_dir = _make_conversation_dir(tmpdir)
-            today_str = datetime.now().strftime("%Y-%m-%d")
+            from datetime import timezone as _tz
+            today_str = datetime.now(_tz.utc).strftime("%Y-%m-%d")
             _write_conversation(proj_dir, [
                 _assistant_entry(f"{today_str}T10:00:00", output_tokens=500),
             ])
@@ -1179,6 +1190,110 @@ class TestCollectAllStaleFallback(unittest.TestCase):
             self.assertAlmostEqual(stats.session_utilization, 0.55)
             self.assertEqual(stats.session_reset, int(now + 1800))
             self.assertAlmostEqual(stats.weekly_utilization, 0.25)
+
+
+class TestAuditFixesV093(unittest.TestCase):
+    """Regression tests for the v0.9.3 audit fixes: 5xx retry, OAuth-token
+    fallback skip, independent reset-key scan, and news opt-in gating."""
+
+    def _http_error(self, code: int):
+        from urllib.error import HTTPError
+        return HTTPError("https://api", code, "err", {}, io.BytesIO(b"{}"))
+
+    def test_5xx_is_retried_and_can_recover(self) -> None:
+        import claude_usage.collector as c
+        seq = [self._http_error(503), None]  # one 503, then success
+
+        def flaky(req, timeout=10, **kw):
+            item = seq.pop(0)
+            if item is not None:
+                raise item
+            return _CtxResp(json.dumps({
+                "five_hour": {"utilization": 20.0, "resets_at": "2099-01-01T00:00:00+00:00"},
+                "seven_day": {"utilization": 5.0, "resets_at": "2099-01-02T00:00:00+00:00"},
+            }).encode())
+
+        with patch.object(c, "urlopen", flaky), \
+             patch.object(c.time, "sleep", lambda s: None):
+            result = _fetch_oauth_usage("valid-token")
+        self.assertNotIn("error", result)
+        self.assertAlmostEqual(result["session_utilization"], 0.20, places=5)
+
+    def test_5xx_exhausts_retries_then_errors(self) -> None:
+        import claude_usage.collector as c
+        calls = {"n": 0}
+
+        def always_503(req, timeout=10, **kw):
+            calls["n"] += 1
+            raise self._http_error(503)
+
+        with patch.object(c, "urlopen", always_503), \
+             patch.object(c.time, "sleep", lambda s: None):
+            result = _fetch_oauth_usage("valid-token")
+        self.assertIn("error", result)
+        self.assertGreater(calls["n"], 1)  # actually retried before giving up
+
+    def test_oauth_token_never_hits_xapikey_fallback(self) -> None:
+        """An sk-ant-oat token can't authenticate as an x-api-key; on any
+        primary failure the fallback must be skipped so a transient 5xx is
+        never mislabeled 'Credentials expired'."""
+        import claude_usage.collector as c
+
+        def boom(*a, **k):
+            raise AssertionError("x-api-key fallback must not run for OAuth tokens")
+
+        with patch.object(c, "_load_credentials", lambda d: "sk-ant-oat01-xyz"), \
+             patch.object(c, "_fetch_oauth_usage",
+                          lambda t: {"error": "OAuth usage error 503"}), \
+             patch.object(c, "urlopen", boom):
+            result = fetch_rate_limits("/fake/dir")
+        self.assertEqual(result["error"], "OAuth usage error 503")
+
+    @patch("claude_usage.collector.fetch_rate_limits")
+    def test_reset_scan_searches_keys_independently(self, mock_fetch: Any) -> None:
+        """A newer sample carrying only weekly_reset must not bury an older
+        sample's session_reset — otherwise the expired-window clamp can be
+        bypassed and a finished 5h window keeps showing stale utilization."""
+        from claude_usage.history import append_sample
+
+        mock_fetch.return_value = {"error": "Rate limited", "rate_limited": True}
+        now = datetime.now().timestamp()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            samples_path = os.path.join(tmpdir, "usage-history.jsonl")
+            # Older sample: both resets; session window expired an hour ago.
+            append_sample(samples_path, now - 7200, 0.82, 0.40,
+                          session_reset=int(now - 3600),
+                          weekly_reset=int(now + 3 * 86400))
+            # Newest sample: only weekly_reset (session_reset was 0 from API).
+            append_sample(samples_path, now - 60, 0.82, 0.41,
+                          weekly_reset=int(now + 3 * 86400))
+
+            stats = collect_all({"claude_dir": tmpdir})
+
+            # session_reset must be found in the OLDER sample and, being
+            # expired, clamp session utilization to zero.
+            self.assertEqual(stats.session_utilization, 0.0)
+            self.assertEqual(stats.session_reset, 0)
+            # weekly stays live from the newest sample.
+            self.assertAlmostEqual(stats.weekly_utilization, 0.41)
+
+    @patch("claude_usage.collector.fetch_rate_limits")
+    @patch("claude_usage.collector.get_news_items")
+    def test_news_not_fetched_when_opted_out(self, mock_news: Any, mock_fetch: Any) -> None:
+        mock_fetch.return_value = {"error": "x"}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            collect_all({"claude_dir": tmpdir})           # show_news absent
+            collect_all({"claude_dir": tmpdir, "show_news": False})
+        mock_news.assert_not_called()
+
+    @patch("claude_usage.collector.fetch_rate_limits")
+    @patch("claude_usage.collector.get_news_items")
+    def test_news_fetched_when_opted_in(self, mock_news: Any, mock_fetch: Any) -> None:
+        mock_fetch.return_value = {"error": "x"}
+        mock_news.return_value = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            collect_all({"claude_dir": tmpdir, "show_news": True})
+        mock_news.assert_called_once()
 
 
 if __name__ == "__main__":

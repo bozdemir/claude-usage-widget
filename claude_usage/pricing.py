@@ -124,6 +124,16 @@ def _resolve_pricing(model: str) -> Dict[str, float]:
     return MODEL_PRICING[fallback]
 
 
+def get_pricing(model: str) -> Dict[str, float]:
+    """Public rate lookup with the SAME fallback chain as calculate_cost.
+
+    Display code must use this instead of ``MODEL_PRICING.get(model,
+    <sonnet>)`` — otherwise an unknown model's shown per-token rate (Sonnet)
+    contradicts its computed dollar amounts (family tier), and the popup's
+    "tokens × rate = $" arithmetic visibly doesn't add up."""
+    return _resolve_pricing(model)
+
+
 def calculate_cost(
     model: str,
     input_tokens: int,
@@ -222,4 +232,5 @@ __all__ = [
     "MODEL_PRICING",
     "calculate_cost",
     "calculate_stats_cost",
+    "get_pricing",
 ]

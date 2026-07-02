@@ -34,21 +34,27 @@ def paint_popup(
     section_style: str = "default",
     bar_style: str = "block",
     masthead_style: str = "default",   # "default" | "receipt" | "brutalist"
+    skip_bg: bool = False,
 ) -> float:
     """Render the shared masthead → sections → footer layout into *rect*.
 
     Direction modules call this with the variant flags that pick their
     chrome (masthead style, section header style, bar style); the body
     layout is identical across directions. Returns the final y cursor.
+
+    ``skip_bg=True`` leaves the caller's pre-painted background untouched —
+    the receipt skin paints paper + grain scanlines BEFORE delegating here,
+    and the unconditional background fill was silently erasing them.
     """
     s = scale; t = theme
     pad = POPUP_PADDING * s
 
     # --- panel background + border --------------------------------
     bg = hex_to_qcolor(t.get("paper", t["bg"]))
-    p.setPen(Qt.NoPen); p.setBrush(bg)
     radius = 0 if masthead_style == "brutalist" else 8 * s
-    p.drawRoundedRect(rect, radius, radius)
+    if not skip_bg:
+        p.setPen(Qt.NoPen); p.setBrush(bg)
+        p.drawRoundedRect(rect, radius, radius)
     border_w = 2 * s if masthead_style == "brutalist" else 1
     p.setPen(QPen(hex_to_qcolor(t["border"]), border_w))
     p.setBrush(Qt.NoBrush)

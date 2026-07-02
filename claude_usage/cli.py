@@ -115,16 +115,20 @@ def run_cli(argv: Sequence[str]) -> int:
 
 
 def _detach_into_background() -> None:
-    """Double-fork so the launching shell gets its prompt back immediately.
+    """Respawn the widget as a detached child process and exit.
 
-    Standard Unix daemon pattern: fork → first child setsid()s into a new
-    session, forks again → grandchild is fully detached from controlling
-    terminal and process group, so a shell exit / SIGHUP can't kill it.
-    stdio is rebound to /dev/null + a log file under XDG_CACHE_HOME so
-    later debugging is still possible.
+    Spawn-not-fork on purpose: the old double-fork daemonizer crashed on
+    macOS, where initializing AppKit (which QApplication does) in a
+    fork()ed child without an exec() aborts the process — Apple's ObjC
+    runtime forbids it. subprocess.Popen fork+execs a FRESH interpreter,
+    which is safe on every platform, and ``start_new_session=True`` gives
+    it its own session (the setsid() of the old pattern) so closing the
+    launching terminal can't SIGHUP the widget.
 
-    Windows has no fork; users there should run the EXE detached via
-    Start-Process or pythonw — we print a hint and continue in foreground.
+    stdio goes to a log file under XDG_CACHE_HOME so later debugging is
+    still possible. Windows has no reliable equivalent here; users there
+    should use Start-Process or pythonw — we print a hint and continue in
+    the foreground.
     """
     if sys.platform == "win32":
         print(
@@ -134,17 +138,8 @@ def _detach_into_background() -> None:
         )
         return
 
-    # First fork — parent returns to the shell prompt.
-    if os.fork() > 0:
-        os._exit(0)
-    # New session, no controlling terminal.
-    os.setsid()
-    # Second fork — grandchild can never re-acquire a controlling tty.
-    if os.fork() > 0:
-        os._exit(0)
+    import subprocess
 
-    # Route stdio to a persistent log so the user can `tail` it if the
-    # widget misbehaves. Append-mode keeps prior runs around.
     cache_dir = os.path.join(
         os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
         "claude-usage",
@@ -155,14 +150,20 @@ def _detach_into_background() -> None:
         cache_dir = "/tmp"
     log_path = os.path.join(cache_dir, "widget.log")
 
-    sys.stdout.flush()
-    sys.stderr.flush()
-    with open(os.devnull, "r") as null_in:
-        os.dup2(null_in.fileno(), 0)
-    log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
-    os.dup2(log_fd, 1)
-    os.dup2(log_fd, 2)
-    os.close(log_fd)
+    # Strip the detach flags so the child runs the plain foreground GUI
+    # instead of respawning itself forever.
+    child_argv = [a for a in sys.argv[1:] if a not in ("--detach", "-d")]
+    with open(log_path, "a") as log:
+        subprocess.Popen(
+            [sys.executable, "-m", "claude_usage"] + child_argv,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            start_new_session=True,
+            close_fds=True,
+        )
+    # Parent's job is done — the child owns the GUI from here.
+    os._exit(0)
 
 
 def _print_qt_install_hint(exc: Exception) -> None:

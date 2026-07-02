@@ -308,7 +308,15 @@ class UsageOverlay(QWidget):
             (self._ticker_enabled and self._view_mode == VIEW_MODE_BARS and self._skin is None)
             or skin_wants_ticker
         )
-        if ticker_would_draw:
+        # The same timer drives the news marquee — without this, an idle
+        # Claude (empty ticker) leaves _news_offset frozen at 0, where the
+        # marquee math places the headline entirely outside the clip rect,
+        # so the opt-in news strip is invisible exactly when it's most
+        # interesting (nothing else happening).
+        news_would_scroll = (
+            not self._minimized and self._news_enabled and bool(self._news_items)
+        )
+        if ticker_would_draw or news_would_scroll:
             if not self._ticker_timer.isActive():
                 self._ticker_timer.start()
         else:
@@ -508,9 +516,15 @@ class UsageOverlay(QWidget):
         self._always_on_top = on
         was_visible = self.isVisible()
         self.setWindowFlags(self._window_flags())
-        # Flags reset some attributes on re-creation; re-assert the ones we
-        # rely on, then re-show (setWindowFlags hides the window).
+        # setWindowFlags re-creates the NATIVE window, which can drop widget
+        # attributes with native-window effects. Re-assert every one we set
+        # in __init__ — losing WA_TranslucentBackground paints the OSD as an
+        # opaque black box, losing the X11 hint puts it back in the taskbar/
+        # Alt-Tab, and losing the Mac hint makes it vanish on focus loss.
+        self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WA_X11NetWmWindowTypeNotification, True)
+        self.setAttribute(Qt.WA_MacAlwaysShowToolWindow, True)
         if was_visible:
             self.show()
         self._move_to_default_position()
@@ -543,9 +557,16 @@ class UsageOverlay(QWidget):
             return
         if self._press_pos is not None and not self._dragging:
             # Check if click landed on the news strip (bottom NEWS_STRIP_HEIGHT px).
+            # Guards: never while minimized (h=6 makes the threshold negative,
+            # which would hijack EVERY click into the browser), and only while
+            # the news feature is actually enabled — a cached headline from a
+            # since-disabled session must not keep stealing clicks.
             click_y = event.position().y()
             h = self.height()
-            if click_y >= h - NEWS_STRIP_HEIGHT * self._scale and self._latest_news_url:
+            if (not self._minimized
+                    and self._news_enabled
+                    and click_y >= h - NEWS_STRIP_HEIGHT * self._scale
+                    and self._latest_news_url):
                 import webbrowser
                 webbrowser.open(self._latest_news_url)
             else:
@@ -577,6 +598,14 @@ class UsageOverlay(QWidget):
             self._apply_size()
             self.update()
             self.scaledTo.emit(self._scale)
+            # _apply_size preserves the top-RIGHT corner, so a resize shifts
+            # the top-left. For a custom-positioned OSD the saved coordinates
+            # would silently go stale and the widget would reappear at the
+            # pre-resize spot after a restart — keep them in sync.
+            if self._position == OSD_POSITION_CUSTOM:
+                tl = self.frameGeometry().topLeft()
+                self._custom_xy = (tl.x(), tl.y())
+                self.movedTo.emit(tl.x(), tl.y())
 
     # ----------------------------------------------------------- painting
 
@@ -921,10 +950,11 @@ class UsageOverlay(QWidget):
     ) -> None:
         """Scrolling strip showing the latest news headline.
 
-        When news is disabled: text is shown statically from the left edge
-        (no scroll). When enabled: scrolls right-to-left as normal.
+        Drawn only while the news feature is enabled — a headline cached
+        from a since-disabled session must not keep rendering, or the
+        "opt-in" contract quietly breaks after one toggle cycle.
         """
-        if not self._latest_headline:
+        if not self._news_enabled or not self._latest_headline:
             return
         tape_x = pad_x
         tape_w = max(0.0, w - 2 * pad_x)
@@ -940,17 +970,13 @@ class UsageOverlay(QWidget):
         text_w = fm.horizontalAdvance(text) or 1
         news_color = _hex_to_qcolor(self._theme.get("text_link", self._theme.get("warn", "#f59e0b")))
         p.setPen(news_color)
-        if self._news_enabled:
-            x_start = tape_x + tape_w - (self._news_offset % text_w)
-            copies = max(2, int(tape_w // text_w) + 2)
-            for i in range(copies):
-                x = x_start + i * text_w
-                if x + text_w < tape_x or x > tape_x + tape_w:
-                    continue
-                p.drawText(QPointF(x, baseline), text)
-        else:
-            # Disabled: show static text from left edge (no scroll).
-            p.drawText(QPointF(tape_x, baseline), text)
+        x_start = tape_x + tape_w - (self._news_offset % text_w)
+        copies = max(2, int(tape_w // text_w) + 2)
+        for i in range(copies):
+            x = x_start + i * text_w
+            if x + text_w < tape_x or x > tape_x + tape_w:
+                continue
+            p.drawText(QPointF(x, baseline), text)
         p.restore()
 
     @staticmethod
