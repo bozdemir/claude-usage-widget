@@ -130,10 +130,16 @@ def test_token_out_of_window_excluded(tmp_path):
 
 def test_collect_returns_populated_usagestats(tmp_path):
     codex_dir = str(tmp_path)
+    # Build event timestamps from the real current UTC date so collect()'s
+    # internal "today" window always contains them. (Tiny caveat: a run within
+    # a sub-second of UTC midnight could straddle days — acceptable vs. the
+    # every-other-day failure of hardcoded dates; no time-freezing dep added.)
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     _write_rollout(codex_dir, "rollout-d.jsonl", [
-        {"timestamp": "2026-07-08T00:00:00.000Z", "type": "turn_context",
+        {"timestamp": f"{today}T00:00:00.000Z", "type": "turn_context",
          "payload": {"model": "gpt-5.5"}},
-        _token_count("2026-07-08T10:00:00.000Z",
+        _token_count(f"{today}T10:00:00.000Z",
                      primary={"used_percent": 5.0, "window_minutes": 43200, "resets_at": 9},
                      secondary={"used_percent": 22.0, "window_minutes": 300, "resets_at": 8},
                      last_total=100),
