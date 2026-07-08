@@ -1040,3 +1040,23 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
     )
 
     return stats
+
+
+def collect_providers(config: dict[str, Any]) -> dict[str, UsageStats]:
+    """Collect a UsageStats per enabled provider, in config order.
+
+    A provider whose collect() raises is captured as a UsageStats with
+    rate_limit_error set, so one bad provider never blanks the others.
+    """
+    from claude_usage.providers import get_provider  # local import avoids cycle
+
+    out: dict[str, UsageStats] = {}
+    for pid in config.get("providers", ["claude"]):
+        try:
+            out[pid] = get_provider(pid).collect(config)
+        except Exception as exc:  # noqa: BLE001 — provider isolation is the point
+            stats = UsageStats()
+            stats.rate_limit_error = f"{pid}: {exc}"
+            stats.provider_title = pid.upper()
+            out[pid] = stats
+    return out
