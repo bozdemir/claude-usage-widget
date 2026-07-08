@@ -5,6 +5,7 @@ These snippets pull live usage data from either the CLI (`claude-usage
 
 | Integration | Backend | Refresh cadence |
 |-------------|---------|-----------------|
+| [Claude Code statusLine](claude-code-statusline.md) | CLI (`--statusline`) | on every Claude Code turn |
 | zsh prompt  | CLI     | on every prompt |
 | tmux        | CLI     | 15 s (tmux refresh) |
 | waybar      | CLI     | 30 s (waybar interval) |

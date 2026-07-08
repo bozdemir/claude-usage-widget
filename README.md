@@ -115,7 +115,7 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 - **Threshold notifications** -- native desktop notifications on crossing 75% / 90%
 - **Webhooks** -- optional POST to Slack / Discord / custom URLs on threshold, daily, or anomaly events
 - **Localhost JSON API** -- optional `http://127.0.0.1:8765/usage` for tmux / polybar / waybar integrations (prompt previews redacted at the serialization boundary)
-- **CLI mode** -- `--json`, `--field`, `--export csv` for scripts and status bars
+- **CLI mode** -- `--json`, `--field`, `--export csv` for scripts and status bars, plus `--statusline` for Claude Code's built-in [statusLine](docs/integrations/claude-code-statusline.md)
 - **Update notifications** -- a daily background check against the GitHub Releases API; when a newer version is published you get one desktop notification and a banner in the right-click menu (notified once per version, never nagging). The running build's version is also shown at the foot of the menu.
 
 ## Requirements

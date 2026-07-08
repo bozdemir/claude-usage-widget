@@ -1,8 +1,9 @@
 """Command-line interface + single-process GUI entry point.
 
 ``run_cli(argv)`` handles the CLI flags (``--version``, ``--json``,
-``--field``, ``--export``); when no flag is given, ``main()`` falls through
-to the cross-platform PySide6 GUI (:class:`claude_usage.widget.ClaudeUsageApp`).
+``--field``, ``--statusline``, ``--export``); when no flag is given,
+``main()`` falls through to the cross-platform PySide6 GUI
+(:class:`claude_usage.widget.ClaudeUsageApp`).
 """
 
 from __future__ import annotations
@@ -28,6 +29,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="store_true", help="Print version and exit.")
     p.add_argument("--json", action="store_true", help="Emit full stats as JSON.")
     p.add_argument("--once", action="store_true", help="Collect once and print JSON.")
+    p.add_argument("--statusline", action="store_true",
+                   help="Print one compact status line for Claude Code's "
+                        "statusLine setting and exit.")
     p.add_argument("--field", metavar="NAME", default=None,
                    help="Print a single UsageStats field by name.")
     p.add_argument("--export", choices=("csv", "json"), default=None,
@@ -42,6 +46,40 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _usage_stats_to_dict(stats: UsageStats) -> dict:
     return asdict(stats) if is_dataclass(stats) else dict(stats)
+
+
+def _format_statusline(data: dict) -> str:
+    """Build the one-line status string for Claude Code's ``statusLine``.
+
+    Mirrors the OSD's ``int(pct*100)`` truncation so the numbers match what
+    the widget shows. Reads only the (already redacted) stats dict; must
+    never raise — a statusLine command that errors would surface a stack
+    trace inside the Claude Code CLI.
+
+    Example: ``S 42% · W 18% · $3.21 · Fable 55%``. When the API is
+    rate-limited *and* there is no last-known sample to fall back on
+    (e.g. first run / no credentials), the percentages render as ``--`` but
+    the locally-computed cost is still shown.
+    """
+    rate_limited = bool(data.get("rate_limit_error"))
+    session = data.get("session_utilization") or 0.0
+    weekly = data.get("weekly_utilization") or 0.0
+    if rate_limited and not session and not weekly:
+        s_txt, w_txt = "--", "--"
+    else:
+        s_txt, w_txt = str(int(session * 100)), str(int(weekly * 100))
+
+    cost = data.get("today_cost") or 0.0
+    line = f"S {s_txt}% · W {w_txt}% · ${cost:.2f}"
+
+    # Append the model-scoped (e.g. Fable) bar only when the API reported one
+    # — same condition the overlay uses to paint the third bar. The label is
+    # dynamic (API display_name); never hardcode a model name here.
+    label = data.get("scoped_label") or ""
+    if label:
+        scoped = data.get("scoped_utilization") or 0.0
+        line += f" · {label} {int(scoped * 100)}%"
+    return line
 
 
 def _default_config_path() -> str:
@@ -83,14 +121,18 @@ def run_cli(argv: Sequence[str]) -> int:
         print(f"# exported {count} samples", file=sys.stderr)
         return 0
 
-    if args.json or args.once or args.field:
+    if args.json or args.once or args.field or args.statusline:
         config = load_config(_default_config_path())
         stats = collect_all(config)
         data = _usage_stats_to_dict(stats)
         # Same privacy redaction as the localhost API — never leak raw prompt
-        # text through --json / --field output.
+        # text through --json / --field / --statusline output.
         from claude_usage.api_server import _redact_external
         data = _redact_external(data)
+
+        if args.statusline:
+            print(_format_statusline(data))
+            return 0
 
         if args.field is not None:
             if args.field not in data:
@@ -232,7 +274,7 @@ def main() -> int:
     # anyway, but forking earlier means a faster shell-prompt return.
     args = build_parser().parse_args(sys.argv[1:])
     if args.detach and not (args.version or args.json or args.once or
-                            args.field or args.export):
+                            args.field or args.export or args.statusline):
         _detach_into_background()
         _launch_gui()
         return 0

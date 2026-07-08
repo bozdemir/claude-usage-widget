@@ -44,6 +44,11 @@ class TestBuildParser(unittest.TestCase):
         ns = parser.parse_args(["--once"])
         self.assertTrue(ns.once)
 
+    def test_statusline_flag(self):
+        parser = build_parser()
+        ns = parser.parse_args(["--statusline"])
+        self.assertTrue(ns.statusline)
+
     def test_no_args_is_gui_mode(self):
         parser = build_parser()
         ns = parser.parse_args([])
@@ -84,6 +89,97 @@ class TestRunCli(unittest.TestCase):
             rc = run_cli(["--field", "bogus_field"])
         self.assertEqual(rc, 2)
         self.assertIn("bogus_field", err.getvalue())
+
+
+class TestStatusline(unittest.TestCase):
+    """`--statusline` — one compact line for Claude Code's statusLine setting."""
+
+    def _run(self, stats):
+        out = StringIO()
+        with patch("claude_usage.cli.collect_all", return_value=stats), \
+             patch("sys.stdout", out):
+            rc = run_cli(["--statusline"])
+        return rc, out.getvalue()
+
+    def test_basic_line_shape(self):
+        rc, out = self._run(_fake_stats())
+        self.assertEqual(rc, 0)
+        # exactly one line, no trailing blank lines
+        self.assertEqual(out.count("\n"), 1)
+        self.assertRegex(out, r"^S \d+% · W \d+% · \$\d+\.\d{2}")
+
+    def test_rounding_matches_osd_truncation(self):
+        # OSD renders int(pct*100) (truncation, not round) — mirror it.
+        rc, out = self._run(UsageStats(session_utilization=0.589,
+                                       weekly_utilization=0.101,
+                                       today_cost=1.0))
+        self.assertTrue(out.startswith("S 58% · W 10% · "))
+
+    def test_cost_two_decimals(self):
+        _, out = self._run(UsageStats(session_utilization=0.0,
+                                      weekly_utilization=0.0,
+                                      today_cost=3.2))
+        self.assertIn("· $3.20", out)
+
+    def test_scoped_bar_present_only_when_labelled(self):
+        _, with_scoped = self._run(UsageStats(
+            session_utilization=0.4, weekly_utilization=0.2, today_cost=1.0,
+            scoped_utilization=0.55, scoped_label="Fable"))
+        self.assertIn(" · Fable 55%", with_scoped)
+
+        _, without = self._run(UsageStats(
+            session_utilization=0.4, weekly_utilization=0.2, today_cost=1.0,
+            scoped_utilization=0.0, scoped_label=""))
+        self.assertNotIn("Fable", without)
+        self.assertNotIn(" · ", without.strip()[without.strip().rindex("$"):])
+
+    def test_graceful_degradation_no_last_known(self):
+        # Rate-limited AND no last-known sample (session=weekly=0) -> '--%'
+        # placeholders, but the locally-computed cost is still shown.
+        rc, out = self._run(UsageStats(
+            session_utilization=0.0, weekly_utilization=0.0, today_cost=2.5,
+            rate_limit_error="Rate limited -- using last known values"))
+        self.assertEqual(rc, 0)
+        self.assertIn("S --% · W --%", out)
+        self.assertIn("$2.50", out)
+
+    def test_rate_limited_with_last_known_shows_numbers(self):
+        # Rate-limited but restored last-known values -> real numbers, no '--'.
+        _, out = self._run(UsageStats(
+            session_utilization=0.42, weekly_utilization=0.18, today_cost=1.0,
+            rate_limit_error="Rate limited -- using last known values"))
+        self.assertIn("S 42% · W 18%", out)
+        self.assertNotIn("--", out)
+
+    def test_never_raises_and_returns_zero_on_empty_stats(self):
+        rc, out = self._run(UsageStats())
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.strip())
+
+    def test_statusline_does_not_launch_gui(self):
+        import claude_usage.cli as cli
+        with patch.object(cli, "collect_all", return_value=_fake_stats()), \
+             patch.object(cli, "_launch_gui") as gui, \
+             patch.object(cli, "_detach_into_background") as detach, \
+             patch("sys.stdout", StringIO()), \
+             patch("sys.argv", ["claude-usage", "--statusline"]):
+            rc = cli.main()
+        self.assertEqual(rc, 0)
+        gui.assert_not_called()
+        detach.assert_not_called()
+
+    def test_statusline_with_detach_does_not_background(self):
+        # --statusline --detach must print the line, not fork the GUI.
+        import claude_usage.cli as cli
+        with patch.object(cli, "collect_all", return_value=_fake_stats()), \
+             patch.object(cli, "_launch_gui") as gui, \
+             patch.object(cli, "_detach_into_background") as detach, \
+             patch("sys.stdout", StringIO()), \
+             patch("sys.argv", ["claude-usage", "--statusline", "--detach"]):
+            rc = cli.main()
+        self.assertEqual(rc, 0)
+        detach.assert_not_called()
+        gui.assert_not_called()
 
 
 if __name__ == "__main__":
