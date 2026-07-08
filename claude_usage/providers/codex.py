@@ -89,3 +89,28 @@ def _apply_rate_limits(stats: UsageStats, rl: dict | None) -> None:
         stats.session_reset = 0
         stats.session_label = ""
     stats.subscription_type = str(rl.get("plan_type", "") or "")
+
+
+def _collect_tokens(codex_dir: str, today_str: str, week_dates: list[str],
+                    default_model: str = "gpt-5.5") -> dict[str, Any]:
+    today_tokens = 0
+    week_tokens = 0
+    today_by_model: dict[str, int] = {}
+    for path in _rollout_paths(codex_dir):
+        cur_model = default_model
+        for rec in _iter_records(path):
+            payload = rec.get("payload", {})
+            if "model" in payload and payload["model"]:
+                cur_model = str(payload["model"])
+            if payload.get("type") != "token_count":
+                continue
+            ts = rec.get("timestamp", "")
+            info = payload.get("info", {})
+            delta = int((info.get("last_token_usage") or {}).get("total_tokens", 0) or 0)
+            if any(ts.startswith(p) for p in week_dates):
+                week_tokens += delta
+            if ts.startswith(today_str):
+                today_tokens += delta
+                today_by_model[cur_model] = today_by_model.get(cur_model, 0) + delta
+    return {"today_tokens": today_tokens, "week_tokens": week_tokens,
+            "today_by_model": today_by_model}

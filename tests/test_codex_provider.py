@@ -73,3 +73,19 @@ def test_latest_rate_limits_uses_newest_event_across_files(tmp_path):
 
 def test_no_rollouts_returns_none(tmp_path):
     assert codex._latest_rate_limits(str(tmp_path)) is None
+
+
+def test_token_deltas_bucket_by_day(tmp_path):
+    codex_dir = str(tmp_path)
+    d = os.path.join(codex_dir, "sessions", "2026", "07", "09")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "rollout-c.jsonl"), "w") as f:
+        f.write(json.dumps({"timestamp": "2026-07-09T00:00:00.000Z", "type": "turn_context",
+                            "payload": {"model": "gpt-5.5"}}) + "\n")
+        f.write(json.dumps(_token_count("2026-07-09T10:00:00.000Z", last_total=100)) + "\n")
+        f.write(json.dumps(_token_count("2026-07-08T10:00:00.000Z", last_total=40)) + "\n")
+    out = codex._collect_tokens(codex_dir, "2026-07-09",
+                                ["2026-07-08", "2026-07-09"])
+    assert out["today_tokens"] == 100          # only the 07-09 event
+    assert out["week_tokens"] == 140           # both in-week events
+    assert out["today_by_model"] == {"gpt-5.5": 100}
