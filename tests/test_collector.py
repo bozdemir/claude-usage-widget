@@ -1394,5 +1394,10 @@ class TestAuditFixesV093(unittest.TestCase):
         mock_news.assert_called_once()
 
 
+def test_usagestats_has_label_fields_defaulting_empty():
+    s = UsageStats()
+    assert s.session_label == "" and s.weekly_label == "" and s.provider_title == ""
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -69,6 +69,12 @@ class UsageStats:
     scoped_utilization: float = 0.0
     scoped_reset: int = 0
     scoped_label: str = ""
+    # Provider-derived bar labels. Empty ⇒ overlay keeps its Claude defaults
+    # ("5h"/"weekly"). Codex sets these from rate-limit window_minutes.
+    session_label: str = ""
+    weekly_label: str = ""
+    # OSD block title ("CLAUDE"/"CODEX"). Empty ⇒ Claude default.
+    provider_title: str = ""
     overage_status: str = ""  # "rejected" or "allowed"
     fallback_status: str = ""  # "available" or ""
     rate_limit_error: str = ""  # error message if API call fails
