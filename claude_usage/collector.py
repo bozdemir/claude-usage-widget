@@ -18,6 +18,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from claude_usage import forecast, pricing
+from claude_usage import budget as _budget
 from claude_usage import peak as _peak
 from claude_usage.analytics import AnomalyReport, detect_anomaly, generate_tips
 from claude_usage.cache_analyzer import CacheOpportunity, analyze_cache_opportunities
@@ -116,6 +117,12 @@ class UsageStats:
     # reduced-limit window (see peak.py). Empty hint means not-in-peak/disabled.
     in_peak_window: bool = False
     peak_hint: str = ""
+    # Monthly budget: month-to-date USD spend + a BudgetStatus (projection vs
+    # the monthly_budget_usd cap). Only populated when a cap is configured;
+    # budget is None / month_budget_usd is 0 when the feature is off.
+    month_cost: float = 0.0
+    month_budget_usd: float = 0.0
+    budget: "_budget.BudgetStatus | None" = None
 
 
 def parse_history(path: str) -> UsageStats:
@@ -290,6 +297,82 @@ def _parse_tokens_file(
                 result["today_by_project"][project_name] = (
                     result["today_by_project"].get(project_name, 0) + output_tokens
                 )
+
+
+def _collect_month_tokens(
+    claude_dir: str,
+    month_prefix: str,
+    now_ts: float | None = None,
+) -> dict[str, dict[str, int]]:
+    """Aggregate per-model token buckets for one calendar month.
+
+    ``month_prefix`` is a ``YYYY-MM`` string; a JSONL entry counts when its
+    ISO-8601 (UTC) ``timestamp`` starts with it. This is a SEPARATE pass from
+    :func:`_collect_tokens_single_pass` — that one hard-caps at an 8-day mtime
+    cutoff for the today/week hot path, which cannot see a whole month. Here the
+    cutoff is ~32 days. Returns ``{model: {input, output, cache_read,
+    cache_creation}}``, ready for :func:`pricing.calculate_stats_cost`.
+    """
+    by_model: dict[str, dict[str, int]] = {}
+    projects_dir = os.path.join(claude_dir, "projects")
+    if not os.path.isdir(projects_dir):
+        return by_model
+    projects_dir = os.path.realpath(projects_dir)
+
+    now_ts = now_ts if now_ts is not None else datetime.now().timestamp()
+    mtime_cutoff = now_ts - 32 * 86400
+
+    for jsonl_path in glob.glob(os.path.join(projects_dir, "*", "*.jsonl")):
+        if "subagents" in jsonl_path.split(os.sep):
+            continue
+        try:
+            if os.path.getmtime(jsonl_path) < mtime_cutoff:
+                continue
+        except OSError:
+            continue
+        _parse_month_tokens_file(jsonl_path, month_prefix, by_model)
+
+    return by_model
+
+
+def _parse_month_tokens_file(
+    path: str,
+    month_prefix: str,
+    by_model: dict[str, dict[str, int]],
+) -> None:
+    """Accumulate one file's assistant-turn tokens into *by_model* in-place."""
+    try:
+        f = open(path, encoding="utf-8", errors="replace")
+    except OSError:
+        return
+
+    with f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if entry.get("type") != "assistant":
+                continue
+            if not str(entry.get("timestamp", "")).startswith(month_prefix):
+                continue
+
+            msg = entry.get("message", {})
+            if not isinstance(msg, dict):
+                continue
+            usage = msg.get("usage", {})
+            model = msg.get("model", "unknown")
+            bucket = by_model.setdefault(
+                model, {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0},
+            )
+            bucket["input"] += usage.get("input_tokens", 0) or 0
+            bucket["output"] += usage.get("output_tokens", 0) or 0
+            bucket["cache_read"] += usage.get("cache_read_input_tokens", 0) or 0
+            bucket["cache_creation"] += usage.get("cache_creation_input_tokens", 0) or 0
 
 
 # Preserved for test compatibility -- superseded by _collect_tokens_single_pass
@@ -1037,6 +1120,27 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
     stats.weekly_forecast = forecast.forecast_time_to_limit(
         stats.weekly_utilization, weekly_rate, stats.weekly_reset,
     )
+
+    # Monthly budget — month-to-date spend + linear end-of-month projection.
+    # Only scanned when a cap is set (monthly_budget_usd > 0): it's a separate
+    # ~32-day JSONL pass on top of the 8-day today/week scan. Keyed off the UTC
+    # month to match today/week (which bucket by UTC timestamps).
+    monthly_budget = float(config.get("monthly_budget_usd", 0.0) or 0.0)
+    if monthly_budget > 0:
+        try:
+            month_by_model = _collect_month_tokens(
+                claude_dir, now.strftime("%Y-%m"), now_ts=now_ts,
+            )
+            stats.month_cost = float(
+                pricing.calculate_stats_cost(month_by_model).get("total", 0.0)
+            )
+        except OSError:
+            stats.month_cost = 0.0
+        stats.month_budget_usd = monthly_budget
+        stats.budget = _budget.evaluate_budget(
+            stats.month_cost, monthly_budget, now,
+            notify_ratio=float(config.get("budget_notify_ratio", 1.0) or 1.0),
+        )
 
     # Peak-window awareness — is `now` inside Anthropic's weekday reduced-limit
     # window? Pure + cheap; guarded so a bad peak_timezone override can never

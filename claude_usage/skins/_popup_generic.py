@@ -199,6 +199,13 @@ def paint_popup(
     draw_text(p, x + w - rw, y + fm_b.ascent() - 2 * s, right_text,
               hex_to_qcolor(t["text_dim"]), sub_f)
     y += fm_b.height() + 10 * s
+    # Monthly budget line under the big today-cost figure (only when a cap set).
+    if getattr(data, "month_budget_usd", 0.0) > 0 and getattr(data, "budget_line", ""):
+        _bf = mono_font(10 * s, family=t["_mono_family"])
+        _fmb = QFontMetrics(_bf)
+        _bc = t.get("warn", t["accent"]) if getattr(data, "budget_over", False) else t["text_dim"]
+        draw_text(p, x, y + _fmb.ascent(), data.budget_line, hex_to_qcolor(_bc), _bf)
+        y += _fmb.height() + 6 * s
     mono_f = mono_font(10 * s, family=t["_mono_family"])
     fm_m = QFontMetrics(mono_f)
     draw_text(p, x, y + fm_m.ascent(), data.cost_model,

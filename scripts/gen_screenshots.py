@@ -91,6 +91,13 @@ def main() -> int:
     # gallery (it only shows during Anthropic's weekday reduced-limit window).
     stats.in_peak_window = True
     stats.peak_hint = "Reduced 5h limit until 11 AM PT"
+    # Synthetic monthly budget so the popup budget line is documented (only
+    # shown when the user sets monthly_budget_usd > 0).
+    from claude_usage import budget as _bud
+    from datetime import datetime as _dt
+    stats.month_cost = 100.0
+    stats.month_budget_usd = 500.0
+    stats.budget = _bud.evaluate_budget(100.0, 500.0, _dt.now())
     stats.active_sessions = [
         {"cwd": "/home/user/project-alpha", "startedAt": int((_now - 47 * 60) * 1000)},
         {"cwd": "/home/user/project-beta",  "startedAt": int((_now - 2 * 3600 - 14 * 60) * 1000)},

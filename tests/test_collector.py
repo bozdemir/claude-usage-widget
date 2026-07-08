@@ -10,12 +10,13 @@ import os
 import shutil
 import tempfile
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import patch
 
 from claude_usage.collector import (
     UsageStats,
+    _collect_month_tokens,
     _collect_tokens_single_pass,
     _fetch_oauth_usage,
     _parse_rate_limit_headers,
@@ -1392,6 +1393,57 @@ class TestAuditFixesV093(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             collect_all({"claude_dir": tmpdir, "show_news": True})
         mock_news.assert_called_once()
+
+
+class TestMonthTokenCollection(unittest.TestCase):
+    """_collect_month_tokens: the separate ~32-day, month-prefix budget scan."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    @staticmethod
+    def _iso(dt: datetime) -> str:
+        return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    def test_sums_current_month_excludes_other_month(self) -> None:
+        now = datetime.now(timezone.utc)
+        month_prefix = now.strftime("%Y-%m")
+        # Day 15 is always valid and avoids month-boundary flakiness.
+        cur = self._iso(now.replace(day=15, hour=12, minute=0, second=0, microsecond=0))
+        prev = self._iso(now.replace(day=1) - timedelta(days=5))  # previous month
+        proj = _make_conversation_dir(self.tmp, "-home-user-proj")
+        _write_conversation(proj, [
+            _assistant_entry(cur, output_tokens=1000, input_tokens=200),
+            _assistant_entry(cur, output_tokens=500, input_tokens=100),
+            _assistant_entry(prev, output_tokens=9999, input_tokens=9999),
+        ])
+        by_model = _collect_month_tokens(self.tmp, month_prefix)
+        self.assertIn("claude-opus-4-6", by_model)
+        bucket = by_model["claude-opus-4-6"]
+        self.assertEqual(bucket["output"], 1500)   # prev-month 9999 excluded
+        self.assertEqual(bucket["input"], 300)
+
+    def test_skips_subagent_conversations(self) -> None:
+        now = datetime.now(timezone.utc)
+        cur = self._iso(now.replace(day=15, hour=12))
+        sub = _make_conversation_dir(self.tmp, "-home-user-proj", subagent=True)
+        _write_conversation(sub, [_assistant_entry(cur, output_tokens=1000)])
+        self.assertEqual(_collect_month_tokens(self.tmp, now.strftime("%Y-%m")), {})
+
+    def test_skips_files_older_than_32_days(self) -> None:
+        now = datetime.now(timezone.utc)
+        cur = self._iso(now.replace(day=15, hour=12))
+        proj = _make_conversation_dir(self.tmp, "-home-user-proj")
+        path = _write_conversation(proj, [_assistant_entry(cur, output_tokens=1000)])
+        old = datetime.now().timestamp() - 40 * 86400
+        os.utime(path, (old, old))
+        self.assertEqual(_collect_month_tokens(self.tmp, now.strftime("%Y-%m")), {})
+
+    def test_missing_projects_dir_returns_empty(self) -> None:
+        self.assertEqual(_collect_month_tokens(self.tmp, "2026-07"), {})
 
 
 if __name__ == "__main__":

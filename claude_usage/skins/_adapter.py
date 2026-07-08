@@ -94,6 +94,14 @@ def _format_weekly_reset_label(ts: int) -> str:
     return datetime.fromtimestamp(ts).strftime("%a %I:%M %p").lstrip("0")
 
 
+def _budget_line(budget) -> str:
+    """Pre-format the monthly budget line for skin popups (empty when off)."""
+    if budget is None or not getattr(budget, "active", False):
+        return ""
+    from claude_usage.budget import format_budget_line
+    return format_budget_line(budget)
+
+
 def build_popup_data(stats, now: float | None = None):
     """Project ``UsageStats`` onto the handoff's PopupData schema.
 
@@ -194,6 +202,9 @@ def build_popup_data(stats, now: float | None = None):
         cache_saved_usd=float(getattr(stats, "cache_savings", 0.0) or 0.0),
         cost_model=primary_model or "unknown",
         cost_rows=cost_rows,
+        month_budget_usd=float(getattr(stats, "month_budget_usd", 0.0) or 0.0),
+        budget_line=_budget_line(getattr(stats, "budget", None)),
+        budget_over=bool(getattr(getattr(stats, "budget", None), "over_projected", False)),
         top_projects=top_projects,
         tips=list(getattr(stats, "tips", []) or []),
         weekly_report=str(getattr(stats, "weekly_report_text", "") or ""),

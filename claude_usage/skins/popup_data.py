@@ -87,6 +87,12 @@ class PopupData:
     cost_model: str = "claude-sonnet-4"
     cost_rows: list[CostRow] = field(default_factory=list)
 
+    # monthly budget — a pre-formatted line shown under the today-cost figure
+    # when a cap is set; budget_over drives the warn colour.
+    month_budget_usd: float = 0.0
+    budget_line: str = ""
+    budget_over: bool = False
+
     # lists
     top_projects: list[ProjectRow] = field(default_factory=list)
     tips: list[str] = field(default_factory=list)

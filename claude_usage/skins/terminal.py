@@ -282,6 +282,14 @@ def paint_popup(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> float:
     draw_text(p, x + w - sw, y + fm_b.ascent(), sub_text,
               hex_to_qcolor(t["text_dim"]), sub_f)
     y += fm_b.height() + 6 * s
+    # Monthly budget line under the big today-cost figure (only when a cap set).
+    if getattr(data, "month_budget_usd", 0.0) > 0 and getattr(data, "budget_line", ""):
+        _bf = mono_font(10 * s, family=FONTS["family"])
+        _fmb = QFontMetrics(_bf)
+        _bc = t.get("warn", t["accent"]) if getattr(data, "budget_over", False) else t["text_dim"]
+        draw_text(p, x, y + _fmb.ascent(), "» " + data.budget_line,
+                  hex_to_qcolor(_bc), _bf)
+        y += _fmb.height() + 4 * s
     # model + rows
     mono_f = mono_font(10 * s, family=FONTS["family"])
     fm_m = QFontMetrics(mono_f)

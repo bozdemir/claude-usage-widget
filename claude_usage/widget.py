@@ -840,6 +840,15 @@ class UsagePopup(QWidget):
         if cache_savings > 0:
             self._add_dim_line(f"${cache_savings:.2f} saved by cache", margin_bottom=8)
 
+        # Monthly budget line — only when a cap is configured. Turns red (error
+        # role) when projected to exceed it. For subscribers this reads against
+        # the same pay-as-you-go-equivalent framing noted above.
+        budget = getattr(stats, "budget", None)
+        if budget is not None and getattr(budget, "active", False):
+            from claude_usage.budget import format_budget_line
+            role = "error" if budget.over_projected else "dim"
+            self._add_dim_line(format_budget_line(budget), role=role, margin_bottom=8)
+
         by_model = getattr(stats, "today_by_model_detailed", {}) or {}
         if by_model:
             self._render_per_model_breakdown(by_model)
@@ -1016,6 +1025,10 @@ class ClaudeUsageApp(QObject):
         self._alive = True
         self._refreshing = False
         self._last_daily_report_date: str = ""
+        # Month key ("YYYY-MM") of the last budget-projection notification, so
+        # a user on track to exceed their cap is warned once per month, not
+        # every refresh.
+        self._budget_notified_month: str = ""
         # Wall-clock of the last successful collect, used for the menu's
         # "Updated Xs ago" footer.  Never read by anything else.
         import time as _time
@@ -1608,6 +1621,30 @@ class ClaudeUsageApp(QObject):
                 "z_score": stats.anomaly.z_score,
                 "message": stats.anomaly.message,
             })
+
+        # Budget projection — once-per-month desktop notification + webhook when
+        # projected to exceed the cap. Desktop send is gated on
+        # notifications_enabled + budget_notify_enabled; the webhook fires
+        # regardless (matching the threshold notifier). A >=2-days-elapsed guard
+        # avoids day-1 projection volatility tripping a false alarm.
+        budget = getattr(stats, "budget", None)
+        if budget is not None and getattr(budget, "active", False) and budget.days_elapsed >= 2:
+            from claude_usage.budget import should_notify
+            month_key = datetime.now().strftime("%Y-%m")
+            if should_notify(budget, self._budget_notified_month, month_key):
+                self._budget_notified_month = month_key
+                if (self.config.get("notifications_enabled", True)
+                        and self.config.get("budget_notify_enabled", True)):
+                    self.notifier._send(
+                        "Claude budget alert",
+                        f"Projected ${budget.projected_eom:.0f} this month "
+                        f"(cap ${budget.budget:.0f})",
+                    )
+                self._webhooks.fire("budget_projection", {
+                    "month_spend": budget.month_spend,
+                    "budget": budget.budget,
+                    "projected_eom": budget.projected_eom,
+                })
 
         # Weekly report: kick off a background regeneration if the on-disk
         # cache is stale and we're not already generating. Pass a snapshot
