@@ -61,7 +61,7 @@ DEFAULT_CONFIG: Config = {
     "api_server_host": "127.0.0.1",
     "api_server_port": 8765,
     # Webhooks (opt-in). Map event -> URL. Supported events:
-    #   threshold_crossed, daily_report, anomaly
+    #   threshold_crossed, daily_report, anomaly, budget_projection, burn_alert
     "webhooks": {},
     # Appearance: theme palette name (see themes.py for the 5 ships).
     "theme": "default",
@@ -87,6 +87,40 @@ DEFAULT_CONFIG: Config = {
     # "Always on top") to let it sit as a normal background desktop widget
     # that the window manager stacks like any other window.
     "osd_always_on_top": True,
+
+    # --- Peak-window awareness (Anthropic's weekday reduced-limit window) ---
+    # When enabled, an unobtrusive hint appears next to the 5h session reset
+    # during the reduced-limit window. Data-driven so you can adjust it when
+    # Anthropic changes the window. Default ~5-11 AM US Pacific, Mon-Fri.
+    "peak_awareness_enabled": True,
+    "peak_timezone": "America/Los_Angeles",
+    "peak_start_hour": 5,    # local hour the window starts (inclusive)
+    "peak_end_hour": 11,     # local hour the window ends (exclusive)
+    "peak_weekdays": [0, 1, 2, 3, 4],  # datetime.weekday(): 0=Mon .. 6=Sun
+
+    # --- Monthly budget cap + projection ---
+    # Set monthly_budget_usd > 0 to see month-to-date spend + a linear
+    # end-of-month projection in the popup, and (optionally) a once-per-month
+    # notification when projected to exceed the cap. 0 disables the feature
+    # entirely (no extra month-wide token scan).
+    "monthly_budget_usd": 0.0,
+    "budget_notify_enabled": True,
+    "budget_notify_ratio": 1.0,  # notify when projected >= ratio * cap
+
+    # --- Real-time burn / spike / retry-storm alerts ---
+    # An OSD badge + debounced (once-per-episode) notification when the 5h
+    # window burns abnormally fast or a single turn / retry loop spikes tokens.
+    # Desktop notifications also require notifications_enabled.
+    "burn_alerts_enabled": True,
+    "burn_warn_pct_per_min": 2.0,   # fast-burn WARN: session pp/min
+    "burn_crit_pct_per_min": 5.0,   # fast-burn CRIT: session pp/min
+    "burn_window_seconds": 600,     # window the burn rate is measured over
+    "spike_token_multiplier": 4.0,  # turn output >= mult * recent baseline
+    "spike_min_tokens": 20_000,     # absolute floor for a spike / heavy turn
+    "spike_baseline_min_turns": 5,  # prior turns needed before spike fires
+    "retry_storm_turns": 3,         # heavy turns clustered => storm
+    "retry_storm_window_seconds": 120,
+    "burn_alert_cooldown_seconds": 900,  # min seconds between same-episode notifies
 }
 
 
