@@ -16,11 +16,18 @@ def test_codex_enabled_collects_both(monkeypatch, tmp_path):
     assert list(out.keys()) == ["claude", "codex"]
     assert out["codex"].provider_title == "CODEX"
 
-def test_provider_error_does_not_abort_siblings(monkeypatch):
-    def boom(cfg): raise RuntimeError("kaboom")
+def test_provider_error_does_not_abort_siblings(monkeypatch, tmp_path):
+    def boom(cfg):
+        raise RuntimeError("kaboom")
     monkeypatch.setattr("claude_usage.providers.claude.collect_all", boom)
-    out = collect_providers(dict(DEFAULT_CONFIG, providers=["claude"]))
+    # claude (first) raises; codex (second, empty dir) still collects — the
+    # failing provider must be captured as an error entry WITHOUT blanking its
+    # sibling.
+    cfg = dict(DEFAULT_CONFIG, providers=["claude", "codex"], codex_dir=str(tmp_path))
+    out = collect_providers(cfg)
     assert "kaboom" in out["claude"].rate_limit_error
+    assert "codex" in out                       # sibling survived the failure
+    assert out["codex"].provider_title == "CODEX"
 
 def test_collect_all_still_returns_claude(tmp_path, monkeypatch):
     # Hermetic: an empty claude_dir means collect_all reads no on-disk logs and
