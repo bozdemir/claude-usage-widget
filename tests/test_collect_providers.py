@@ -22,8 +22,13 @@ def test_provider_error_does_not_abort_siblings(monkeypatch):
     out = collect_providers(dict(DEFAULT_CONFIG, providers=["claude"]))
     assert "kaboom" in out["claude"].rate_limit_error
 
-def test_collect_all_still_returns_claude(monkeypatch):
-    monkeypatch.setattr("claude_usage.providers.claude.collect_all",
-                        lambda cfg: UsageStats(today_tokens=3))
-    # collect_all itself is the underlying Claude path; unchanged signature.
-    assert isinstance(collect_all(dict(DEFAULT_CONFIG)), UsageStats)
+def test_collect_all_still_returns_claude(tmp_path, monkeypatch):
+    # Hermetic: an empty claude_dir means collect_all reads no on-disk logs and
+    # prices no real recent-model tokens (which would emit pricing warnings and
+    # pollute pricing.py's module-global warn-once set, breaking test_pricing).
+    # Patch fetch_rate_limits so there is no network call. Just confirm the
+    # alias still returns a UsageStats with its unchanged signature.
+    monkeypatch.setattr("claude_usage.collector.fetch_rate_limits",
+                        lambda claude_dir: {"error": "test"})
+    cfg = dict(DEFAULT_CONFIG, claude_dir=str(tmp_path))
+    assert isinstance(collect_all(cfg), UsageStats)
