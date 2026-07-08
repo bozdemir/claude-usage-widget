@@ -55,7 +55,8 @@ THEME = {
 }
 
 METRICS = {
-    "osd_width": 360, "osd_height": 220, "osd_radius": 10, "osd_padding": 14,
+    "osd_width": 360, "osd_height": 220, "osd_height_scoped": 370,
+    "osd_radius": 10, "osd_padding": 14,
     "ring_size": 118, "ring_stroke": 10,
     "ring_size_popup": 140, "ring_stroke_popup": 12,
     "ticker_h": 22,
@@ -144,8 +145,18 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
               "CLAUDE · USAGE", hex_to_qcolor(t["accent"]), title_f,
               letter_spacing_px=3.0 * s)
 
-    # gauges — equally spaced
-    y_mid = rect.y() + rect.height() / 2 + 10 * s
+    # An optional model-scoped weekly cap (e.g. "Fable") is drawn as a third
+    # 270° gauge centred below the SESSION/WEEKLY pair. Present only when the
+    # API reports it; otherwise the OSD renders byte-for-byte as before.
+    scoped_present = data.scoped_pct is not None
+
+    # gauges — equally spaced. When a scoped gauge is present the pair stays
+    # anchored to the original-height centre (top of the taller window) so the
+    # third gauge can sit beneath it and the ticker slides down to the bottom.
+    if scoped_present:
+        y_mid = rect.y() + m["osd_height"] * s / 2 + 10 * s
+    else:
+        y_mid = rect.y() + rect.height() / 2 + 10 * s
     third = rect.width() / 3
     paint_gauge(p, rect.x() + third * 0.5, y_mid, data.session_pct,
                 "SESSION", f"{data.session_reset_min}m", s)
@@ -167,6 +178,15 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     draw_text(p, cx - fm_n.horizontalAdvance(tm) / 2,
               cy + fm_n.ascent() + 2 * s, tm,
               hex_to_qcolor(t["good"]), num_f)
+
+    # Scoped weekly cap — a native third gauge centred below the pair, using
+    # the exact same renderer/fonts/spacing as WEEKLY. Gated purely on
+    # scoped_pct so a set-but-empty label still renders (fallback "SCOPED").
+    if scoped_present:
+        scoped_label = (data.scoped_label or "SCOPED").upper()
+        y_scoped = y_mid + (m["osd_height_scoped"] - m["osd_height"]) * s
+        paint_gauge(p, cx, y_scoped, data.scoped_pct, scoped_label,
+                    f"{data.scoped_reset_hrs}h {data.scoped_reset_min}m", s)
 
     # Ticker strip along the bottom — bordered separator + amber-tiered
     # quartile colours matching the cockpit palette.

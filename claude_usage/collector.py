@@ -64,6 +64,11 @@ class UsageStats:
     session_reset: int = 0  # unix timestamp (seconds)
     weekly_utilization: float = 0.0
     weekly_reset: int = 0
+    # Optional model-scoped weekly cap (e.g. "Fable" weekly limit). Empty
+    # scoped_label means the API reported no scoped limit → no third bar.
+    scoped_utilization: float = 0.0
+    scoped_reset: int = 0
+    scoped_label: str = ""
     overage_status: str = ""  # "rejected" or "allowed"
     fallback_status: str = ""  # "available" or ""
     rate_limit_error: str = ""  # error message if API call fails
@@ -717,11 +722,41 @@ def _fetch_oauth_usage(token: str) -> dict[str, Any]:
     seven = payload.get("seven_day") or {}
     extra = payload.get("extra_usage") or {}
 
+    # Model-scoped weekly cap (e.g. the separate "Fable" weekly limit). It is
+    # NOT in the top-level seven_day_* keys (those stay null) — it arrives in
+    # the structured `limits` array as a `weekly_scoped` entry carrying a
+    # scope.model.display_name. We surface whichever scoped weekly the API
+    # returns, labelled by that name, so a third bar appears automatically for
+    # Fable today and any future scoped model without a code change. When
+    # several scoped weeklies exist we take the highest-utilised one — that's
+    # the cap the user is closest to hitting.
+    scoped_util, scoped_reset, scoped_label = 0.0, 0, ""
+    limits = payload.get("limits")
+    if isinstance(limits, list):
+        best = -1.0
+        for lim in limits:
+            if not isinstance(lim, dict) or lim.get("kind") != "weekly_scoped":
+                continue
+            scope = lim.get("scope") or {}
+            model = (scope.get("model") or {}) if isinstance(scope, dict) else {}
+            label = str(model.get("display_name") or "").strip()
+            if not label:
+                continue
+            frac = _pct_to_frac(lim.get("percent", 0))
+            if frac > best:
+                best = frac
+                scoped_util = frac
+                scoped_reset = _iso_to_epoch(lim.get("resets_at"))
+                scoped_label = label
+
     return {
         "session_utilization": _pct_to_frac(five.get("utilization", 0)),
         "session_reset": _iso_to_epoch(five.get("resets_at")),
         "weekly_utilization": _pct_to_frac(seven.get("utilization", 0)),
         "weekly_reset": _iso_to_epoch(seven.get("resets_at")),
+        "scoped_utilization": scoped_util,
+        "scoped_reset": scoped_reset,
+        "scoped_label": scoped_label,
         "overage_status": (
             "allowed" if extra.get("is_enabled") else "rejected"
         ),
@@ -849,13 +884,22 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
             # carry one key without the other — stopping at the first sample
             # with either key would silently zero the other one and let an
             # expired window slip past the clamp below.
-            sess_reset = week_reset = 0
+            sess_reset = week_reset = scoped_reset = 0
+            scoped_util = 0.0
+            scoped_label = ""
             for prev in reversed(recent):
                 if not sess_reset and prev.get("session_reset"):
                     sess_reset = int(prev["session_reset"])
                 if not week_reset and prev.get("weekly_reset"):
                     week_reset = int(prev["weekly_reset"])
-                if sess_reset and week_reset:
+                # Scoped limit (e.g. Fable weekly) — restore the whole triple
+                # from the most recent sample that carried it so the third bar
+                # doesn't flicker away on a single throttled poll.
+                if not scoped_label and prev.get("scoped_label"):
+                    scoped_label = str(prev["scoped_label"])
+                    scoped_util = float(prev.get("scoped", 0.0) or 0.0)
+                    scoped_reset = int(prev.get("scoped_reset", 0) or 0)
+                if sess_reset and week_reset and scoped_label:
                     break
             # A window whose reset time has already passed has rolled over:
             # its true utilization is back to 0, not the stale last sample.
@@ -866,15 +910,23 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
                 sess_util, sess_reset = 0.0, 0
             if week_reset and now_ts >= week_reset:
                 week_util, week_reset = 0.0, 0
+            if scoped_reset and now_ts >= scoped_reset:
+                scoped_util, scoped_reset, scoped_label = 0.0, 0, ""
             stats.session_utilization = sess_util
             stats.weekly_utilization = week_util
             stats.session_reset = sess_reset
             stats.weekly_reset = week_reset
+            stats.scoped_utilization = scoped_util
+            stats.scoped_reset = scoped_reset
+            stats.scoped_label = scoped_label
     else:
         stats.session_utilization = rate_limits["session_utilization"]
         stats.session_reset = rate_limits["session_reset"]
         stats.weekly_utilization = rate_limits["weekly_utilization"]
         stats.weekly_reset = rate_limits["weekly_reset"]
+        stats.scoped_utilization = rate_limits.get("scoped_utilization", 0.0)
+        stats.scoped_reset = rate_limits.get("scoped_reset", 0)
+        stats.scoped_label = rate_limits.get("scoped_label", "")
         stats.overage_status = rate_limits["overage_status"]
         stats.fallback_status = rate_limits["fallback_status"]
         try:
@@ -883,6 +935,9 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
                 stats.session_utilization, stats.weekly_utilization,
                 session_reset=stats.session_reset,
                 weekly_reset=stats.weekly_reset,
+                scoped=stats.scoped_utilization,
+                scoped_reset=stats.scoped_reset,
+                scoped_label=stats.scoped_label,
             )
             prune(samples_path, keep_seconds=HISTORY_KEEP_DAYS * 86400, now=now_ts)
         except OSError:

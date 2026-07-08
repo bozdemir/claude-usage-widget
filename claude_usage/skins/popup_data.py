@@ -54,6 +54,12 @@ class PopupData:
     live_tok_per_min: float = 0.0
     ticker_items: list[TickerItem] = field(default_factory=list)
 
+    # Optional model-scoped weekly cap (e.g. "Fable"). scoped_pct is None
+    # when the API reported no scoped limit → the popup omits the row.
+    scoped_pct: float | None = None
+    scoped_reset_label: str = ""
+    scoped_label: str = ""
+
     # --- POPUP-only fields (add to UsageStats or build adapter) ---
     plan: str = "Pro · $17/mo"
     weekly_reset_label: str = "Mon 9:00"    # human-readable

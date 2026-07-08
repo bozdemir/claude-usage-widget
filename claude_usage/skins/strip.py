@@ -44,7 +44,8 @@ THEME = {
 }
 
 METRICS = {
-    "osd_width": 480, "osd_height": 54, "osd_radius": 8, "osd_padding": 0,
+    "osd_width": 480, "osd_height": 54, "osd_height_scoped": 108,
+    "osd_radius": 8, "osd_padding": 0,
     "seg_title_w": 96, "seg_live_w": 96,
     "bar_h": 3,
 }
@@ -57,6 +58,13 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     """Strip OSD: dense single-row layout — title segment + session segment
     + weekly segment + live segment, separated by vertical rules."""
     s = scale; t = THEME; m = METRICS
+
+    # First-row height stays fixed even when the window grows to make room
+    # for the optional scoped third row, so row 1 is pixel-identical whether
+    # or not a scoped cap is present. When no scoped cap exists the overlay
+    # sizes the rect to osd_height, so base_h == rect.height() here.
+    base_h = m["osd_height"] * s
+    base_bottom = rect.y() + base_h
 
     # panel
     p.setPen(Qt.NoPen); p.setBrush(hex_to_qcolor(t["bg"], 0.94))
@@ -78,19 +86,28 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     x0 = rect.x()
     # accent dot
     p.setPen(Qt.NoPen); p.setBrush(hex_to_qcolor(t["accent"]))
-    p.drawEllipse(QPointF(x0 + 16 * s, rect.y() + rect.height() / 2), 4 * s, 4 * s)
-    draw_text(p, x0 + 28 * s, rect.y() + rect.height() / 2 + fm.ascent() / 2 - 2,
+    p.drawEllipse(QPointF(x0 + 16 * s, rect.y() + base_h / 2), 4 * s, 4 * s)
+    draw_text(p, x0 + 28 * s, rect.y() + base_h / 2 + fm.ascent() / 2 - 2,
               "CLAUDE", hex_to_qcolor(t["text_secondary"]), label_f,
               letter_spacing_px=2 * s)
     # rule
     p.setPen(hex_to_qcolor(t["border"]))
     p.drawLine(QPointF(x0 + title_w, rect.y() + 4 * s),
-               QPointF(x0 + title_w, rect.bottom() - 4 * s))
+               QPointF(x0 + title_w, base_bottom - 4 * s))
 
     # generic segment painter
-    def seg(x: float, w: float, label: str, pct: float, suffix: str, fill_hex: str):
+    def seg(x: float, w: float, label: str, pct: float, suffix: str,
+            fill_hex: str, top: float | None = None, bh: float | None = None):
+        # A single Session/Weekly-style band. ``top``/``bh`` default to the
+        # first strip row; the scoped row passes the band directly below it so
+        # its internal rhythm (label at the top, hairline bar at the bottom)
+        # matches the weekly row exactly.
+        if top is None:
+            top = rect.y()
+        if bh is None:
+            bh = base_h
         # label top
-        draw_text(p, x + 12 * s, rect.y() + 14 * s + fm.ascent() / 2,
+        draw_text(p, x + 12 * s, top + 14 * s + fm.ascent() / 2,
                   label, hex_to_qcolor(t["text_dim"]), label_f,
                   letter_spacing_px=1.5 * s)
         # % + suffix right
@@ -98,13 +115,13 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
         adv = QFontMetrics(body_f).horizontalAdvance(pct_txt)
         suf_w = fm.horizontalAdvance(suffix)
         draw_text(p, x + w - 12 * s - suf_w - 6 * s - adv,
-                  rect.y() + 14 * s + fm.ascent() / 2,
+                  top + 14 * s + fm.ascent() / 2,
                   pct_txt, hex_to_qcolor(t["text_primary"]), body_f)
         draw_text(p, x + w - 12 * s - suf_w,
-                  rect.y() + 14 * s + fm.ascent() / 2,
+                  top + 14 * s + fm.ascent() / 2,
                   suffix, hex_to_qcolor(t["text_dim"]), label_f)
         # bar
-        bar_y = rect.y() + rect.height() - 14 * s
+        bar_y = top + bh - 14 * s
         draw_block_bar(p, x + 12 * s, bar_y, w - 24 * s, m["bar_h"] * s,
                        pct, hex_to_qcolor(t["very_dim"]),
                        hex_to_qcolor(fill_hex), radius=1.5 * s)
@@ -115,7 +132,7 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
         f"{data.session_reset_min}m", t["accent"])
     p.setPen(hex_to_qcolor(t["border"]))
     p.drawLine(QPointF(xs + mid_w, rect.y() + 4 * s),
-               QPointF(xs + mid_w, rect.bottom() - 4 * s))
+               QPointF(xs + mid_w, base_bottom - 4 * s))
 
     # weekly seg
     xw = xs + mid_w
@@ -123,7 +140,7 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
         f"{data.weekly_reset_hrs}h", t["accent2"])
     p.setPen(hex_to_qcolor(t["border"]))
     p.drawLine(QPointF(xw + mid_w, rect.y() + 4 * s),
-               QPointF(xw + mid_w, rect.bottom() - 4 * s))
+               QPointF(xw + mid_w, base_bottom - 4 * s))
 
     # live seg
     xl = xw + mid_w
@@ -136,6 +153,23 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
                   rect.y() + 36 * s,
                   f"{data.live_tok_per_min:.1f}k/min",
                   hex_to_qcolor(t["text_primary"]), label_f)
+
+    # scoped weekly seg (e.g. "Fable") — optional third row below weekly.
+    # Only drawn when the API reported a model-scoped cap; the label guard
+    # is belt-and-suspenders so a stray pct never yields an unlabelled band.
+    scoped_pct = getattr(data, "scoped_pct", None)
+    if scoped_pct is not None and getattr(data, "scoped_label", ""):
+        # horizontal rule separating the first strip row from the scoped row,
+        # echoing the 1px vertical segment rules (border colour, 4px inset).
+        p.setPen(hex_to_qcolor(t["border"]))
+        p.drawLine(QPointF(rect.x() + 4 * s, base_bottom),
+                   QPointF(rect.right() - 4 * s, base_bottom))
+        # Spans the session+weekly columns so the bar sits directly beneath
+        # the weekly bar, rendered with the same seg() painter, fonts and
+        # weekly accent (accent2). Reset mirrors weekly's "{hrs}h" format.
+        seg(xs, mid_w * 2, data.scoped_label.upper(), scoped_pct,
+            f"{data.scoped_reset_hrs}h", t["accent2"],
+            top=base_bottom, bh=base_h)
 
 
 # ---- POPUP ---------------------------------------------------------

@@ -3,6 +3,22 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## 0.10.0
+
+### Added
+- **Model-scoped weekly usage bar** ([#15](https://github.com/bozdemir/claude-usage-widget/issues/15)).
+  When Anthropic reports a separate weekly cap for a specific model — the
+  new **Fable** weekly limit is the first — a third bar appears
+  automatically below Session and Weekly, labelled with the model's name
+  (e.g. "Fable"). It's parsed generically from the `/api/oauth/usage`
+  `limits` array (the `weekly_scoped` entries), so it also covers any
+  future scoped model, and it **auto-hides** when the API stops reporting
+  it (the Fable cap is temporary — Anthropic moves it to usage credits
+  after the free window). Rendered natively in **bars, gauge, all 6
+  Claude-designed skins, and the detail popup**; the last-known value is
+  retained (and expired windows cleared) across a throttled poll, exactly
+  like the session/weekly bars.
+
 ## 0.9.3
 
 ### Fixed

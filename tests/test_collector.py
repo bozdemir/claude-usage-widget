@@ -1033,6 +1033,104 @@ class TestOAuthUsage429(unittest.TestCase):
         self.assertIsNone(_parse_retry_after(None))
 
 
+class TestScopedWeeklyLimit(unittest.TestCase):
+    """The model-scoped weekly cap (e.g. Fable) is parsed from the `limits`
+    array's weekly_scoped entry, labelled by scope.model.display_name, and
+    auto-hides when the API stops reporting it (it's a temporary limit that
+    Anthropic moves to credits after the Fable free window)."""
+
+    def _usage_payload(self, limits):
+        return {
+            "five_hour": {"utilization": 12.0, "resets_at": "2099-01-01T00:00:00+00:00"},
+            "seven_day": {"utilization": 61.0, "resets_at": "2099-01-02T00:00:00+00:00"},
+            "extra_usage": {"is_enabled": False},
+            "limits": limits,
+        }
+
+    def _fetch(self, payload):
+        import claude_usage.collector as c
+
+        def ok(req, timeout=10, **kw):
+            return _CtxResp(json.dumps(payload).encode())
+
+        with patch.object(c, "urlopen", ok):
+            return _fetch_oauth_usage("tok")
+
+    def test_scoped_weekly_extracted_and_labeled(self) -> None:
+        r = self._fetch(self._usage_payload([
+            {"kind": "weekly_all", "percent": 61, "resets_at": "2099-01-02T00:00:00+00:00"},
+            {"kind": "weekly_scoped", "percent": 33,
+             "resets_at": "2099-01-02T00:00:00+00:00",
+             "scope": {"model": {"display_name": "Fable"}}},
+        ]))
+        self.assertAlmostEqual(r["scoped_utilization"], 0.33, places=5)
+        self.assertEqual(r["scoped_label"], "Fable")
+        self.assertGreater(r["scoped_reset"], 0)
+
+    def test_no_scoped_limit_yields_empty_label(self) -> None:
+        r = self._fetch(self._usage_payload([
+            {"kind": "weekly_all", "percent": 61, "resets_at": "2099-01-02T00:00:00+00:00"},
+        ]))
+        self.assertEqual(r["scoped_label"], "")
+        self.assertEqual(r["scoped_utilization"], 0.0)
+
+    def test_missing_limits_array_is_safe(self) -> None:
+        payload = self._usage_payload(None)
+        del payload["limits"]
+        r = self._fetch(payload)
+        self.assertEqual(r["scoped_label"], "")
+
+    def test_scoped_without_display_name_skipped(self) -> None:
+        r = self._fetch(self._usage_payload([
+            {"kind": "weekly_scoped", "percent": 50,
+             "resets_at": "2099-01-02T00:00:00+00:00",
+             "scope": {"model": {"display_name": ""}}},
+        ]))
+        self.assertEqual(r["scoped_label"], "")
+
+    def test_highest_utilised_scoped_wins(self) -> None:
+        r = self._fetch(self._usage_payload([
+            {"kind": "weekly_scoped", "percent": 20,
+             "resets_at": "2099-01-02T00:00:00+00:00",
+             "scope": {"model": {"display_name": "Sonnet"}}},
+            {"kind": "weekly_scoped", "percent": 70,
+             "resets_at": "2099-01-02T00:00:00+00:00",
+             "scope": {"model": {"display_name": "Fable"}}},
+        ]))
+        self.assertEqual(r["scoped_label"], "Fable")
+        self.assertAlmostEqual(r["scoped_utilization"], 0.70, places=5)
+
+    @patch("claude_usage.collector.fetch_rate_limits")
+    def test_scoped_restored_and_clamped_on_throttle(self, mock_fetch: Any) -> None:
+        """A throttled poll restores the scoped triple from history; an
+        expired scoped window clamps to hidden."""
+        from claude_usage.history import append_sample
+        mock_fetch.return_value = {"error": "Rate limited", "rate_limited": True}
+        now = datetime.now().timestamp()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sp = os.path.join(tmpdir, "usage-history.jsonl")
+            # live scoped window, still in the future
+            append_sample(sp, now - 60, 0.1, 0.6,
+                          session_reset=int(now + 3600),
+                          weekly_reset=int(now + 86400),
+                          scoped=0.44, scoped_reset=int(now + 86400),
+                          scoped_label="Fable")
+            stats = collect_all({"claude_dir": tmpdir})
+            self.assertEqual(stats.scoped_label, "Fable")
+            self.assertAlmostEqual(stats.scoped_utilization, 0.44)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sp = os.path.join(tmpdir, "usage-history.jsonl")
+            # expired scoped window -> hidden
+            append_sample(sp, now - 60, 0.1, 0.6,
+                          weekly_reset=int(now + 86400),
+                          scoped=0.44, scoped_reset=int(now - 3600),
+                          scoped_label="Fable")
+            stats = collect_all({"claude_dir": tmpdir})
+            self.assertEqual(stats.scoped_label, "")
+            self.assertEqual(stats.scoped_utilization, 0.0)
+
+
 class _CtxResp:
     """Minimal context-manager stand-in for urlopen's response object."""
 

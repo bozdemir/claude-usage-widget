@@ -17,13 +17,17 @@ def append_sample(
     weekly_util: float,
     session_reset: int = 0,
     weekly_reset: int = 0,
+    scoped: float = 0.0,
+    scoped_reset: int = 0,
+    scoped_label: str = "",
 ) -> None:
     """Append one sample to the JSONL history file.
 
     ``session_reset`` / ``weekly_reset`` are unix-second reset timestamps;
     they're stored so a later throttled/failed API poll can restore the
-    last-known countdown instead of blanking it. Old readers that only look
-    at ts/session/weekly ignore the extra keys."""
+    last-known countdown instead of blanking it. The ``scoped*`` fields do
+    the same for an optional model-scoped weekly cap (e.g. Fable). Old
+    readers that only look at ts/session/weekly ignore the extra keys."""
     entry = {
         "ts": float(ts),
         "session": float(session_util),
@@ -33,6 +37,10 @@ def append_sample(
         entry["session_reset"] = int(session_reset)
     if weekly_reset:
         entry["weekly_reset"] = int(weekly_reset)
+    if scoped_label:
+        entry["scoped"] = float(scoped)
+        entry["scoped_reset"] = int(scoped_reset)
+        entry["scoped_label"] = str(scoped_label)
     line = json.dumps(entry)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:

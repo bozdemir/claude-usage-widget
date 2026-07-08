@@ -53,6 +53,12 @@ THEME = {
 METRICS = {
     "osd_width": 360, "osd_height": 224, "osd_radius": 0, "osd_padding": 12,
     "border_width": 2, "ticker_h": 22,
+    # When a model-scoped weekly cap (e.g. "Fable") is present the OSD grows
+    # by one extra SESSION/WEEKLY row's vertical footprint — the same gap the
+    # row() helper leaves between the session and weekly rows (14pt pct number
+    # + 14px bar + 9pt reset line + spacing) — so the third row drops in below
+    # WEEKLY without crowding the ticker strip.
+    "osd_height_scoped": 286,
 }
 
 FONTS = {"family_mono": "Space Mono", "body_pt": 10, "title_pt": 11}
@@ -136,6 +142,15 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     yy = row(yy, "WEEKLY", data.weekly_pct,
              f"RESETS {data.weekly_reset_hrs}H {data.weekly_reset_min}M",
              t["ink"])
+    # Optional model-scoped weekly cap (e.g. "Fable") — a native third row in
+    # the same black-bar rhythm as WEEKLY. Present only when the API reports
+    # it; guarding on scoped_pct (belt-and-suspenders with the label) keeps the
+    # no-scoped panel byte-for-byte unchanged. The ticker below is anchored to
+    # rect.bottom(), which the taller osd_height_scoped pushes down for us.
+    if data.scoped_pct is not None and data.scoped_label:
+        yy = row(yy, data.scoped_label.upper(), data.scoped_pct,
+                 f"RESETS {data.scoped_reset_hrs}H {data.scoped_reset_min}M",
+                 t["ink"])
 
     # 2px rule above the ticker strip — matches the Swiss-grid section
     # break at the top of the panel.

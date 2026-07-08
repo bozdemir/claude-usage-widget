@@ -54,6 +54,9 @@ THEME = {
 
 METRICS = {
     "osd_width": 340, "osd_height": 234, "osd_radius": 2, "osd_padding": 16,
+    # +1 receipt row (fm.height()≈15 + the 16px SESSION→WEEKLY rhythm) for the
+    # optional scoped weekly cap; the overlay switches to this when present.
+    "osd_height_scoped": 265,
     "popup_width": 540, "popup_padding": 26,
     "grain_step_px": 3, "ticker_h": 22,
 }
@@ -144,6 +147,26 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     p.drawRect(QRectF(x, yy, w, 8 * s))
     p.setPen(Qt.NoPen); p.setBrush(hex_to_qcolor(t["ink"]))
     p.drawRect(QRectF(x, yy, w * data.weekly_pct, 8 * s))
+
+    # SCOPED — optional third row (e.g. Anthropic "Fable" weekly cap). Only
+    # drawn when the API reports it; mirrors the WEEKLY row exactly so it reads
+    # as a native third line. Leaves yy on the scoped bar's top edge so the
+    # ticker/footer below shift down by one row via the existing yy math. When
+    # absent, nothing runs and the layout is byte-for-byte the pre-scoped one.
+    if data.scoped_pct is not None:
+        yy += 8 * s + 6 * s
+        draw_text(p, x, yy + fm.ascent(),
+                  (data.scoped_label or "SCOPED").upper(),
+                  hex_to_qcolor(t["ink"]), body_f)
+        right = f"{int(data.scoped_pct * 100)}% · {data.scoped_reset_hrs}h{data.scoped_reset_min}m"
+        rw = fm.horizontalAdvance(right)
+        draw_text(p, x + w - rw, yy + fm.ascent(), right,
+                  hex_to_qcolor(t["ink"]), body_f)
+        yy += fm.height() + 2 * s
+        p.setPen(hex_to_qcolor(t["rule"])); p.setBrush(hex_to_qcolor(t["bar_track"]))
+        p.drawRect(QRectF(x, yy, w, 8 * s))
+        p.setPen(Qt.NoPen); p.setBrush(hex_to_qcolor(t["ink"]))
+        p.drawRect(QRectF(x, yy, w * data.scoped_pct, 8 * s))
 
     # Ticker marquee (between the weekly bar and the thank-you footer).
     yy += 8 * s + 6 * s

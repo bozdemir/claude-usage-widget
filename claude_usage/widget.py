@@ -754,6 +754,14 @@ class UsagePopup(QWidget):
             _format_reset_day(stats.weekly_reset),
             stats.weekly_utilization,
         )
+        # Optional model-scoped weekly cap (e.g. Fable) — only when the API
+        # reports it (temporary limit; auto-hides when it goes away).
+        if getattr(stats, "scoped_label", ""):
+            self._add_usage_row(
+                stats.scoped_label,
+                _format_reset_day(stats.scoped_reset),
+                stats.scoped_utilization,
+            )
         w_fc = format_forecast(stats.weekly_forecast)
         if w_fc:
             self._add_dim_line(w_fc)
@@ -1095,9 +1103,18 @@ class ClaudeUsageApp(QObject):
         self._timer.timeout.connect(self._refresh_async)
         self._timer.start()
 
-        # One-shot GitHub release check.
+        # GitHub release check — once on startup, then re-checked daily. We
+        # notify at most once per NEW version (tracked in _notified_tag) so a
+        # user who hasn't upgraded isn't nagged every day.
         self._latest_tag: str | None = None
+        self._notified_tag: str | None = None
         threading.Thread(target=self._check_update, daemon=True).start()
+        self._update_timer = QTimer(self)
+        self._update_timer.setInterval(24 * 60 * 60 * 1000)  # 24h
+        self._update_timer.timeout.connect(
+            lambda: threading.Thread(target=self._check_update, daemon=True).start()
+        )
+        self._update_timer.start()
 
         # Tracks whether a weekly-report generation is already in flight, so
         # the hourly check doesn't spawn multiple Haiku calls in parallel.
@@ -1236,6 +1253,14 @@ class ClaudeUsageApp(QObject):
         self._act_refresh_footer = QAction("Updated never", m)
         self._act_refresh_footer.setEnabled(False)
         m.addAction(self._act_refresh_footer)
+
+        # Installed version — dim, non-interactive. Turns into an
+        # "update available" affordance in _sync_menu_state when a newer
+        # release is found.
+        from claude_usage import __version__ as _v
+        self._act_version = QAction(f"claude-usage v{_v}", m)
+        self._act_version.setEnabled(False)
+        m.addAction(self._act_version)
 
         act_quit = QAction("⏻  Quit", m)
         act_quit.triggered.connect(self._on_quit)
@@ -1663,20 +1688,23 @@ class ClaudeUsageApp(QObject):
             tag, available = check_latest_version(v)
             if available and tag:
                 # Runs on a daemon thread — hand the result to the GUI
-                # thread via a queued signal instead of writing _latest_tag
-                # directly (same idiom as stats_ready).
+                # thread via a queued signal (same idiom as stats_ready).
+                # The GUI slot decides whether to notify.
                 self.update_available.emit(tag)
-                # Show a one-time system notification.
-                self.notifier._send(
-                    f"Claude Usage {tag} available",
-                    "Update with: pip install --upgrade claude-usage-widget",
-                )
         except Exception:
             pass
 
     def _on_update_available(self, tag: str) -> None:
-        """GUI-thread slot: record the newer release tag for the menu banner."""
+        """GUI-thread slot: record the newer release tag for the menu banner,
+        and fire a desktop notification once per NEW version (so the daily
+        re-check doesn't nag a user who simply hasn't upgraded yet)."""
         self._latest_tag = tag
+        if tag != self._notified_tag:
+            self._notified_tag = tag
+            self.notifier._send(
+                f"Claude Usage {tag} available",
+                "Update with: pip install --upgrade claude-usage-widget",
+            )
 
     def _on_quit(self) -> None:
         self._alive = False

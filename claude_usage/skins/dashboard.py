@@ -51,7 +51,7 @@ THEME = {
 }
 
 METRICS = {
-    "osd_width": 380, "osd_height": 196, "osd_radius": 8, "osd_padding": 14,
+    "osd_width": 380, "osd_height": 196, "osd_height_scoped": 256, "osd_radius": 8, "osd_padding": 14,
     "popup_width": 540, "popup_padding": 18,
     "ring_size": 58, "ring_stroke": 6, "row_bar_height": 4,
     "ticker_h": 24,
@@ -121,11 +121,20 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
                   hex_to_qcolor(t["live_indicator"]), small_f,
                   letter_spacing_px=1.0 * s)
 
-    # rows: SESSION + WEEKLY
+    # rows: SESSION + WEEKLY (+ optional scoped weekly cap, e.g. "FABLE")
     rows = [
         ("SESSION", data.session_pct, f"{data.session_reset_min}m", t["accent"]),
         ("WEEKLY",  data.weekly_pct,  f"{data.weekly_reset_hrs}h {data.weekly_reset_min}m", t["accent2"]),
     ]
+    # Third row appears only when the API reports a model-scoped weekly cap.
+    # Drawn in the Weekly row's own idiom — same bar, fonts, accent2 colour —
+    # so it reads as a native row. The bottom-anchored ticker (below) rides
+    # down automatically because the overlay grows the OSD to osd_height_scoped.
+    if data.scoped_pct is not None:
+        rows.append((
+            (data.scoped_label or "SCOPED").upper(), data.scoped_pct,
+            f"{data.scoped_reset_hrs}h {data.scoped_reset_min}m", t["accent2"],
+        ))
     y_cursor = y + fm.height() + 8 * s
     fm_metric = QFontMetrics(metric_f)
     for label, pct, reset, color_hex in rows:

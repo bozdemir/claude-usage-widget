@@ -34,6 +34,12 @@ class SkinData:
     weekly_pct: float = 0.0
     weekly_reset_hrs: int = 0
     weekly_reset_min: int = 0
+    # Optional model-scoped weekly cap (e.g. "Fable"). scoped_pct is None
+    # when the API reported no scoped limit → skins skip the third row.
+    scoped_pct: float | None = None
+    scoped_reset_hrs: int = 0
+    scoped_reset_min: int = 0
+    scoped_label: str = ""
     live_tok_per_min: float = 0.0  # in thousands (e.g. 10.5 means 10.5k)
     is_live: bool = False
     subagent_count: int = 0
@@ -173,6 +179,10 @@ def build_popup_data(stats, now: float | None = None):
         ticker_items=popup_ticker,
         plan=_plan_label(getattr(stats, "subscription_type", "")),
         weekly_reset_label=_format_weekly_reset_label(int(getattr(stats, "weekly_reset", 0))),
+        scoped_pct=osd.scoped_pct,
+        scoped_label=osd.scoped_label,
+        scoped_reset_label=_format_weekly_reset_label(int(getattr(stats, "scoped_reset", 0)))
+        if getattr(stats, "scoped_label", "") else "",
         session_forecast=forecast_text,
         spark_5h=list(getattr(stats, "session_history", []) or []),
         spark_7d=list(getattr(stats, "weekly_history", []) or []),
@@ -226,6 +236,17 @@ def from_usage_stats(
         weekly_reset_hrs = w_left // 3600
         weekly_reset_min = (w_left % 3600) // 60
 
+    # Scoped weekly cap — present only when the API returned a label.
+    scoped_label = str(getattr(stats, "scoped_label", "") or "")
+    scoped_pct: float | None = None
+    scoped_reset_hrs = scoped_reset_min = 0
+    if scoped_label:
+        scoped_pct = max(0.0, min(1.0, float(getattr(stats, "scoped_utilization", 0.0))))
+        if getattr(stats, "scoped_reset", 0) > 0:
+            sc_left = max(0, int(stats.scoped_reset - now_ts))
+            scoped_reset_hrs = sc_left // 3600
+            scoped_reset_min = (sc_left % 3600) // 60
+
     live = getattr(stats, "live_activity", None)
     tpm = float(getattr(live, "tokens_per_minute", 0.0) or 0.0)
     is_live = bool(getattr(live, "is_live", False))
@@ -247,6 +268,10 @@ def from_usage_stats(
         weekly_pct=max(0.0, min(1.0, float(getattr(stats, "weekly_utilization", 0.0)))),
         weekly_reset_hrs=weekly_reset_hrs,
         weekly_reset_min=weekly_reset_min,
+        scoped_pct=scoped_pct,
+        scoped_reset_hrs=scoped_reset_hrs,
+        scoped_reset_min=scoped_reset_min,
+        scoped_label=scoped_label,
         live_tok_per_min=tpm / 1000.0,
         is_live=is_live,
         subagent_count=int(getattr(stats, "active_subagent_count", 0) or 0),

@@ -81,6 +81,12 @@ def main() -> int:
     # Synthetic active sessions so the new [07] section has rows to show.
     import time as _time
     _now = _time.time()
+    # Synthetic model-scoped weekly cap so the third "Fable" bar is documented
+    # in the gallery even when the live API is throttled or no longer reports
+    # it (it's a temporary limit).
+    stats.scoped_utilization = 0.33
+    stats.scoped_reset = int(_now + 2 * 86400)
+    stats.scoped_label = "Fable"
     stats.active_sessions = [
         {"cwd": "/home/user/project-alpha", "startedAt": int((_now - 47 * 60) * 1000)},
         {"cwd": "/home/user/project-beta",  "startedAt": int((_now - 2 * 3600 - 14 * 60) * 1000)},

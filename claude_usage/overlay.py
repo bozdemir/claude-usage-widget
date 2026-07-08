@@ -46,6 +46,9 @@ BASE_WIDTH = 260
 BASE_HEIGHT = 100
 TICKER_STRIP_HEIGHT = 22
 NEWS_STRIP_HEIGHT = 16  # second ticker row for latest headline
+# Extra height for the optional model-scoped weekly bar (matches one
+# session/weekly row's vertical footprint in _paint_full).
+SCOPED_ROW_HEIGHT = 31
 # Gauge view is slightly taller than bars because the rings + label + reset
 # stack vertically inside each column. No ticker in this view (it would
 # collide with the reset line under each ring).
@@ -193,6 +196,11 @@ class UsageOverlay(QWidget):
         self._weekly_pct: float = 0.0
         self._session_reset: int = 0
         self._weekly_reset: int = 0
+        # Optional model-scoped weekly cap (e.g. Fable). _scoped_label empty
+        # => no third bar. Auto-appears/hides as the API reports it.
+        self._scoped_pct: float = 0.0
+        self._scoped_reset: int = 0
+        self._scoped_label: str = ""
         self._live_tpm: float = 0.0      # tokens/min over the last few minutes
         self._is_live: bool = False       # show the "● LIVE" dot
         self._active_subagents: int = 0  # count of running Task-tool subagents
@@ -282,6 +290,14 @@ class UsageOverlay(QWidget):
         self._weekly_pct = max(0.0, min(1.0, float(stats.weekly_utilization)))
         self._session_reset = int(stats.session_reset)
         self._weekly_reset = int(stats.weekly_reset)
+        # Scoped weekly cap. If its presence changed since the last update,
+        # the OSD needs one extra bar's worth of height — re-apply the size.
+        had_scoped = bool(self._scoped_label)
+        self._scoped_pct = max(0.0, min(1.0, float(getattr(stats, "scoped_utilization", 0.0))))
+        self._scoped_reset = int(getattr(stats, "scoped_reset", 0) or 0)
+        self._scoped_label = str(getattr(stats, "scoped_label", "") or "")
+        if bool(self._scoped_label) != had_scoped:
+            self._apply_size()
         live = getattr(stats, "live_activity", None)
         if live is not None:
             self._is_live = bool(getattr(live, "is_live", False))
@@ -409,9 +425,14 @@ class UsageOverlay(QWidget):
         if self._skin is not None and not self._minimized:
             # Skins declare their own OSD footprint — honour it instead of
             # squeezing the handoff layout into the default's 260×122 box.
+            # When a scoped weekly cap is present the skin draws a third row,
+            # so it exposes a taller "osd_height_scoped" we switch to.
             m = self._skin.METRICS
             width = int(m["osd_width"] * self._scale)
-            height = int(m["osd_height"] * self._scale)
+            base_h = m["osd_height"]
+            if self._scoped_label:
+                base_h = m.get("osd_height_scoped", m["osd_height"] + SCOPED_ROW_HEIGHT)
+            height = int(base_h * self._scale)
             if self.isVisible():
                 tr = self.frameGeometry().topRight()
                 self.resize(width, height)
@@ -422,12 +443,14 @@ class UsageOverlay(QWidget):
 
         width = int(BASE_WIDTH * self._scale)
         if self._view_mode == VIEW_MODE_GAUGE:
-            base = GAUGE_HEIGHT
+            base = GAUGE_HEIGHT + (SCOPED_ROW_HEIGHT if self._scoped_label else 0)
         else:
             # Receipt skin always reserves the footer strip for its barcode,
             # even if the user disabled the ticker feature.
             wants_footer = self._ticker_enabled or self._style.decoration == "receipt"
             base = BASE_HEIGHT + (TICKER_STRIP_HEIGHT if wants_footer else 0)
+            if self._scoped_label:
+                base += SCOPED_ROW_HEIGHT
         height = MINIMIZED_HEIGHT if self._minimized else int(base * self._scale)
         # Preserve the top-right corner when resizing so the overlay doesn't
         # visually drift as the user scrolls to scale.
@@ -638,7 +661,15 @@ class UsageOverlay(QWidget):
             )
             try:
                 s = self._scale
-                skin_h = int(self._skin.METRICS["osd_height"] * s)
+                # Paint into the SAME rect height the window was sized to in
+                # _apply_size — the taller osd_height_scoped when a scoped cap
+                # is present — or the skin's panel/ticker only cover the base
+                # height and the third row spills outside the panel.
+                skin_base = self._skin.METRICS["osd_height"]
+                if self._scoped_label:
+                    skin_base = self._skin.METRICS.get(
+                        "osd_height_scoped", skin_base + SCOPED_ROW_HEIGHT)
+                skin_h = int(skin_base * s)
                 self._skin.paint_osd(p, QRectF(0, 0, w, skin_h), data, self._scale)
                 # Draw news inside the skin's frame: above the skin's own ticker.
                 if getattr(self._skin, "WANTS_TICKER", False):
@@ -748,6 +779,34 @@ class UsageOverlay(QWidget):
                 fm = p.fontMetrics()
                 rw = fm.horizontalAdvance(reset_label)
                 p.drawText(QPointF(cx - rw / 2, label_y + 12 * s), reset_label)
+
+        # Scoped weekly cap — a slim full-width bar spanning both columns
+        # beneath the rings (a third ring would unbalance the pair).
+        if self._scoped_label:
+            pad_x = 14 * s
+            bar_h = OSD_BAR_HEIGHT * s
+            bar_w = w - 2 * pad_x
+            row_y = h - 22 * s
+            label = f"{self._scoped_label} {int(self._scoped_pct * 100)}%"
+            p.setFont(_mono_font(max(8, int(9 * s)), bold=True))
+            p.setPen(_hex_to_qcolor(self._theme["text_primary"]))
+            p.drawText(QPointF(pad_x, row_y), label)
+            reset_label = _format_reset_short(self._scoped_reset)
+            if reset_label:
+                p.setFont(_mono_font(max(7, int(7.5 * s))))
+                p.setPen(_hex_to_qcolor(self._theme["text_dim"]))
+                rw = p.fontMetrics().horizontalAdvance(reset_label)
+                p.drawText(QPointF(w - pad_x - rw, row_y), reset_label)
+            bar_y = row_y + 5 * s
+            p.setPen(Qt.NoPen)
+            p.setBrush(_hex_to_qcolor(self._theme["bar_track"], 0.6))
+            p.drawRoundedRect(QRectF(pad_x, bar_y, bar_w, bar_h),
+                              OSD_BAR_RADIUS * s, OSD_BAR_RADIUS * s)
+            if self._scoped_pct > 0:
+                p.setBrush(_bar_color(self._scoped_pct, self._theme))
+                p.drawRoundedRect(
+                    QRectF(pad_x, bar_y, max(bar_w * self._scoped_pct, bar_h), bar_h),
+                    OSD_BAR_RADIUS * s, OSD_BAR_RADIUS * s)
 
     def _draw_ring(
         self,
@@ -866,6 +925,17 @@ class UsageOverlay(QWidget):
             pct=self._weekly_pct,
             reset_label=_format_reset_short(self._weekly_reset),
         )
+
+        # --- Scoped weekly row (e.g. "Fable") — only when the API reports it ---
+        if self._scoped_label:
+            y3 = y2 + 15 * s + bar_h + 10 * s
+            self._draw_row(
+                p, y3, w, pad_x, bar_w, bar_h, bar_r, font_label, font_small,
+                label=self._scoped_label,
+                pct=self._scoped_pct,
+                reset_label=_format_reset_short(self._scoped_reset),
+            )
+            y2 = y3  # push the footer below the extra row
 
         # --- Ticker strip / receipt footer (below the weekly row) ---
         # Receipt skin replaces the scrolling ticker with a dotted

@@ -153,6 +153,16 @@ def paint_popup(
     y = draw_sparkline_row(p, x, y, w, 26 * s, data.spark_7d,
                            "last 7 days", t, s,
                            color_hex=t.get("accent2", t["accent"]))
+    # Optional model-scoped weekly cap (e.g. Fable) — only when present.
+    if getattr(data, "scoped_pct", None) is not None:
+        y += ROW_GAP * s
+        label = (data.scoped_label or "scoped").lower()
+        reset = data.scoped_reset_label or ""
+        y = draw_pct_row(p, x, y, w,
+                         f"{label} weekly · resets {reset}".rstrip(" ··"),
+                         data.scoped_pct, f"{int(data.scoped_pct*100)}%",
+                         t, s, bar_style=bar_style,
+                         fill_hex=t.get("warn", t["accent"]), ascii_cols=46)
     y += SECTION_GAP * s
 
     # --- section 02: calendar -------------------------------------

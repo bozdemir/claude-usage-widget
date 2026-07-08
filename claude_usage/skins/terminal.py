@@ -60,6 +60,7 @@ THEME = {
 METRICS = {
     "osd_width":       440,
     "osd_height":      172,
+    "osd_height_scoped": 212,  # +1 Session/Weekly row footprint (2*line_h + row_gap + 2)
     "osd_radius":      6,
     "osd_padding":     12,
     "osd_row_gap":     8,
@@ -147,6 +148,23 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
                    hex_to_qcolor(t["accent"]), hex_to_qcolor(t["very_dim"]),
                    body_f)
 
+    # scoped weekly row — optional model-scoped cap (e.g. "fable"). Only
+    # drawn when the API reports it; mirrors the weekly row exactly and
+    # pushes the ticker below down by one row via the updated y_bar.
+    if getattr(data, "scoped_pct", None) is not None and getattr(data, "scoped_label", ""):
+        y_row = y_bar + line_h + m["osd_row_gap"] * s
+        draw_text(p, x, y_row + fm.ascent(), data.scoped_label.lower(),
+                  hex_to_qcolor(t["text_secondary"]), body_f)
+        right = f"{data.scoped_reset_hrs}h {data.scoped_reset_min}m · {int(data.scoped_pct*100)}%"
+        rw = fm.horizontalAdvance(right)
+        draw_text(p, x + w - rw, y_row + fm.ascent(), right,
+                  hex_to_qcolor(t["text_secondary"]), body_f)
+        y_bar = y_row + line_h + 2 * s
+        draw_ascii_bar(p, x, y_bar + fm.ascent(), data.scoped_pct,
+                       m["osd_bar_cols"],
+                       hex_to_qcolor(t["accent"]), hex_to_qcolor(t["very_dim"]),
+                       body_f)
+
     # ticker strip — dashed separator + colour-quartile cost tags
     y_tick = y_bar + line_h + 6 * s
     # dashed top rule
@@ -222,6 +240,15 @@ def paint_popup(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> float:
                      t, s, bar_style="ascii", fill_hex=t["accent"], ascii_cols=46)
     y = draw_sparkline_row(p, x, y, w, 24 * s, data.spark_7d,
                            "last 7 days", t, s)
+    # Optional model-scoped weekly cap (e.g. Fable) — only when present.
+    if getattr(data, "scoped_pct", None) is not None:
+        y += ROW_GAP * s
+        label = (data.scoped_label or "scoped").lower()
+        reset = data.scoped_reset_label or ""
+        y = draw_pct_row(p, x, y, w,
+                         (f"{label} weekly · resets " + reset).rstrip(),
+                         data.scoped_pct, f"{int(data.scoped_pct * 100)}%".rjust(4),
+                         t, s, bar_style="ascii", fill_hex=t["warn"], ascii_cols=46)
     y += SECTION_GAP * s
 
     # [02] calendar (52-week heatmap)

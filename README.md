@@ -93,6 +93,7 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 
 - **Single `pip install`** -- no `apt`/`brew`/system libraries required, Qt is bundled
 - **Real API data** -- 5h / 7d plan utilisation read from Claude Code's `/api/oauth/usage` endpoint (the same data the Claude UI shows)
+- **Model-scoped weekly bar** -- when Anthropic reports a separate weekly cap for a specific model (e.g. **Fable**), a third bar appears automatically below Session and Weekly, labelled with the model name. It auto-hides when the API stops reporting it — works in bars, gauge, all 11 themes, and the detail popup.
 - **OSD overlay** -- transparent, frameless; left-click opens the details popup, right-click shows a context menu. Stays on top by default — toggle it off to use it as a background desktop widget.
 - **Live token stream** -- `● LIVE 5.3k tok/min` badge on the OSD while a Claude Code session is actively writing, derived from the conversation JSONLs
 - **Per-turn cost ticker** -- a scrolling strip at the bottom of the OSD shows the USD cost of each assistant turn as it lands (`$0.156 ← Bash · 116`), colour-coded by quartile within the visible window so the tape always stays visually varied. Toggle via right-click → "Show cost ticker" or set `"show_ticker": false` in `config.json`.
@@ -129,7 +130,7 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 pip install --user --upgrade claude-usage-widget
 claude-usage              # launches the OSD overlay (foreground)
 claude-usage --detach     # …or run it in the background and free the shell
-claude-usage --version    # 0.9.3
+claude-usage --version    # 0.10.0
 ```
 
 That's it — no `apt`, no `brew`, no PyGObject, no rumps. `pip` pulls in just two pure-Python wheels (PySide6-Essentials, which ships Qt, and certifi for HTTPS), so the widget is self-contained with zero system libraries.
@@ -266,6 +267,8 @@ The widget reads your Claude Code OAuth token using the same lookup order as Cla
 ```
 
 These are the same values shown on the [claude.ai usage page](https://claude.ai/settings/usage). (A tiny `/v1/messages` call that reads `anthropic-ratelimit-*` headers remains as a fallback if the OAuth endpoint is unreachable.) The widget also reads local data from `~/.claude/` for message counts, token usage per model, and active session tracking.
+
+The response also carries a `limits` array with any **model-scoped weekly caps** (e.g. a separate "Fable" weekly limit). The widget surfaces the highest-utilised scoped cap as an auto-appearing third bar, labelled by the model's display name; when the API stops reporting it the bar disappears on its own.
 
 ### How the OSD works
 
