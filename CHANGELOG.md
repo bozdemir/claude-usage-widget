@@ -3,6 +3,41 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## 0.11.0
+
+### Added
+- **`--statusline`** — a one-shot CLI flag that prints one compact line
+  (`S 42% · W 18% · $3.21`, plus a scoped bar when present) for Claude Code's
+  native `statusLine` setting. Reuses the `--json`/`--field` collect→redact
+  path, so graceful degradation (last-known restore on 429) is inherited; it
+  never launches the GUI, even with `--detach`. See
+  `docs/integrations/claude-code-statusline.md`.
+- **Real-time burn / spike / retry-storm alerts.** A bright OSD badge
+  (`▲42%` fast-burn, `▲SPIKE`, `▲STORM`) on the bars title row + gauge, plus a
+  **debounced, once-per-episode** desktop notification and `burn_alert`
+  webhook, when the 5-hour window burns abnormally fast or a single turn /
+  retry loop spikes tokens. Fully tunable (`burn_*`, `spike_*`, `retry_storm_*`
+  keys); off via `burn_alerts_enabled: false`. The badge ships for the 5
+  built-in themes (the 6 skins are a follow-up; notifications fire regardless).
+- **Peak-window awareness.** An unobtrusive "reduced 5h limit until …" hint in
+  the detail popup during Anthropic's weekday reduced-limit window (default
+  ~5–11 AM US Pacific). Data-driven and fully overridable (`peak_*` keys); the
+  default Pacific path uses self-contained DST math, so it needs no `tzdata`
+  and works on Windows out of the box.
+- **Monthly budget cap + projection.** Set `monthly_budget_usd` > 0 to see
+  month-to-date spend and a linear end-of-month projection in the popup
+  (`$X / $Y this month · projected $Z`, red when over), plus a once-per-month
+  notification + `budget_projection` webhook when on track to exceed the cap.
+  Off (and its extra month-wide scan skipped) at the `0.0` default.
+
+### Notes
+- Extended-thinking cost breakout was investigated and **dropped as
+  infeasible**: verified against 29,981 real assistant messages, `message.usage`
+  reports no separate reasoning/thinking token count (it's folded into
+  `output_tokens`) and on-disk thinking blocks are signature-only, so no count
+  or usable proxy exists. Revisit if Claude Code starts emitting an
+  `output_reasoning_tokens`-style field.
+
 ## 0.10.0
 
 ### Added

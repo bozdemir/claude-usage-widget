@@ -111,6 +111,9 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 - **AI-generated weekly report** -- Claude Haiku writes a 3-4 sentence summary of your past week of usage (cached 1h; never leaks prompt text)
 - **Anomaly detection** -- flags days whose utilisation exceeds the 7/90-day baseline
 - **Cost optimisation tips** -- suggests cache-hit-rate improvements and model-mix changes
+- **Real-time burn/spike alerts** -- a bright OSD badge (`▲42%` / `▲SPIKE` / `▲STORM`) plus a debounced, once-per-episode notification when your 5-hour window burns abnormally fast or a single turn / retry-loop spikes tokens
+- **Peak-window awareness** -- an unobtrusive popup hint during Anthropic's weekday reduced-limit window (default ~5–11 AM Pacific; fully configurable)
+- **Monthly budget** -- optional spend cap: set `monthly_budget_usd` to see month-to-date + projected end-of-month spend in the popup and get a once-per-month heads-up when you're on track to exceed it
 - **Themes** -- 11 in all: 5 classic palettes (default, catppuccin-mocha, dracula, nord, gruvbox-dark) plus 6 designed skins (terminal, dashboard, hud, receipt, strip, brutalist)
 - **Threshold notifications** -- native desktop notifications on crossing 75% / 90%
 - **Webhooks** -- optional POST to Slack / Discord / custom URLs on threshold, daily, or anomaly events
@@ -131,7 +134,7 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 pip install --user --upgrade claude-usage-widget
 claude-usage              # launches the OSD overlay (foreground)
 claude-usage --detach     # …or run it in the background and free the shell
-claude-usage --version    # 0.10.0
+claude-usage --version    # 0.11.0
 ```
 
 That's it — no `apt`, no `brew`, no PyGObject, no rumps. `pip` pulls in just two pure-Python wheels (PySide6-Essentials, which ships Qt, and certifi for HTTPS), so the widget is self-contained with zero system libraries.
@@ -226,7 +229,11 @@ cp config.json.example config.json
 | `notify_thresholds` | `[0.75, 0.90]` | Utilisation fractions that fire a notification when first crossed. |
 | `api_server_enabled` | `false` | Enable the opt-in localhost JSON API (`/usage`, `/healthz`). |
 | `api_server_host` / `api_server_port` | `127.0.0.1` / `8765` | Bind address and port for the localhost API. |
-| `webhooks` | `{}` | Map of event → URL (`threshold_crossed`, `daily_report`, `anomaly`). |
+| `webhooks` | `{}` | Map of event → URL (`threshold_crossed`, `daily_report`, `anomaly`, `budget_projection`, `burn_alert`). |
+| `peak_awareness_enabled` | `true` | Show an unobtrusive "reduced 5h limit" hint in the popup during Anthropic's weekday peak window. Tune the window with `peak_start_hour` (`5`), `peak_end_hour` (`11`, exclusive), `peak_timezone` (`America/Los_Angeles`), `peak_weekdays` (`[0,1,2,3,4]`, Mon–Fri). |
+| `monthly_budget_usd` | `0.0` | Monthly spend cap (USD). Set > 0 to show month-to-date + projected spend in the popup and a once-per-month alert when projected to exceed it. `0` disables the feature (and its extra month-wide scan). |
+| `budget_notify_enabled` / `budget_notify_ratio` | `true` / `1.0` | Whether the budget projection notification fires, and at what fraction of the cap (`0.9` warns at 90%). |
+| `burn_alerts_enabled` | `true` | Real-time OSD badge + debounced notification when the 5h window burns fast or a turn / retry-loop spikes tokens. Tune with `burn_warn_pct_per_min` (`2.0`), `burn_crit_pct_per_min` (`5.0`), `burn_window_seconds` (`600`), `spike_token_multiplier` (`4.0`), `spike_min_tokens` (`20000`), `spike_baseline_min_turns` (`5`), `retry_storm_turns` (`3`), `retry_storm_window_seconds` (`120`), `burn_alert_cooldown_seconds` (`900`). |
 
 Keys omitted from `config.json` fall back to built-in defaults. `claude_dir` is not included in the example file because the default is correct for most setups.
 
