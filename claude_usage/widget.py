@@ -1104,7 +1104,6 @@ class ClaudeUsageApp(QObject):
         # Show the overlay, then restore last-session UI state so the widget
         # reopens exactly as the user left it (scale is restored in the
         # overlay's own __init__ from osd_scale).
-        self.overlay.show()
         if config.get("osd_minimized", False):
             self.overlay.toggle_minimized()
         if not config.get("osd_visible", True):
