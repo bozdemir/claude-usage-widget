@@ -18,6 +18,16 @@ This project follows [semantic versioning](https://semver.org/).
   Claude-designed skins, and the detail popup**; the last-known value is
   retained (and expired windows cleared) across a throttled poll, exactly
   like the session/weekly bars.
+- **Update-available check.** On startup and once every 24 h a daemon
+  thread queries the GitHub Releases API for the latest tag; when a newer
+  version is published it fires a single desktop notification
+  (`Update with: pip install --upgrade claude-usage-widget`) and shows a
+  banner in the right-click menu. It notifies only once per new version,
+  so a user who hasn't upgraded yet isn't nagged daily, and every call is
+  best-effort — a failed or throttled request is silently ignored.
+- **Widget version in the right-click menu.** A dim, disabled
+  `claude-usage v<version>` line at the foot of the context menu so you
+  can see which build is running at a glance.
 
 ## 0.9.3
 

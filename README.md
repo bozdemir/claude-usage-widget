@@ -116,6 +116,7 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 - **Webhooks** -- optional POST to Slack / Discord / custom URLs on threshold, daily, or anomaly events
 - **Localhost JSON API** -- optional `http://127.0.0.1:8765/usage` for tmux / polybar / waybar integrations (prompt previews redacted at the serialization boundary)
 - **CLI mode** -- `--json`, `--field`, `--export csv` for scripts and status bars
+- **Update notifications** -- a daily background check against the GitHub Releases API; when a newer version is published you get one desktop notification and a banner in the right-click menu (notified once per version, never nagging). The running build's version is also shown at the foot of the menu.
 
 ## Requirements
 
@@ -161,7 +162,7 @@ python3 main.py
 |---------------------|--------|
 | **Left-click**      | Open the details popup |
 | **Left-click drag** | Move the OSD |
-| **Right-click**     | Open context menu (Details, Refresh, OSD Opacity, OSD View, OSD Position, Theme, Minimize/Restore, Show cost ticker, Show news ticker, Always on top, Quit) |
+| **Right-click**     | Open context menu (Details, Refresh, OSD Opacity, OSD View, OSD Position, Theme, Minimize/Restore, Show cost ticker, Show news ticker, Always on top, version, Quit) |
 | **Scroll up / down**| Resize (0.6x -- 2.0x) |
 
 ### Context menu (right-click OSD)
@@ -176,6 +177,7 @@ python3 main.py
 - **Show cost ticker** -- toggle the scrolling per-turn cost strip on the OSD
 - **Show news ticker** -- toggle the Anthropic/Claude news headline strip on the OSD
 - **Always on top** -- keep the OSD pinned above other windows (default), or turn it off to let it sit as a normal background desktop widget the window manager stacks behind your focused windows; persisted
+- **claude-usage v`<version>`** -- a dim, disabled line showing the running build's version; when a newer release is published an **↑ Update available: `<tag>`** item appears above it (click to copy the `pip install --upgrade` command)
 - **Quit** -- exit the widget
 
 ## Configuration
