@@ -72,6 +72,26 @@ class TestDefaultConfig(unittest.TestCase):
         """osd_scale is a positive number."""
         self.assertGreater(DEFAULT_CONFIG["osd_scale"], 0.0)
 
+    def test_provider_defaults_are_backcompat(self) -> None:
+        """Default must be Claude-only so existing installs are unchanged."""
+        self.assertEqual(DEFAULT_CONFIG["providers"], ["claude"])
+        self.assertTrue(DEFAULT_CONFIG["codex_dir"].endswith(".codex"))
+        self.assertEqual(DEFAULT_CONFIG["codex_default_model"], "gpt-5.5")
+
+    def test_user_can_enable_codex(self) -> None:
+        """Users can enable codex by setting providers in their config file."""
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump({"providers": ["claude", "codex"]}, f)
+            path = f.name
+        try:
+            cfg = load_config(path)
+            self.assertEqual(cfg["providers"], ["claude", "codex"])
+            # Untouched keys keep their defaults.
+            self.assertEqual(cfg["codex_default_model"], "gpt-5.5")
+        finally:
+            os.unlink(path)
+
 
 class TestLoadConfig(unittest.TestCase):
     """Tests for load_config covering file reading, merging, and error paths."""

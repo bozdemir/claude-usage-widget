@@ -87,6 +87,13 @@ DEFAULT_CONFIG: Config = {
     # "Always on top") to let it sit as a normal background desktop widget
     # that the window manager stacks like any other window.
     "osd_always_on_top": True,
+    # Which usage providers to show, in display order. Default is Claude-only
+    # so existing installs render exactly as before until Codex is opted in.
+    "providers": ["claude"],
+    # Directory where the OpenAI `codex` CLI writes session rollout JSONL.
+    "codex_dir": os.path.expanduser("~/.codex"),
+    # Model id assumed for a Codex turn that carries no explicit model field.
+    "codex_default_model": "gpt-5.5",
 }
 
 
