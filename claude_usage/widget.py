@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from claude_usage.collector import UsageStats, collect_all
+from claude_usage.collector import UsageStats
 from claude_usage.forecast import format_forecast
 from claude_usage.notifier import UsageNotifier
 from claude_usage.overlay import UsageOverlay, _hex_to_qcolor
@@ -55,6 +55,13 @@ SPARKLINE_HEIGHT = 32
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def route_stats(overlays, by_provider):
+    """Pair each provider's overlay with its UsageStats (skip providers with
+    no overlay). Returns a list of (overlay, stats)."""
+    return [(overlays[pid], stats)
+            for pid, stats in by_provider.items() if pid in overlays]
+
 
 def _format_tokens(n: int) -> str:
     """Format a token count compactly: ``1234567 -> '1.2M'``, ``5400 -> '5.4K'``."""
@@ -1024,7 +1031,29 @@ class ClaudeUsageApp(QObject):
         # classic themes, and the skin popup delegates its whole paintEvent
         # to the active direction module. `_show_popup` picks whichever
         # matches the current theme.
-        self.overlay = UsageOverlay(config)
+        #
+        # One UsageOverlay per configured provider, stacked top-to-bottom:
+        # each block anchors at the same x as the first (its own configured
+        # osd_position), with y offset below the previous block's bottom
+        # edge. `self.overlay` stays an alias to the FIRST (primary)
+        # provider's overlay -- every singular-reference site below this
+        # point (context menu, theme/position/opacity controls, minimize,
+        # drag/scale persistence, popup click wiring) still targets only
+        # the primary overlay. That is Phase 1 scope per task-8-brief.md;
+        # secondary overlays only receive routed stats (see _apply_stats).
+        providers = self.config.get("providers", ["claude"])
+        self.overlays: dict[str, UsageOverlay] = {}
+        y = None  # let first overlay use configured osd position
+        for pid in providers:
+            ov = UsageOverlay(self.config)
+            ov.set_provider_id(pid)
+            if y is not None:
+                ov.move(ov.x(), y)
+            ov.show()
+            self.overlays[pid] = ov
+            y = ov.y() + ov.height() + 8  # stack the next block beneath
+        self._primary_provider_id = providers[0] if providers else "claude"
+        self.overlay = self.overlays[self._primary_provider_id]
         self.popup = UsagePopup(config)
         self.skin_popup = SkinPopupWidget(config)
 
@@ -1565,20 +1594,30 @@ class ClaudeUsageApp(QObject):
 
         def _worker() -> None:
             try:
-                stats = collect_all(self.config)
-            except Exception:
-                stats = UsageStats(rate_limit_error="Collection failed")
+                from claude_usage.collector import collect_providers
+                by_provider = collect_providers(self.config)
+            except Exception as exc:  # keep the existing broad guard
+                warnings.warn(f"refresh failed: {exc}")
+                self._refreshing = False
+                return
             # Emit cross-thread signal; the slot runs on the GUI thread.
             if self._alive:
-                self.stats_ready.emit(stats)
+                self.stats_ready.emit(by_provider)  # now emits a dict[str, UsageStats]
 
         threading.Thread(target=_worker, daemon=True).start()
 
     @Slot(object)
-    def _apply_stats(self, stats: UsageStats) -> None:
+    def _apply_stats(self, by_provider: dict[str, UsageStats]) -> None:
         self._refreshing = False
         if not self._alive:
             return
+        # `stats` (singular) drives every site below that isn't yet
+        # provider-fanned-out (popup, skin popup, notifier, webhooks, the
+        # weekly AI report, and self.stats read by the local API server) --
+        # it is the PRIMARY provider's snapshot. Phase 1 scope per
+        # task-8-brief.md; see the constructor comment for the full list of
+        # singular-reference sites left pointing at the primary provider.
+        stats = by_provider.get(self._primary_provider_id) or UsageStats()
         self.stats = stats
         import time as _t
         self._last_refresh_ts = _t.time()
@@ -1594,7 +1633,8 @@ class ClaudeUsageApp(QObject):
         if next_ms != self._timer.interval():
             self._timer.setInterval(next_ms)
 
-        self.overlay.update_stats(stats)
+        for overlay, ov_stats in route_stats(self.overlays, by_provider):
+            overlay.update_stats(ov_stats)
         self.popup.update_stats(stats)
         self.skin_popup.update_stats(stats)
         self.notifier.check_stats(stats)

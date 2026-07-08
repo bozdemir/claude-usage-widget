@@ -190,6 +190,18 @@ class UsageOverlay(QWidget):
         self._scale: float = float(cfg.get("osd_scale", 1.0))
         self._opacity: float = float(cfg.get("osd_opacity", 0.75))
         self._minimized: bool = False
+        # Which provider this overlay instance renders ("claude", "codex",
+        # ...). Set via set_provider_id() by the controller; empty until
+        # then. Not currently read by any paint path -- provider_title /
+        # session_label / weekly_label (below) carry the actual display
+        # strings, sourced from UsageStats rather than this id.
+        self._provider_id: str = ""
+        # Provider-sourced label overrides, adopted from UsageStats in
+        # update_stats(). Empty ⇒ the default-bars paint path keeps its
+        # historical "CLAUDE" / "Session" / "Weekly" strings.
+        self._provider_title: str = ""
+        self._session_label: str = ""
+        self._weekly_label: str = ""
 
         # Live stats — updated externally via update_stats()
         self._session_pct: float = 0.0
@@ -283,9 +295,25 @@ class UsageOverlay(QWidget):
 
     # ------------------------------------------------------------------ API
 
+    def set_provider_id(self, provider_id: str) -> None:
+        """Record which provider ("claude", "codex", ...) this overlay
+        instance renders. Purely informational for now -- the controller
+        uses it to key ``self.overlays``; the paint path keys off the
+        provider-sourced labels in ``update_stats`` instead."""
+        self._provider_id = provider_id
+
     def update_stats(self, stats: UsageStats) -> None:
         """Apply the latest :class:`UsageStats` and trigger a repaint."""
         self._last_stats = stats
+        # Provider-sourced label overrides. Empty ⇒ keep whatever was set
+        # before (or the class-level "" default, which the default-bars
+        # paint path falls back from to its historical CLAUDE/Session/Weekly
+        # strings). Codex sets session_label/weekly_label from its
+        # rate-limit window lengths (e.g. "5h"/"30d"); Claude leaves them
+        # empty so the classic labels keep showing.
+        self._provider_title = getattr(stats, "provider_title", "") or ""
+        self._session_label = getattr(stats, "session_label", "") or self._session_label
+        self._weekly_label = getattr(stats, "weekly_label", "") or self._weekly_label
         self._session_pct = max(0.0, min(1.0, float(stats.session_utilization)))
         self._weekly_pct = max(0.0, min(1.0, float(stats.weekly_utilization)))
         self._session_reset = int(stats.session_reset)
@@ -884,7 +912,7 @@ class UsageOverlay(QWidget):
         p.setFont(title_font)
         p.setPen(_hex_to_qcolor(self._theme["text_dim"]))
         title_y = pad_y + 7 * s
-        title_text = self._style.title_prefix + "CLAUDE"
+        title_text = self._style.title_prefix + (self._provider_title or "CLAUDE")
         p.drawText(QPointF(pad_x, title_y), title_text)
 
         # Subagent rozet — only shown when > 0 so single-session users aren't
@@ -912,7 +940,7 @@ class UsageOverlay(QWidget):
         y = pad_y + 16 * s
         self._draw_row(
             p, y, w, pad_x, bar_w, bar_h, bar_r, font_label, font_small,
-            label="Session",
+            label=self._session_label or "Session",
             pct=self._session_pct,
             reset_label=_format_reset_short(self._session_reset),
         )
@@ -921,7 +949,7 @@ class UsageOverlay(QWidget):
         y2 = y + 15 * s + bar_h + 10 * s
         self._draw_row(
             p, y2, w, pad_x, bar_w, bar_h, bar_r, font_label, font_small,
-            label="Weekly",
+            label=self._weekly_label or "Weekly",
             pct=self._weekly_pct,
             reset_label=_format_reset_short(self._weekly_reset),
         )
