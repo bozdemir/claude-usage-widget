@@ -18,6 +18,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from claude_usage import forecast, pricing
+from claude_usage import peak as _peak
 from claude_usage.analytics import AnomalyReport, detect_anomaly, generate_tips
 from claude_usage.cache_analyzer import CacheOpportunity, analyze_cache_opportunities
 from claude_usage.history import aggregate, append_sample, load_samples, prune
@@ -111,6 +112,10 @@ class UsageStats:
     # Count of subagent JSONLs touched in the last minute — surfaced as the
     # "⚙ N" rozet next to the CLAUDE title when > 0.
     active_subagent_count: int = 0
+    # Peak-window awareness: True + a short hint during Anthropic's weekday
+    # reduced-limit window (see peak.py). Empty hint means not-in-peak/disabled.
+    in_peak_window: bool = False
+    peak_hint: str = ""
 
 
 def parse_history(path: str) -> UsageStats:
@@ -1032,5 +1037,15 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
     stats.weekly_forecast = forecast.forecast_time_to_limit(
         stats.weekly_utilization, weekly_rate, stats.weekly_reset,
     )
+
+    # Peak-window awareness — is `now` inside Anthropic's weekday reduced-limit
+    # window? Pure + cheap; guarded so a bad peak_timezone override can never
+    # break a refresh. `now` is aware-UTC, which peak_status normalizes.
+    try:
+        ps = _peak.peak_status(now, config)
+        stats.in_peak_window = ps.in_peak
+        stats.peak_hint = ps.hint
+    except Exception:
+        stats.in_peak_window, stats.peak_hint = False, ""
 
     return stats

@@ -249,6 +249,14 @@ def paint_popup(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> float:
                          (f"{label} weekly · resets " + reset).rstrip(),
                          data.scoped_pct, f"{int(data.scoped_pct * 100)}%".rjust(4),
                          t, s, bar_style="ascii", fill_hex=t["warn"], ascii_cols=46)
+    # Peak-window hint — unobtrusive dim line under the plan-limit rows.
+    if getattr(data, "in_peak", False) and getattr(data, "peak_hint", ""):
+        y += ROW_GAP * s
+        _pf = mono_font(9 * s, family=FONTS["family"])
+        _fmp = QFontMetrics(_pf)
+        draw_text(p, x, y + _fmp.ascent(), "» " + data.peak_hint.lower(),
+                  hex_to_qcolor(t["text_dim"]), _pf)
+        y += _fmp.height()
     y += SECTION_GAP * s
 
     # [02] calendar (52-week heatmap)

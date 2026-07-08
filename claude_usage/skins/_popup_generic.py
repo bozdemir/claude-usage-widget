@@ -163,6 +163,14 @@ def paint_popup(
                          data.scoped_pct, f"{int(data.scoped_pct*100)}%",
                          t, s, bar_style=bar_style,
                          fill_hex=t.get("warn", t["accent"]), ascii_cols=46)
+    # Peak-window hint — unobtrusive dim line under the plan-limit rows.
+    if getattr(data, "in_peak", False) and getattr(data, "peak_hint", ""):
+        y += ROW_GAP * s
+        _peak_f = ui_font(9 * s, family=t["_ui_family"])
+        _fm_p = QFontMetrics(_peak_f)
+        draw_text(p, x, y + _fm_p.ascent(), data.peak_hint.lower(),
+                  hex_to_qcolor(t["text_dim"]), _peak_f)
+        y += _fm_p.height()
     y += SECTION_GAP * s
 
     # --- section 02: calendar -------------------------------------

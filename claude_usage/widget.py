@@ -744,6 +744,8 @@ class UsagePopup(QWidget):
         s_fc = format_forecast(stats.session_forecast)
         if s_fc:
             self._add_dim_line(s_fc)
+        if getattr(stats, "in_peak_window", False) and getattr(stats, "peak_hint", ""):
+            self._add_dim_line(f"⏱ {stats.peak_hint}")
         self._add_sparkline(stats.session_history, "Last 5 hours")
         self._add_separator()
 

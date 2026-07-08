@@ -67,6 +67,11 @@ class PopupData:
     # forecast / projection line shown under session bar
     session_forecast: str = "limit at 3:14pm"
 
+    # peak-window awareness — a short hint shown under the session bar during
+    # Anthropic's weekday reduced-limit window; empty/False when not in peak.
+    in_peak: bool = False
+    peak_hint: str = ""
+
     # sparkline series — 60 values for 5h (5-min buckets), 7 for 7d
     spark_5h: list[float] = field(default_factory=list)
     spark_7d: list[float] = field(default_factory=list)

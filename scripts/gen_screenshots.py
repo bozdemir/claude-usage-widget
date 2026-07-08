@@ -87,6 +87,10 @@ def main() -> int:
     stats.scoped_utilization = 0.33
     stats.scoped_reset = int(_now + 2 * 86400)
     stats.scoped_label = "Fable"
+    # Synthetic peak-window hint so the popup peak line is documented in the
+    # gallery (it only shows during Anthropic's weekday reduced-limit window).
+    stats.in_peak_window = True
+    stats.peak_hint = "Reduced 5h limit until 11 AM PT"
     stats.active_sessions = [
         {"cwd": "/home/user/project-alpha", "startedAt": int((_now - 47 * 60) * 1000)},
         {"cwd": "/home/user/project-beta",  "startedAt": int((_now - 2 * 3600 - 14 * 60) * 1000)},

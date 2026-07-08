@@ -184,6 +184,8 @@ def build_popup_data(stats, now: float | None = None):
         scoped_reset_label=_format_weekly_reset_label(int(getattr(stats, "scoped_reset", 0)))
         if getattr(stats, "scoped_label", "") else "",
         session_forecast=forecast_text,
+        in_peak=bool(getattr(stats, "in_peak_window", False)),
+        peak_hint=str(getattr(stats, "peak_hint", "") or ""),
         spark_5h=list(getattr(stats, "session_history", []) or []),
         spark_7d=list(getattr(stats, "weekly_history", []) or []),
         heat_90d=list(getattr(stats, "daily_heatmap", []) or []),
