@@ -11,6 +11,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from claude_usage.collector import UsageStats
@@ -114,3 +115,28 @@ def _collect_tokens(codex_dir: str, today_str: str, week_dates: list[str],
                 today_by_model[cur_model] = today_by_model.get(cur_model, 0) + delta
     return {"today_tokens": today_tokens, "week_tokens": week_tokens,
             "today_by_model": today_by_model}
+
+
+class CodexProvider:
+    id = "codex"
+    title = "CODEX"
+
+    def collect(self, config: dict[str, Any]) -> UsageStats:
+        codex_dir = os.path.expanduser(config.get("codex_dir", "~/.codex"))
+        default_model = config.get("codex_default_model", "gpt-5.5")
+        stats = UsageStats()
+        stats.provider_title = self.title
+
+        now = datetime.now(timezone.utc)
+        today_str = now.strftime("%Y-%m-%d")
+        week_start = now - timedelta(days=6)
+        week_dates = [(week_start + timedelta(days=i)).strftime("%Y-%m-%d")
+                      for i in range(7)]
+
+        toks = _collect_tokens(codex_dir, today_str, week_dates, default_model)
+        stats.today_tokens = toks["today_tokens"]
+        stats.week_tokens = toks["week_tokens"]
+        stats.today_model_tokens = toks["today_by_model"]
+
+        _apply_rate_limits(stats, _latest_rate_limits(codex_dir))
+        return stats

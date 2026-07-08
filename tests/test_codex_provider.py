@@ -1,5 +1,6 @@
 import json, os
 from claude_usage.collector import UsageStats
+from claude_usage.config import DEFAULT_CONFIG
 from claude_usage.providers import codex
 
 
@@ -125,3 +126,28 @@ def test_token_out_of_window_excluded(tmp_path):
         f.write(json.dumps(_token_count("2026-06-20T10:00:00.000Z", last_total=999)) + "\n")
     out = codex._collect_tokens(codex_dir, "2026-07-09", ["2026-07-08", "2026-07-09"])
     assert out["today_tokens"] == 0 and out["week_tokens"] == 0
+
+
+def test_collect_returns_populated_usagestats(tmp_path):
+    codex_dir = str(tmp_path)
+    _write_rollout(codex_dir, "rollout-d.jsonl", [
+        {"timestamp": "2026-07-08T00:00:00.000Z", "type": "turn_context",
+         "payload": {"model": "gpt-5.5"}},
+        _token_count("2026-07-08T10:00:00.000Z",
+                     primary={"used_percent": 5.0, "window_minutes": 43200, "resets_at": 9},
+                     secondary={"used_percent": 22.0, "window_minutes": 300, "resets_at": 8},
+                     last_total=100),
+    ])
+    cfg = dict(DEFAULT_CONFIG, codex_dir=codex_dir)
+    stats = codex.CodexProvider().collect(cfg)
+    assert round(stats.session_utilization, 2) == 0.22
+    assert stats.weekly_label == "30d"
+    assert stats.today_tokens == 100
+    assert stats.today_model_tokens == {"gpt-5.5": 100}
+    assert stats.rate_limit_error == ""
+
+
+def test_collect_missing_dir_is_safe():
+    stats = codex.CodexProvider().collect(dict(DEFAULT_CONFIG, codex_dir="/no/such/dir"))
+    assert stats.today_tokens == 0
+    assert stats.rate_limit_error  # non-empty: no data, not a crash
