@@ -89,3 +89,39 @@ def test_token_deltas_bucket_by_day(tmp_path):
     assert out["today_tokens"] == 100          # only the 07-09 event
     assert out["week_tokens"] == 140           # both in-week events
     assert out["today_by_model"] == {"gpt-5.5": 100}
+
+
+def test_token_default_model_when_no_model_event(tmp_path):
+    codex_dir = str(tmp_path)
+    d = os.path.join(codex_dir, "sessions", "2026", "07", "09")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "rollout-e.jsonl"), "w") as f:
+        f.write(json.dumps(_token_count("2026-07-09T10:00:00.000Z", last_total=50)) + "\n")
+    out = codex._collect_tokens(codex_dir, "2026-07-09", ["2026-07-09"], default_model="gpt-x")
+    assert out["today_by_model"] == {"gpt-x": 50}
+
+
+def test_token_model_change_splits_by_model(tmp_path):
+    codex_dir = str(tmp_path)
+    d = os.path.join(codex_dir, "sessions", "2026", "07", "09")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "rollout-f.jsonl"), "w") as f:
+        f.write(json.dumps({"timestamp": "2026-07-09T09:00:00.000Z", "type": "turn_context",
+                            "payload": {"model": "gpt-5.5"}}) + "\n")
+        f.write(json.dumps(_token_count("2026-07-09T09:30:00.000Z", last_total=30)) + "\n")
+        f.write(json.dumps({"timestamp": "2026-07-09T10:00:00.000Z", "type": "turn_context",
+                            "payload": {"model": "gpt-5-codex"}}) + "\n")
+        f.write(json.dumps(_token_count("2026-07-09T10:30:00.000Z", last_total=70)) + "\n")
+    out = codex._collect_tokens(codex_dir, "2026-07-09", ["2026-07-09"])
+    assert out["today_by_model"] == {"gpt-5.5": 30, "gpt-5-codex": 70}
+    assert out["today_tokens"] == 100
+
+
+def test_token_out_of_window_excluded(tmp_path):
+    codex_dir = str(tmp_path)
+    d = os.path.join(codex_dir, "sessions", "2026", "06", "20")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "rollout-old.jsonl"), "w") as f:
+        f.write(json.dumps(_token_count("2026-06-20T10:00:00.000Z", last_total=999)) + "\n")
+    out = codex._collect_tokens(codex_dir, "2026-07-09", ["2026-07-08", "2026-07-09"])
+    assert out["today_tokens"] == 0 and out["week_tokens"] == 0
