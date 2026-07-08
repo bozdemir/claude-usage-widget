@@ -21,6 +21,13 @@ from claude_usage import forecast, pricing
 from claude_usage import budget as _budget
 from claude_usage import peak as _peak
 from claude_usage.analytics import AnomalyReport, detect_anomaly, generate_tips
+from claude_usage.burn import (
+    BurnAlert,
+    detect_fast_burn,
+    detect_retry_storm,
+    detect_token_spike,
+    merge_alerts,
+)
 from claude_usage.cache_analyzer import CacheOpportunity, analyze_cache_opportunities
 from claude_usage.history import aggregate, append_sample, load_samples, prune
 from claude_usage.live_stream import LiveActivity, detect_live_activity
@@ -123,6 +130,12 @@ class UsageStats:
     month_cost: float = 0.0
     month_budget_usd: float = 0.0
     budget: "_budget.BudgetStatus | None" = None
+    # Real-time burn/spike/retry-storm snapshot for the OSD badge (stateless;
+    # the debounced notification lives in the widget's BurnMonitor).
+    burn_alert: BurnAlert = field(default_factory=BurnAlert)
+    # A tiny, burn-window-bounded slice of utilisation samples handed to the
+    # widget's stateful BurnMonitor for the fast-burn notification debounce.
+    burn_samples: list = field(default_factory=list)
 
 
 def parse_history(path: str) -> UsageStats:
@@ -1120,6 +1133,41 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
     stats.weekly_forecast = forecast.forecast_time_to_limit(
         stats.weekly_utilization, weekly_rate, stats.weekly_reset,
     )
+
+    # Real-time burn/spike/retry-storm — stateless snapshot merged to the
+    # highest-severity alert for the OSD badge. Fast-burn reads the session
+    # utilisation series (`samples`); spike/storm read the per-turn `ticker_items`.
+    # The stateful once-per-episode notification lives in the widget (BurnMonitor).
+    if config.get("burn_alerts_enabled", True):
+        try:
+            spike_min = int(config.get("spike_min_tokens", 20_000))
+            fb = detect_fast_burn(
+                samples, now_ts,
+                float(config.get("burn_warn_pct_per_min", 2.0)),
+                float(config.get("burn_crit_pct_per_min", 5.0)),
+                float(config.get("burn_window_seconds", 600)),
+            )
+            spike = detect_token_spike(
+                stats.ticker_items,
+                float(config.get("spike_token_multiplier", 4.0)),
+                spike_min,
+                int(config.get("spike_baseline_min_turns", 5)),
+            )
+            storm = detect_retry_storm(
+                stats.ticker_items, now_ts,
+                int(config.get("retry_storm_turns", 3)),
+                float(config.get("retry_storm_window_seconds", 120)),
+                spike_min,
+            )
+            stats.burn_alert = merge_alerts(fb, spike, storm)
+            # Bounded slice for the widget's stateful debounce (fast-burn).
+            win = float(config.get("burn_window_seconds", 600)) + 120
+            stats.burn_samples = [
+                s for s in samples if float(s.get("ts", 0.0)) >= now_ts - win
+            ]
+        except Exception:
+            stats.burn_alert = BurnAlert()
+            stats.burn_samples = []
 
     # Monthly budget — month-to-date spend + linear end-of-month projection.
     # Only scanned when a cap is set (monthly_budget_usd > 0): it's a separate

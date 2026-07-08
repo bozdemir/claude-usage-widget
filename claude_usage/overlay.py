@@ -149,6 +149,22 @@ def _format_reset_short(reset_ts: int) -> str:
     return datetime.fromtimestamp(reset_ts).strftime("%a %H:%M")
 
 
+def _burn_badge_text(alert) -> str:
+    """Short title-row badge label for an active burn/spike/storm alert.
+
+    BMP-only glyphs (``▲`` renders in every theme mono font, unlike emoji), so
+    the badge never degrades to tofu on a terminal-style skin.
+    """
+    kind = getattr(alert, "kind", "")
+    if kind == "fast_burn":
+        return f"▲{int(getattr(alert, 'delta_pct', 0))}%"
+    if kind == "token_spike":
+        return "▲SPIKE"
+    if kind == "retry_storm":
+        return "▲STORM"
+    return ""
+
+
 def _bar_color(pct: float, theme: dict[str, str]) -> QColor:
     """Return the progress-bar fill colour for *pct* (0.0 -- 1.0)."""
     if pct < 0.6:
@@ -203,6 +219,7 @@ class UsageOverlay(QWidget):
         self._scoped_label: str = ""
         self._live_tpm: float = 0.0      # tokens/min over the last few minutes
         self._is_live: bool = False       # show the "● LIVE" dot
+        self._burn_alert = None           # active burn/spike/storm badge (or None)
         self._active_subagents: int = 0  # count of running Task-tool subagents
         # Ticker tape: newest-first. The paint loop walks them oldest→newest
         # so the newest item rides in from the right edge like a news ticker.
@@ -306,6 +323,7 @@ class UsageOverlay(QWidget):
             self._is_live = False
             self._live_tpm = 0.0
         self._active_subagents = max(0, int(getattr(stats, "active_subagent_count", 0) or 0))
+        self._burn_alert = getattr(stats, "burn_alert", None)
         self._ticker_items = list(getattr(stats, "ticker_items", []) or [])
         new_news = list(getattr(stats, "news_items", []) or [])
         if new_news:
@@ -780,6 +798,22 @@ class UsageOverlay(QWidget):
                 rw = fm.horizontalAdvance(reset_label)
                 p.drawText(QPointF(cx - rw / 2, label_y + 12 * s), reset_label)
 
+        # Burn / spike badge — centred along the top strip, which sits clear
+        # above both ring tops (rings begin at y = 12·s; the gauge draws no
+        # title/LIVE badge up here). Same warn/crit colour as bars mode.
+        burn = self._burn_alert
+        if burn is not None and getattr(burn, "active", False):
+            btext = _burn_badge_text(burn)
+            if btext:
+                p.setFont(_mono_font(max(7, int(8 * s)), bold=True))
+                fm = p.fontMetrics()
+                bwid = fm.horizontalAdvance(btext)
+                color = (self._theme.get("crit") or "#ef4444") \
+                    if getattr(burn, "severity", "") == "crit" \
+                    else (self._theme.get("warn") or "#f59e0b")
+                p.setPen(_hex_to_qcolor(color))
+                p.drawText(QPointF(w / 2 - bwid / 2, 10 * s), btext)
+
         # Scoped weekly cap — a slim full-width bar spanning both columns
         # beneath the rings (a third ring would unbalance the pair).
         if self._scoped_label:
@@ -896,6 +930,11 @@ class UsageOverlay(QWidget):
             p.setPen(_hex_to_qcolor(self._theme["text_link"]))
             p.drawText(QPointF(pad_x + title_w + 6 * s, title_y), rozet)
 
+        # Right-aligned title-row badges: LIVE first (at the right edge), then
+        # the burn/spike badge just to its left. Both use the title font that's
+        # still active, and neither changes the OSD height.
+        badge_right = w - pad_x
+
         # Live indicator — only drawn when there's recent assistant activity.
         # Renders as `● LIVE 1.2k tok/min` right-aligned against the title.
         if self._is_live and self._live_tpm > 0:
@@ -903,10 +942,24 @@ class UsageOverlay(QWidget):
             tpm_text = f"{tpm / 1000:.1f}k" if tpm >= 1000 else f"{int(tpm)}"
             live_text = f"● LIVE {tpm_text} tok/min"
             live_width = p.fontMetrics().horizontalAdvance(live_text)
-            live_x = w - pad_x - live_width
             # Green-ish per-theme accent; fallback covers older themes.
             p.setPen(_hex_to_qcolor(self._theme.get("live_indicator", "#4ade80")))
-            p.drawText(QPointF(live_x, pad_y + 7 * s), live_text)
+            p.drawText(QPointF(badge_right - live_width, title_y), live_text)
+            badge_right -= live_width + 8 * s
+
+        # Burn / spike / retry-storm badge — bright warn/crit colour, drawn on
+        # the title row just left of LIVE. Signals "the 5h window is burning
+        # fast" or "a turn/retry-loop spiked tokens" at a glance.
+        burn = self._burn_alert
+        if burn is not None and getattr(burn, "active", False):
+            btext = _burn_badge_text(burn)
+            if btext:
+                bwid = p.fontMetrics().horizontalAdvance(btext)
+                color = (self._theme.get("crit") or "#ef4444") \
+                    if getattr(burn, "severity", "") == "crit" \
+                    else (self._theme.get("warn") or "#f59e0b")
+                p.setPen(_hex_to_qcolor(color))
+                p.drawText(QPointF(badge_right - bwid, title_y), btext)
 
         # --- Session row ---
         y = pad_y + 16 * s

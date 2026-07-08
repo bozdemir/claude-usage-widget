@@ -1056,6 +1056,15 @@ class ClaudeUsageApp(QObject):
                 "threshold_crossed", {"scope": scope, "threshold": t},
             ),
         )
+        # Real-time burn/spike/retry-storm — stateful, once-per-episode debounce.
+        # Reuses the notifier's platform sender; the webhook fires on every
+        # episode regardless of notifications_enabled (matching the notifier).
+        from claude_usage.burn import BurnMonitor
+        self.burn_monitor = BurnMonitor(
+            config,
+            sender=self.notifier._send,
+            on_event=lambda ev: self._webhooks.fire("burn_alert", ev),
+        )
 
         # Optional: localhost JSON API server. Bind failures (port in use,
         # permission denied) are non-fatal — the widget still starts, just
@@ -1613,6 +1622,20 @@ class ClaudeUsageApp(QObject):
         self.popup.update_stats(stats)
         self.skin_popup.update_stats(stats)
         self.notifier.check_stats(stats)
+
+        # Real-time burn/spike/retry-storm — debounced once-per-episode desktop
+        # notification + burn_alert webhook. The OSD badge is already driven by
+        # stats.burn_alert on the overlay; this is only the interrupt decision.
+        try:
+            self.burn_monitor.check(
+                samples=list(getattr(stats, "burn_samples", []) or []),
+                turns=list(getattr(stats, "ticker_items", []) or []),
+                session_reset=float(getattr(stats, "session_reset", 0) or 0),
+                now=_t.time(),
+                notifications_enabled=bool(self.config.get("notifications_enabled", True)),
+            )
+        except Exception:
+            pass
 
         # Webhook: anomaly
         if getattr(stats.anomaly, "is_anomaly", False):

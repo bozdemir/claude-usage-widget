@@ -1446,5 +1446,39 @@ class TestMonthTokenCollection(unittest.TestCase):
         self.assertEqual(_collect_month_tokens(self.tmp, "2026-07"), {})
 
 
+class TestBurnDetectionWiring(unittest.TestCase):
+    """Guard the collector→burn.py contract: the real TickerItem / sample-dict
+    attributes the detectors read, so a future field rename fails loudly here."""
+
+    def test_real_ticker_item_feeds_spike_detector(self) -> None:
+        from claude_usage.burn import detect_token_spike
+        from claude_usage.ticker import TickerItem
+        turns = [
+            TickerItem(ts=100.0, msg_id="m0", cost_usd=1.0, tool="",
+                       output_tokens=50_000, model="x"),
+        ] + [
+            TickerItem(ts=90.0 - i, msg_id=f"m{i+1}", cost_usd=0.1, tool="",
+                       output_tokens=2_000, model="x")
+            for i in range(6)
+        ]
+        alert = detect_token_spike(
+            turns, multiplier=4.0, min_tokens=20_000, min_baseline_turns=5,
+        )
+        self.assertTrue(alert.active)
+        self.assertEqual(alert.msg_id, "m0")
+
+    def test_real_sample_dicts_feed_fast_burn(self) -> None:
+        from claude_usage.burn import detect_fast_burn
+        # Same {ts, session, weekly} shape history.load_samples yields.
+        samples = [
+            {"ts": 0.0, "session": 0.10, "weekly": 0.2},
+            {"ts": 540.0, "session": 0.55, "weekly": 0.2},
+        ]
+        alert = detect_fast_burn(samples, now=540.0, warn_pm=2.0, crit_pm=5.0,
+                                 window_s=600.0)
+        self.assertTrue(alert.active)
+        self.assertEqual(alert.kind, "fast_burn")
+
+
 if __name__ == "__main__":
     unittest.main()

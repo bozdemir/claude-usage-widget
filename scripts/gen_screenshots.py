@@ -98,6 +98,12 @@ def main() -> int:
     stats.month_cost = 100.0
     stats.month_budget_usd = 500.0
     stats.budget = _bud.evaluate_budget(100.0, 500.0, _dt.now())
+    # Synthetic burn alert so the OSD burn/spike badge is documented.
+    from claude_usage.burn import BurnAlert
+    stats.burn_alert = BurnAlert(
+        active=True, kind="fast_burn", severity="crit",
+        delta_pct=42.0, rate_pct_per_min=5.5, message="Burned 42% in 8 min",
+    )
     stats.active_sessions = [
         {"cwd": "/home/user/project-alpha", "startedAt": int((_now - 47 * 60) * 1000)},
         {"cwd": "/home/user/project-beta",  "startedAt": int((_now - 2 * 3600 - 14 * 60) * 1000)},
