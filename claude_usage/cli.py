@@ -48,13 +48,18 @@ def _usage_stats_to_dict(stats: UsageStats) -> dict:
     return asdict(stats) if is_dataclass(stats) else dict(stats)
 
 
-def _format_statusline(data: dict) -> str:
+def _format_statusline(data: dict, sep: str = " · ") -> str:
     """Build the one-line status string for Claude Code's ``statusLine``.
 
     Mirrors the OSD's ``int(pct*100)`` truncation so the numbers match what
     the widget shows. Reads only the (already redacted) stats dict; must
     never raise — a statusLine command that errors would surface a stack
     trace inside the Claude Code CLI.
+
+    ``sep`` is the field separator; it defaults to the ``·`` middle dot, but
+    :func:`_print_statusline` retries with an ASCII separator if the platform
+    stdout encoding can't represent it (e.g. a piped stream on a non-Latin
+    Windows code page).
 
     Example: ``S 42% · W 18% · $3.21 · Fable 55%``. When the API is
     rate-limited *and* there is no last-known sample to fall back on
@@ -70,7 +75,7 @@ def _format_statusline(data: dict) -> str:
         s_txt, w_txt = str(int(session * 100)), str(int(weekly * 100))
 
     cost = data.get("today_cost") or 0.0
-    line = f"S {s_txt}% · W {w_txt}% · ${cost:.2f}"
+    line = f"S {s_txt}%{sep}W {w_txt}%{sep}${cost:.2f}"
 
     # Append the model-scoped (e.g. Fable) bar only when the API reported one
     # — same condition the overlay uses to paint the third bar. The label is
@@ -78,8 +83,24 @@ def _format_statusline(data: dict) -> str:
     label = data.get("scoped_label") or ""
     if label:
         scoped = data.get("scoped_utilization") or 0.0
-        line += f" · {label} {int(scoped * 100)}%"
+        line += f"{sep}{label} {int(scoped * 100)}%"
     return line
+
+
+def _print_statusline(data: dict) -> None:
+    """Print the status line, degrading to an ASCII separator (and finally
+    replacement chars) rather than raising on an unencodable stdout.
+
+    ``statusLine`` output is captured through a pipe; on a non-Latin Windows
+    code page the ``·`` middle dot can't be encoded and ``print`` would raise
+    :class:`UnicodeEncodeError`, surfacing a traceback in the Claude Code CLI.
+    """
+    try:
+        print(_format_statusline(data))
+    except UnicodeEncodeError:
+        ascii_line = _format_statusline(data, sep=" | ")
+        enc = getattr(sys.stdout, "encoding", None) or "ascii"
+        sys.stdout.write(ascii_line.encode(enc, "replace").decode(enc) + "\n")
 
 
 def _default_config_path() -> str:
@@ -131,7 +152,7 @@ def run_cli(argv: Sequence[str]) -> int:
         data = _redact_external(data)
 
         if args.statusline:
-            print(_format_statusline(data))
+            _print_statusline(data)
             return 0
 
         if args.field is not None:

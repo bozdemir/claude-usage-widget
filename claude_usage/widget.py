@@ -12,7 +12,7 @@ import os
 import sys
 import threading
 import warnings
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from PySide6.QtCore import (
@@ -1653,7 +1653,10 @@ class ClaudeUsageApp(QObject):
         budget = getattr(stats, "budget", None)
         if budget is not None and getattr(budget, "active", False) and budget.days_elapsed >= 2:
             from claude_usage.budget import should_notify
-            month_key = datetime.now().strftime("%Y-%m")
+            # UTC to match how the budget month + days_elapsed are computed in
+            # the collector; a local key would double-fire then miss an alert
+            # across the month boundary for UTC-ahead timezones.
+            month_key = datetime.now(timezone.utc).strftime("%Y-%m")
             if should_notify(budget, self._budget_notified_month, month_key):
                 self._budget_notified_month = month_key
                 if (self.config.get("notifications_enabled", True)

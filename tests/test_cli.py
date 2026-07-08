@@ -168,6 +168,34 @@ class TestStatusline(unittest.TestCase):
         gui.assert_not_called()
         detach.assert_not_called()
 
+    def test_statusline_ascii_fallback_on_unencodable_stdout(self):
+        # A piped stream on a non-Latin Windows code page (e.g. cp932) can't
+        # encode '·'. _print_statusline must degrade to ASCII, never raise.
+        from claude_usage.cli import _print_statusline
+
+        class _StrictStream:
+            encoding = "cp932"
+
+            def __init__(self):
+                self.buf = []
+
+            def write(self, s):
+                s.encode(self.encoding)  # raises UnicodeEncodeError on '·'
+                self.buf.append(s)
+
+            def flush(self):
+                pass
+
+        stream = _StrictStream()
+        data = {"session_utilization": 0.42, "weekly_utilization": 0.18,
+                "today_cost": 3.2, "scoped_label": "", "rate_limit_error": ""}
+        with patch("sys.stdout", stream):
+            _print_statusline(data)  # must not raise
+        out = "".join(stream.buf)
+        self.assertNotIn("·", out)     # the middle dot is gone
+        self.assertIn("|", out)             # ASCII separator used instead
+        self.assertIn("$3.20", out)
+
     def test_statusline_with_detach_does_not_background(self):
         # --statusline --detach must print the line, not fork the GUI.
         import claude_usage.cli as cli
