@@ -39,3 +39,16 @@ def test_collect_all_still_returns_claude(tmp_path, monkeypatch):
                         lambda claude_dir: {"error": "test"})
     cfg = dict(DEFAULT_CONFIG, claude_dir=str(tmp_path))
     assert isinstance(collect_all(cfg), UsageStats)
+
+def test_enabled_providers_falls_back_on_empty():
+    from claude_usage.providers import enabled_providers
+    assert enabled_providers({}) == ["claude"]
+    assert enabled_providers({"providers": []}) == ["claude"]
+    assert enabled_providers({"providers": None}) == ["claude"]
+    assert enabled_providers({"providers": ["claude", "codex"]}) == ["claude", "codex"]
+
+def test_collect_providers_empty_list_falls_back_to_claude(monkeypatch):
+    monkeypatch.setattr("claude_usage.providers.claude.collect_all",
+                        lambda cfg: UsageStats(today_tokens=1))
+    out = collect_providers(dict(DEFAULT_CONFIG, providers=[]))
+    assert list(out.keys()) == ["claude"]

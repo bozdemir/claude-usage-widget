@@ -1048,10 +1048,10 @@ def collect_providers(config: dict[str, Any]) -> dict[str, UsageStats]:
     A provider whose collect() raises is captured as a UsageStats with
     rate_limit_error set, so one bad provider never blanks the others.
     """
-    from claude_usage.providers import get_provider  # local import avoids cycle
+    from claude_usage.providers import get_provider, enabled_providers  # local import avoids cycle
 
     out: dict[str, UsageStats] = {}
-    for pid in config.get("providers", ["claude"]):
+    for pid in enabled_providers(config):
         try:
             out[pid] = get_provider(pid).collect(config)
         except Exception as exc:  # noqa: BLE001 — provider isolation is the point

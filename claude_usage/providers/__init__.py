@@ -8,3 +8,8 @@ PROVIDERS = {p.id: p for p in (ClaudeProvider(), CodexProvider())}
 
 def get_provider(provider_id: str):
     return PROVIDERS[provider_id]
+
+
+def enabled_providers(config: dict) -> list[str]:
+    """Provider ids to show, in order. Empty/missing/None config falls back to Claude."""
+    return list(config.get("providers") or ["claude"])

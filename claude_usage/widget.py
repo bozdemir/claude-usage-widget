@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 from claude_usage.collector import UsageStats
 from claude_usage.forecast import format_forecast
 from claude_usage.notifier import UsageNotifier
+from claude_usage.providers import enabled_providers
 from claude_usage.overlay import UsageOverlay, _hex_to_qcolor
 from claude_usage.pricing import MODEL_PRICING, calculate_cost, get_pricing
 from claude_usage.themes import ThemeStyle, get_style, get_theme
@@ -1041,7 +1042,7 @@ class ClaudeUsageApp(QObject):
         # drag/scale persistence, popup click wiring) still targets only
         # the primary overlay. That is Phase 1 scope per task-8-brief.md;
         # secondary overlays only receive routed stats (see _apply_stats).
-        providers = self.config.get("providers", ["claude"])
+        providers = enabled_providers(self.config)
         self.overlays: dict[str, UsageOverlay] = {}
         y = None  # let first overlay use configured osd position
         for pid in providers:
