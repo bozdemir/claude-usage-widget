@@ -134,7 +134,7 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 pip install --user --upgrade claude-usage-widget
 claude-usage              # launches the OSD overlay (foreground)
 claude-usage --detach     # …or run it in the background and free the shell
-claude-usage --version    # 0.11.0
+claude-usage --version    # 0.11.1
 ```
 
 That's it — no `apt`, no `brew`, no PyGObject, no rumps. `pip` pulls in just two pure-Python wheels (PySide6-Essentials, which ships Qt, and certifi for HTTPS), so the widget is self-contained with zero system libraries.

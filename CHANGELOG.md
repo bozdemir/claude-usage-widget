@@ -3,6 +3,18 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## 0.11.1
+
+### Fixed
+- **Accurate pricing for current models.** `claude-fable-5` was billed at the
+  Sonnet fallback (`$3/$15`) instead of its real premium tier (**`$10/$50`**),
+  under-reporting Fable cost ~3.3× everywhere it's shown (cost popup, budget,
+  `--statusline`, `--json`). Added explicit table entries for
+  **Opus 4.8** (`$5/$25`), **Fable 5** (`$10/$50`) and **Sonnet 5**
+  (`$2/$10` intro → `$3/$15` after 2026-08-31), plus a `fable` family fallback
+  so future point releases inherit the right tier. Also silences the "unknown
+  model" warnings these ids emitted on every refresh.
+
 ## 0.11.0
 
 ### Added

@@ -1,7 +1,7 @@
 """Pure-function module for Claude API cost estimation.
 
 Prices are expressed as USD per million tokens. Values reflect public
-Anthropic pricing as of April 2026 (verify at https://www.anthropic.com/pricing).
+Anthropic pricing as of July 2026 (verify at https://www.anthropic.com/pricing).
 The module has no side effects aside from emitting a ``warnings.warn`` when
 callers request an unknown model (in which case we silently fall back to
 Sonnet pricing so billing never crashes a running collector).
@@ -17,9 +17,19 @@ import warnings
 from typing import Dict, Mapping
 
 # Prices are USD per 1,000,000 tokens.
-# Source: https://www.anthropic.com/pricing (April 2026)
+# Source: https://www.anthropic.com/pricing (July 2026)
 MODEL_PRICING: Dict[str, Dict[str, float]] = {
-    # Opus 4.7 (April 2026): $5 input, $25 output — consistent across
+    # Opus 4.8: $5 input, $25 output (same standard tier as 4.7). Note: Opus
+    # "fast mode" bills at $10/$50, but Claude Code writes the same model id
+    # for both, so we price the standard rate (fast mode isn't distinguishable
+    # from the usage record alone).
+    "claude-opus-4-8": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.50,
+        "cache_creation": 6.25,
+    },
+    # Opus 4.7 (July 2026): $5 input, $25 output — consistent across
     # Anthropic API, Bedrock, Vertex AI, and Foundry.
     "claude-opus-4-7": {
         "input": 5.0,
@@ -34,12 +44,31 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
         "cache_read": 0.50,
         "cache_creation": 6.25,
     },
+    # Sonnet 5 (launched 2026-06-30, the new Free/Pro default): introductory
+    # $2 input / $10 output through 2026-08-31, then reverts to the standard
+    # $3/$15 tier. UPDATE these two rates to 3.0/10.0→15.0 after the intro
+    # window ends (cache rates scale off input: read = input×0.1, write ×1.25).
+    "claude-sonnet-5": {
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.20,
+        "cache_creation": 2.50,
+    },
     # Sonnet 4.6: $3 input, $15 output (standard mid-tier pricing).
     "claude-sonnet-4-6": {
         "input": 3.0,
         "output": 15.0,
         "cache_read": 0.30,
         "cache_creation": 3.75,
+    },
+    # Fable 5: $10 input / $50 output. A distinct premium tier — pricier than
+    # Sonnet, so it MUST be tabled explicitly; without this it fell through the
+    # family fallback to Sonnet ($3/$15) and under-reported Fable cost ~3.3x.
+    "claude-fable-5": {
+        "input": 10.0,
+        "output": 50.0,
+        "cache_read": 1.00,
+        "cache_creation": 12.50,
     },
     # Haiku 4.5: $1 input, $5 output (entry-tier pricing).
     "claude-haiku-4-5-20251001": {
@@ -77,8 +106,9 @@ _FALLBACK_MODEL = "claude-sonnet-4-6"
 # tier instead of being silently under-reported at Sonnet rates. Each value
 # points at the most recent known member of that family.
 _FAMILY_FALLBACK: Dict[str, str] = {
-    "opus": "claude-opus-4-7",
-    "sonnet": "claude-sonnet-4-6",
+    "opus": "claude-opus-4-8",
+    "fable": "claude-fable-5",
+    "sonnet": "claude-sonnet-5",
     "haiku": "claude-haiku-4-5-20251001",
 }
 

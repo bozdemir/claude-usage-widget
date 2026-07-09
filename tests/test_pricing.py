@@ -106,16 +106,40 @@ class TestCalculateCostUnknownModel:
         calculate_cost("totally-made-up", 1, 2, 3, 4)
 
     def test_unknown_opus_falls_back_to_opus_pricing(self):
-        """A not-yet-tabled Opus release (e.g. claude-opus-4-8) must be billed
+        """A not-yet-tabled Opus release (e.g. claude-opus-4-9) must be billed
         at the Opus tier ($5/M input, $25/M output), NOT the generic Sonnet
         fallback — otherwise Opus usage is silently under-reported by ~40%."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = calculate_cost("claude-opus-4-9", 1_000_000, 1_000_000)
+        assert _approx(result["input"], 5.0)
+        assert _approx(result["output"], 25.0)
+        # The warning should name the Opus family fallback, not Sonnet.
+        assert any("claude-opus-4-8" in str(w.message) for w in caught)
+
+    def test_opus_4_8_is_tabled_at_opus_rates_without_warning(self):
+        """claude-opus-4-8 is now an exact table entry: $5/$25, no warning."""
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             result = calculate_cost("claude-opus-4-8", 1_000_000, 1_000_000)
         assert _approx(result["input"], 5.0)
         assert _approx(result["output"], 25.0)
-        # The warning should name the family fallback, not Sonnet.
-        assert any("claude-opus-4-7" in str(w.message) for w in caught)
+        assert not any(issubclass(w.category, UserWarning) for w in caught)
+
+    def test_fable_5_is_priced_above_sonnet(self):
+        """Fable 5 is a premium tier ($10/$50) — it must NOT be billed at the
+        Sonnet fallback ($3/$15), which under-reported it ~3.3x."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = calculate_cost("claude-fable-5", 1_000_000, 1_000_000)
+        assert _approx(result["input"], 10.0)
+        assert _approx(result["output"], 50.0)
+        assert not any(issubclass(w.category, UserWarning) for w in caught)
+
+    def test_unknown_fable_falls_back_to_fable_pricing(self):
+        """A future Fable point release resolves to the Fable tier, not Sonnet."""
+        result = calculate_cost("claude-fable-5-1", 1_000_000, 0)
+        assert _approx(result["input"], 10.0)
 
     def test_unknown_haiku_falls_back_to_haiku_pricing(self):
         """An unknown Haiku id resolves to the Haiku tier ($1/M input)."""
