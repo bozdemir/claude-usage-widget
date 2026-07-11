@@ -210,6 +210,8 @@ cp config.json.example config.json
 | `refresh_max_seconds` | `300` | Max poll interval when the API rate-limits/errors; the interval backs off exponentially toward this cap and snaps back to `refresh_seconds` on the next clean refresh |
 | `osd_opacity` | `0.75` | OSD background opacity (0.15--1.0) |
 | `osd_scale` | `1.0` | OSD scale factor (0.6--2.0) |
+| `providers` | `["claude"]` | Add `"codex"` to also poll the local OpenAI Codex CLI (`codex app-server`) and show its 5h/weekly usage beneath Claude's — an extra ring row in gauge view, two extra bars in bars view. POSIX-only. |
+| `codex_poll_seconds` | `300` | How often (seconds) to spawn the codex app-server RPC; an on-disk cache is served in between. |
 | `daily_message_limit` | `200` | Daily message limit for local tracking in the popup |
 | `weekly_message_limit` | `1000` | Weekly message limit for local tracking in the popup |
 | `daily_token_limit` | `5000000` | Daily token limit for local tracking |

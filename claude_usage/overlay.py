@@ -53,6 +53,9 @@ SCOPED_ROW_HEIGHT = 31
 # stack vertically inside each column. No ticker in this view (it would
 # collide with the reset line under each ring).
 GAUGE_HEIGHT = 130
+# Extra height for the optional Codex ring row (a second Session/Weekly pair
+# drawn beneath Claude's; same stack minus the shared top padding).
+CODEX_GAUGE_ROW_HEIGHT = 118
 
 # Supported OSD view modes. Kept as string constants so config files and
 # tests don't have to import an enum.
@@ -217,6 +220,13 @@ class UsageOverlay(QWidget):
         self._scoped_pct: float = 0.0
         self._scoped_reset: int = 0
         self._scoped_label: str = ""
+        # Optional Codex provider (opt-in via `providers` config). When
+        # unavailable the OSD paints exactly as before.
+        self._codex_available: bool = False
+        self._codex_session_pct: float = 0.0
+        self._codex_session_reset: int = 0
+        self._codex_weekly_pct: float = 0.0
+        self._codex_weekly_reset: int = 0
         self._live_tpm: float = 0.0      # tokens/min over the last few minutes
         self._is_live: bool = False       # show the "● LIVE" dot
         self._burn_alert = None           # active burn/spike/storm badge (or None)
@@ -313,7 +323,17 @@ class UsageOverlay(QWidget):
         self._scoped_pct = max(0.0, min(1.0, float(getattr(stats, "scoped_utilization", 0.0))))
         self._scoped_reset = int(getattr(stats, "scoped_reset", 0) or 0)
         self._scoped_label = str(getattr(stats, "scoped_label", "") or "")
-        if bool(self._scoped_label) != had_scoped:
+        # Optional Codex provider rows — like scoped, their appearance or
+        # disappearance changes the OSD footprint.
+        had_codex = self._codex_available
+        self._codex_available = bool(getattr(stats, "codex_available", False))
+        self._codex_session_pct = max(0.0, min(1.0, float(
+            getattr(stats, "codex_session_utilization", 0.0) or 0.0)))
+        self._codex_session_reset = int(getattr(stats, "codex_session_reset", 0) or 0)
+        self._codex_weekly_pct = max(0.0, min(1.0, float(
+            getattr(stats, "codex_weekly_utilization", 0.0) or 0.0)))
+        self._codex_weekly_reset = int(getattr(stats, "codex_weekly_reset", 0) or 0)
+        if bool(self._scoped_label) != had_scoped or self._codex_available != had_codex:
             self._apply_size()
         live = getattr(stats, "live_activity", None)
         if live is not None:
@@ -462,6 +482,8 @@ class UsageOverlay(QWidget):
         width = int(BASE_WIDTH * self._scale)
         if self._view_mode == VIEW_MODE_GAUGE:
             base = GAUGE_HEIGHT + (SCOPED_ROW_HEIGHT if self._scoped_label else 0)
+            if self._codex_available:
+                base += CODEX_GAUGE_ROW_HEIGHT
         else:
             # Receipt skin always reserves the footer strip for its barcode,
             # even if the user disabled the ticker feature.
@@ -469,6 +491,8 @@ class UsageOverlay(QWidget):
             base = BASE_HEIGHT + (TICKER_STRIP_HEIGHT if wants_footer else 0)
             if self._scoped_label:
                 base += SCOPED_ROW_HEIGHT
+            if self._codex_available:
+                base += 2 * SCOPED_ROW_HEIGHT  # Codex 5h + 7d rows
         height = MINIMIZED_HEIGHT if self._minimized else int(base * self._scale)
         # Preserve the top-right corner when resizing so the overlay doesn't
         # visually drift as the user scrolls to scale.
@@ -758,45 +782,55 @@ class UsageOverlay(QWidget):
             )
 
         # Two columns splitting the panel; each column is one gauge stack.
+        # With the Codex provider active, a second row of rings (Codex 5h /
+        # 7d) is drawn beneath Claude's Session / Weekly pair.
         col_w = w / 2
         ring_d = max(50.0, min(col_w * 0.58, 80 * s))
         ring_stroke = max(4.0, 7 * s)
-        # Centre each ring inside its column, with room below for labels.
-        for idx, (label, pct, reset_ts) in enumerate((
+        ring_rows: list[tuple[tuple[str, float, int], ...]] = [(
             ("Session", self._session_pct, self._session_reset),
             ("Weekly",  self._weekly_pct,  self._weekly_reset),
-        )):
-            cx = col_w * idx + col_w / 2
-            cy = 12 * s + ring_d / 2
-            fill_color = _bar_color(pct, self._theme)
-            self._draw_ring(p, cx, cy, ring_d, ring_stroke, pct, fill_color)
+        )]
+        if self._codex_available:
+            ring_rows.append((
+                ("Codex 5h", self._codex_session_pct, self._codex_session_reset),
+                ("Codex 7d", self._codex_weekly_pct, self._codex_weekly_reset),
+            ))
+        # Centre each ring inside its column, with room below for labels.
+        for row_idx, row in enumerate(ring_rows):
+            row_top = (12 + row_idx * CODEX_GAUGE_ROW_HEIGHT) * s
+            for idx, (label, pct, reset_ts) in enumerate(row):
+                cx = col_w * idx + col_w / 2
+                cy = row_top + ring_d / 2
+                fill_color = _bar_color(pct, self._theme)
+                self._draw_ring(p, cx, cy, ring_d, ring_stroke, pct, fill_color)
 
-            # Percentage text centred in the ring.
-            pct_text = f"{int(pct * 100)}%"
-            pct_font_pt = max(10, int(13 * s))
-            p.setFont(_mono_font(pct_font_pt, bold=True))
-            p.setPen(_hex_to_qcolor(self._theme["text_primary"]))
-            fm = p.fontMetrics()
-            pct_w = fm.horizontalAdvance(pct_text)
-            p.drawText(QPointF(cx - pct_w / 2, cy + fm.ascent() / 2 - 2 * s), pct_text)
-
-            # Label + reset beneath the ring.
-            label_y = cy + ring_d / 2 + 14 * s
-            label_font_pt = max(8, int(9 * s))
-            p.setFont(_mono_font(label_font_pt, bold=True))
-            p.setPen(_hex_to_qcolor(self._theme["text_primary"]))
-            fm = p.fontMetrics()
-            lw = fm.horizontalAdvance(label)
-            p.drawText(QPointF(cx - lw / 2, label_y), label)
-
-            reset_label = _format_reset_short(reset_ts)
-            if reset_label:
-                reset_font_pt = max(7, int(7.5 * s))
-                p.setFont(_mono_font(reset_font_pt))
-                p.setPen(_hex_to_qcolor(self._theme["text_dim"]))
+                # Percentage text centred in the ring.
+                pct_text = f"{int(pct * 100)}%"
+                pct_font_pt = max(10, int(13 * s))
+                p.setFont(_mono_font(pct_font_pt, bold=True))
+                p.setPen(_hex_to_qcolor(self._theme["text_primary"]))
                 fm = p.fontMetrics()
-                rw = fm.horizontalAdvance(reset_label)
-                p.drawText(QPointF(cx - rw / 2, label_y + 12 * s), reset_label)
+                pct_w = fm.horizontalAdvance(pct_text)
+                p.drawText(QPointF(cx - pct_w / 2, cy + fm.ascent() / 2 - 2 * s), pct_text)
+
+                # Label + reset beneath the ring.
+                label_y = cy + ring_d / 2 + 14 * s
+                label_font_pt = max(8, int(9 * s))
+                p.setFont(_mono_font(label_font_pt, bold=True))
+                p.setPen(_hex_to_qcolor(self._theme["text_primary"]))
+                fm = p.fontMetrics()
+                lw = fm.horizontalAdvance(label)
+                p.drawText(QPointF(cx - lw / 2, label_y), label)
+
+                reset_label = _format_reset_short(reset_ts)
+                if reset_label:
+                    reset_font_pt = max(7, int(7.5 * s))
+                    p.setFont(_mono_font(reset_font_pt))
+                    p.setPen(_hex_to_qcolor(self._theme["text_dim"]))
+                    fm = p.fontMetrics()
+                    rw = fm.horizontalAdvance(reset_label)
+                    p.drawText(QPointF(cx - rw / 2, label_y + 12 * s), reset_label)
 
         # Burn / spike badge — centred along the top strip, which sits clear
         # above both ring tops (rings begin at y = 12·s; the gauge draws no
@@ -989,6 +1023,20 @@ class UsageOverlay(QWidget):
                 reset_label=_format_reset_short(self._scoped_reset),
             )
             y2 = y3  # push the footer below the extra row
+
+        # --- Codex provider rows — only when the codex provider is active ---
+        if self._codex_available:
+            for label, pct, reset_ts in (
+                ("Codex 5h", self._codex_session_pct, self._codex_session_reset),
+                ("Codex 7d", self._codex_weekly_pct, self._codex_weekly_reset),
+            ):
+                y2 = y2 + 15 * s + bar_h + 10 * s
+                self._draw_row(
+                    p, y2, w, pad_x, bar_w, bar_h, bar_r, font_label, font_small,
+                    label=label,
+                    pct=pct,
+                    reset_label=_format_reset_short(reset_ts),
+                )
 
         # --- Ticker strip / receipt footer (below the weekly row) ---
         # Receipt skin replaces the scrolling ticker with a dotted
