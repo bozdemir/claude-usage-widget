@@ -12,12 +12,17 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 from dataclasses import asdict, is_dataclass
 from typing import Sequence
 
 from claude_usage import __version__
 from claude_usage.collector import UsageStats, collect_all
 from claude_usage.config import load_config, user_config_path
+
+# Holds the QLockFile for the GUI's single-instance guard; assigned in
+# _launch_gui and kept alive for the process lifetime.
+_instance_lock = None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -256,10 +261,22 @@ def _launch_gui() -> None:
     if sys.platform.startswith("linux"):
         os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import Qt, QLockFile
     from PySide6.QtWidgets import QApplication
 
     from claude_usage.widget import ClaudeUsageApp
+
+    # Single-instance guard — repeated launches (login items, scripts, retry
+    # loops) otherwise stack identical OSDs on top of each other. QLockFile
+    # detects and removes locks left behind by crashed processes, so a hard
+    # kill never wedges future launches. The lock must outlive this function,
+    # hence the module-level reference.
+    global _instance_lock
+    _instance_lock = QLockFile(
+        os.path.join(tempfile.gettempdir(), "claude-usage-widget.lock"))
+    if not _instance_lock.tryLock(100):
+        print("claude-usage is already running; exiting.", file=sys.stderr)
+        sys.exit(0)
 
     # High-DPI is default in Qt 6; no special attribute needed.
     try:
