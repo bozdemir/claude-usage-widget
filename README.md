@@ -183,6 +183,27 @@ python3 main.py
 - **claude-usage v`<version>`** -- a dim, disabled line showing the running build's version; when a newer release is published an **↑ Update available: `<tag>`** item appears above it (click to copy the `pip install --upgrade` command)
 - **Quit** -- exit the widget
 
+## Statusline-fed rate limits
+
+If your Claude Code `statusLine` command dumps its rate-limit payload to a JSON file, the widget can use it as a zero-cost data source — Claude Code rewrites the statusline continuously during an active session, so the file carries the same numbers as `/api/oauth/usage` at seconds freshness and no API spend. Point `statusline_cache_path` at a file shaped like:
+
+```json
+{
+  "captured_at": "2026-07-11T22:52:05+09:00",
+  "rate_limits": {
+    "five_hour": {"used_percentage": 54, "resets_at": 1783795800},
+    "seven_day": {"used_percentage": 46, "resets_at": 1784026800}
+  }
+}
+```
+
+With this configured the widget uses it two ways:
+
+- **Endpoint relief** — while the dump is younger than `2 × refresh_seconds`, the `/api/oauth/usage` call is skipped and only forced through at most once per `usage_endpoint_min_seconds`. The endpoint is a low-budget resource shared with Claude Code itself; the forced calls keep the model-scoped/overage fields fresh and pick up consumption from headless `claude -p` runs, which never render a statusline.
+- **Rate-limit fallback** — when the endpoint throttles us, a dump younger than 20 minutes beats the last on-disk sample, which can lag a whole rate-limit window behind.
+
+Producing the file is up to your statusline script (it receives the payload from Claude Code on stdin and can `tee` the relevant part out). Expired windows in a stale dump are clamped to zero, and a missing/garbled file just disables the feature for that refresh.
+
 ## Configuration
 
 All settings are optional. Copy `config.json.example` to `config.json` and edit the values you want to change:
@@ -208,6 +229,8 @@ cp config.json.example config.json
 |---------|---------|-------------|
 | `refresh_seconds` | `60` | Base poll interval — how often to fetch new data from the API (seconds) |
 | `refresh_max_seconds` | `300` | Max poll interval when the API rate-limits/errors; the interval backs off exponentially toward this cap and snaps back to `refresh_seconds` on the next clean refresh |
+| `statusline_cache_path` | `""` | Path to a statusLine-dumped rate-limit JSON file (see [Statusline-fed rate limits](#statusline-fed-rate-limits)). Empty = disabled. |
+| `usage_endpoint_min_seconds` | `300` | With `statusline_cache_path` set: while the dump is seconds-fresh, `/api/oauth/usage` is called at most once per this many seconds. |
 | `osd_opacity` | `0.75` | OSD background opacity (0.15--1.0) |
 | `osd_scale` | `1.0` | OSD scale factor (0.6--2.0) |
 | `daily_message_limit` | `200` | Daily message limit for local tracking in the popup |
