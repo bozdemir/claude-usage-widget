@@ -806,9 +806,11 @@ class UsageOverlay(QWidget):
                 fill_color = _bar_color(pct, self._theme)
                 self._draw_ring(p, cx, cy, ring_d, ring_stroke, pct, fill_color)
 
-                # Percentage text centred in the ring.
-                pct_text = f"{int(pct * 100)}%"
-                pct_font_pt = max(10, int(13 * s))
+                # Utilisation number centred in the ring — no % sign, and
+                # sized off the ring diameter so it stays proportionate at
+                # every zoom level.
+                pct_text = f"{int(pct * 100)}"
+                pct_font_pt = max(12, int(ring_d * 0.30))
                 p.setFont(_mono_font(pct_font_pt, bold=True))
                 p.setPen(_hex_to_qcolor(self._theme["text_primary"]))
                 fm = p.fontMetrics()
