@@ -923,13 +923,16 @@ STATUSLINE_CACHE_MAX_AGE_SECONDS = 20 * 60
 
 
 def _load_statusline_rate_limits(
-    config: dict[str, Any], now_ts: float
+    config: dict[str, Any],
+    now_ts: float,
+    max_age_seconds: float = STATUSLINE_CACHE_MAX_AGE_SECONDS,
 ) -> dict[str, tuple[float, int]] | None:
     """Read a statusLine-dumped rate-limit file (see `statusline_cache_path`).
 
     Returns ``{"session": (pct, reset_ts), "weekly": (pct, reset_ts)}`` with
     expired windows clamped to zero, or None when the feature is disabled,
-    the file is missing/stale/from the future, or either window is absent.
+    the file is missing/older than ``max_age_seconds``/from the future, or
+    either window is absent.
     """
     path = str(config.get("statusline_cache_path", "") or "")
     if not path:
@@ -939,7 +942,7 @@ def _load_statusline_rate_limits(
             data = json.load(fh)
         captured = datetime.fromisoformat(str(data["captured_at"])).timestamp()
         age = now_ts - captured
-        if age > STATUSLINE_CACHE_MAX_AGE_SECONDS or age < -300:
+        if age > max_age_seconds or age < -300:
             return None
         limits = data["rate_limits"]
 
@@ -1010,10 +1013,48 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
 
     stats.active_sessions = get_active_sessions(claude_dir)
 
-    rate_limits = fetch_rate_limits(claude_dir)
     now_ts = datetime.now().timestamp()
 
-    if "error" in rate_limits:
+    # Endpoint relief: when a statusLine dump is seconds-fresh, the endpoint
+    # has nothing newer to say about the session/weekly pair — skip the call
+    # and spend its budget at most once per `usage_endpoint_min_seconds`
+    # (scoped/overage data, and consumption from headless `claude -p` runs
+    # that never render a statusline, still need the real endpoint).
+    # `samples_path`'s mtime records the last *successful* endpoint fetch:
+    # append_sample/prune only run in the success branch below, and the
+    # statusline/skip paths deliberately never touch the file.
+    sl_live = _load_statusline_rate_limits(
+        config, now_ts,
+        max_age_seconds=2 * int(config.get("refresh_seconds", 60) or 60))
+    endpoint_min = int(config.get("usage_endpoint_min_seconds", 300) or 300)
+    try:
+        last_fetch_ts = os.path.getmtime(samples_path)
+    except OSError:
+        last_fetch_ts = 0.0
+    if sl_live is not None and (now_ts - last_fetch_ts) < endpoint_min:
+        stats.session_utilization, stats.session_reset = sl_live["session"]
+        stats.weekly_utilization, stats.weekly_reset = sl_live["weekly"]
+        # Scoped cap isn't in the statusline payload — carry the last
+        # sampled triple forward, clamping an expired window to zero.
+        try:
+            recent = load_samples(samples_path)
+        except OSError:
+            recent = []
+        for prev in reversed(recent):
+            if prev.get("scoped_label"):
+                scoped_reset = int(prev.get("scoped_reset", 0) or 0)
+                if not scoped_reset or now_ts < scoped_reset:
+                    stats.scoped_label = str(prev["scoped_label"])
+                    stats.scoped_utilization = float(prev.get("scoped", 0.0) or 0.0)
+                    stats.scoped_reset = scoped_reset
+                break
+        rate_limits = None
+    else:
+        rate_limits = fetch_rate_limits(claude_dir)
+
+    if rate_limits is None:
+        pass
+    elif "error" in rate_limits:
         stats.rate_limit_error = rate_limits["error"]
         # API call failed (transient network glitch, OAuth hiccup, etc.).
         # Without this, both utilization fields stay at the dataclass

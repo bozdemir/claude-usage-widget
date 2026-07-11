@@ -55,6 +55,12 @@ DEFAULT_CONFIG: Config = {
     # beats the last on-disk sample: Claude Code pushes it on every
     # statusline render, at zero API cost. Empty = disabled.
     "statusline_cache_path": "",
+    # With statusline_cache_path set: while the dump is seconds-fresh (an
+    # active session keeps rewriting it), skip the /api/oauth/usage call and
+    # only hit the endpoint at most once per this many seconds — it is a
+    # low-budget endpoint shared with Claude Code, and the scoped/overage
+    # fields plus headless consumption are all it's still needed for.
+    "usage_endpoint_min_seconds": 300,
 
     # Max poll interval (seconds) the adaptive backoff climbs to when the API
     # rate-limits/errors; it snaps back to refresh_seconds on the next clean
