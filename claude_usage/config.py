@@ -40,6 +40,15 @@ DEFAULT_CONFIG: Config = {
     # budget (a low-volume endpoint shared with Claude Code).
     "refresh_seconds": 60,
 
+    # Which providers to collect. "claude" is always the primary; add "codex"
+    # to also poll the local OpenAI Codex CLI (`codex app-server`) and show
+    # its 5h/weekly rings & bars beneath Claude's. POSIX-only.
+    "providers": ["claude"],
+    # How often (seconds) to actually spawn the codex app-server RPC; between
+    # polls the on-disk cache is served. The RPC takes a couple of seconds,
+    # so keep this much larger than refresh_seconds.
+    "codex_poll_seconds": 300,
+
     # Max poll interval (seconds) the adaptive backoff climbs to when the API
     # rate-limits/errors; it snaps back to refresh_seconds on the next clean
     # refresh.

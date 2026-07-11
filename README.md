@@ -209,7 +209,9 @@ cp config.json.example config.json
 | `refresh_seconds` | `60` | Base poll interval — how often to fetch new data from the API (seconds) |
 | `refresh_max_seconds` | `300` | Max poll interval when the API rate-limits/errors; the interval backs off exponentially toward this cap and snaps back to `refresh_seconds` on the next clean refresh |
 | `osd_opacity` | `0.75` | OSD background opacity (0.15--1.0) |
-| `osd_scale` | `1.0` | OSD scale factor (0.6--2.0) |
+| `osd_scale` | `1.0` | OSD scale factor (0.6--4.0) |
+| `providers` | `["claude"]` | Add `"codex"` to also poll the local OpenAI Codex CLI (`codex app-server`) and show its 5h/weekly usage beneath Claude's — an extra ring row in gauge view, two extra bars in bars view. POSIX-only. |
+| `codex_poll_seconds` | `300` | How often (seconds) to spawn the codex app-server RPC; an on-disk cache is served in between. |
 | `daily_message_limit` | `200` | Daily message limit for local tracking in the popup |
 | `weekly_message_limit` | `1000` | Weekly message limit for local tracking in the popup |
 | `daily_token_limit` | `5000000` | Daily token limit for local tracking |
@@ -220,7 +222,7 @@ cp config.json.example config.json
 | `show_news` | `false` | Whether the live Anthropic/Claude news headline strip is shown on the OSD. Off by default because it makes outbound calls to a 3rd-party feed. Toggle at runtime via right-click → "Show news ticker". |
 | `osd_position` | `top-right` | Where the OSD anchors: `top-left`, `top-right`, `bottom-left`, `bottom-right`, or `custom`. Set from right-click → "OSD Position", or automatically to `custom` when you drag the overlay. |
 | `osd_x` / `osd_y` | `null` | Exact screen coordinates used only when `osd_position` is `custom`. Written automatically on drag. |
-| `osd_scale` | `1.0` | OSD zoom level (0.6–2.0). Updated automatically when you scroll the mouse wheel over the OSD, so it reopens at the same size. |
+| `osd_scale` | `1.0` | OSD zoom level (0.6–4.0). Updated automatically when you scroll the mouse wheel over the OSD, so it reopens at the same size. |
 | `osd_minimized` | `false` | Whether the OSD is in its collapsed thin-strip form. Written automatically via right-click → "Minimize / Restore". |
 | `osd_visible` | `true` | Whether the OSD overlay is shown. Written on quit so the widget reopens in the same visible/hidden state. |
 | `osd_always_on_top` | `true` | Keep the OSD pinned above other windows. Set to `false` (or right-click → "Always on top") to let it sit as a normal background desktop widget. |

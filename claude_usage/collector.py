@@ -19,6 +19,7 @@ from urllib.request import Request, urlopen
 
 from claude_usage import forecast, pricing
 from claude_usage import budget as _budget
+from claude_usage import codex as _codex
 from claude_usage import peak as _peak
 from claude_usage.analytics import AnomalyReport, detect_anomaly, generate_tips
 from claude_usage.burn import (
@@ -78,6 +79,14 @@ class UsageStats:
     scoped_utilization: float = 0.0
     scoped_reset: int = 0
     scoped_label: str = ""
+    # Optional second provider: OpenAI Codex rate limits, populated only when
+    # "codex" is listed in the `providers` config key. codex_available=False
+    # means the overlay draws no Codex rows at all.
+    codex_available: bool = False
+    codex_session_utilization: float = 0.0
+    codex_session_reset: int = 0
+    codex_weekly_utilization: float = 0.0
+    codex_weekly_reset: int = 0
     overage_status: str = ""  # "rejected" or "allowed"
     fallback_status: str = ""  # "available" or ""
     rate_limit_error: str = ""  # error message if API call fails
@@ -1199,5 +1208,20 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
         stats.peak_hint = ps.hint
     except Exception:
         stats.in_peak_window, stats.peak_hint = False, ""
+
+    # Optional second provider: OpenAI Codex (opt-in via `providers` config).
+    # collect_codex serves an on-disk cache between polls, so calling it on
+    # every refresh cycle is cheap; a failure just hides the Codex rows.
+    if "codex" in (config.get("providers") or []):
+        try:
+            cx = _codex.collect_codex(
+                poll_seconds=int(config.get("codex_poll_seconds", 300) or 300))
+            stats.codex_available = bool(cx["available"])
+            stats.codex_session_utilization = float(cx["session_pct"])
+            stats.codex_session_reset = int(cx["session_reset"])
+            stats.codex_weekly_utilization = float(cx["weekly_pct"])
+            stats.codex_weekly_reset = int(cx["weekly_reset"])
+        except Exception:
+            stats.codex_available = False
 
     return stats
