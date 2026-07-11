@@ -919,6 +919,48 @@ def _parse_rate_limit_headers(headers: dict[str, str]) -> dict[str, Any]:
     }
 
 
+STATUSLINE_CACHE_MAX_AGE_SECONDS = 20 * 60
+
+
+def _load_statusline_rate_limits(
+    config: dict[str, Any], now_ts: float
+) -> dict[str, tuple[float, int]] | None:
+    """Read a statusLine-dumped rate-limit file (see `statusline_cache_path`).
+
+    Returns ``{"session": (pct, reset_ts), "weekly": (pct, reset_ts)}`` with
+    expired windows clamped to zero, or None when the feature is disabled,
+    the file is missing/stale/from the future, or either window is absent.
+    """
+    path = str(config.get("statusline_cache_path", "") or "")
+    if not path:
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        captured = datetime.fromisoformat(str(data["captured_at"])).timestamp()
+        age = now_ts - captured
+        if age > STATUSLINE_CACHE_MAX_AGE_SECONDS or age < -300:
+            return None
+        limits = data["rate_limits"]
+
+        def window(block: Any) -> tuple[float, int] | None:
+            if not isinstance(block, dict) or block.get("used_percentage") is None:
+                return None
+            pct = max(0.0, min(1.0, float(block["used_percentage"]) / 100.0))
+            reset = int(block.get("resets_at") or 0)
+            if reset and now_ts >= reset:  # window rolled over since capture
+                return 0.0, 0
+            return pct, reset
+
+        session = window(limits.get("five_hour"))
+        weekly = window(limits.get("seven_day"))
+        if session is None or weekly is None:
+            return None
+        return {"session": session, "weekly": weekly}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def collect_all(config: dict[str, Any]) -> UsageStats:
     """Collect all usage stats from local ``~/.claude/`` files and the Anthropic API.
 
@@ -1029,6 +1071,16 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
             stats.scoped_utilization = scoped_util
             stats.scoped_reset = scoped_reset
             stats.scoped_label = scoped_label
+        # Fresher zero-cost source: a statusLine-dumped rate-limit file (see
+        # `statusline_cache_path` in config). Claude Code pushes it on every
+        # statusline render, so while the user is in a session it's seconds
+        # old — beats the last sample, which can lag a whole rate-limit
+        # window behind. Overrides session/weekly only; scoped stays on the
+        # sample fallback (the statusline payload doesn't carry it).
+        sl = _load_statusline_rate_limits(config, now_ts)
+        if sl is not None:
+            stats.session_utilization, stats.session_reset = sl["session"]
+            stats.weekly_utilization, stats.weekly_reset = sl["weekly"]
     else:
         stats.session_utilization = rate_limits["session_utilization"]
         stats.session_reset = rate_limits["session_reset"]

@@ -48,6 +48,13 @@ DEFAULT_CONFIG: Config = {
     # polls the on-disk cache is served. The RPC takes a couple of seconds,
     # so keep this much larger than refresh_seconds.
     "codex_poll_seconds": 300,
+    # Optional path to a JSON file a Claude Code statusLine command dumps its
+    # rate-limit payload to ({"captured_at": iso, "rate_limits": {"five_hour":
+    # {"used_percentage", "resets_at"}, "seven_day": {...}}}). When the
+    # /api/oauth/usage endpoint rate-limits us, a fresh copy of this file
+    # beats the last on-disk sample: Claude Code pushes it on every
+    # statusline render, at zero API cost. Empty = disabled.
+    "statusline_cache_path": "",
 
     # Max poll interval (seconds) the adaptive backoff climbs to when the API
     # rate-limits/errors; it snaps back to refresh_seconds on the next clean
