@@ -94,6 +94,7 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 - **Single `pip install`** -- no `apt`/`brew`/system libraries required, Qt is bundled
 - **Real API data** -- 5h / 7d plan utilisation read from Claude Code's `/api/oauth/usage` endpoint (the same data the Claude UI shows)
 - **Model-scoped weekly bar** -- when Anthropic reports a separate weekly cap for a specific model (e.g. **Fable**), a third bar appears automatically below Session and Weekly, labelled with the model name. It auto-hides when the API stops reporting it — works in bars, gauge, all 11 themes, and the detail popup.
+- **Second provider (opt-in)** -- also track your local **OpenAI Codex** usage alongside Claude's: add `"codex"` to the `providers` config and the widget shows Codex 5h/weekly rows beneath Claude's (extra bars in bars view, a 2×2 ring grid in gauge), rendered natively in **all 11 themes**. Auto-hides when the Codex CLI is missing or logged out; off by default. See [Second provider: OpenAI Codex](#second-provider-openai-codex-opt-in).
 - **OSD overlay** -- transparent, frameless; left-click opens the details popup, right-click shows a context menu. Stays on top by default — toggle it off to use it as a background desktop widget.
 - **Live token stream** -- `● LIVE 5.3k tok/min` badge on the OSD while a Claude Code session is actively writing, derived from the conversation JSONLs
 - **Per-turn cost ticker** -- a scrolling strip at the bottom of the OSD shows the USD cost of each assistant turn as it lands (`$0.156 ← Bash · 116`), colour-coded by quartile within the visible window so the tape always stays visually varied. Toggle via right-click → "Show cost ticker" or set `"show_ticker": false` in `config.json`.
@@ -203,6 +204,28 @@ With this configured the widget uses it two ways:
 - **Rate-limit fallback** — when the endpoint throttles us, a dump younger than 20 minutes beats the last on-disk sample, which can lag a whole rate-limit window behind.
 
 Producing the file is up to your statusline script (it receives the payload from Claude Code on stdin and can `tee` the relevant part out). Expired windows in a stale dump are clamped to zero, and a missing/garbled file just disables the feature for that refresh.
+
+## Second provider: OpenAI Codex (opt-in)
+
+Run OpenAI Codex alongside Claude Code? The widget can show its usage too, right beneath Claude's — no separate menu-bar app. Add `"codex"` to `providers` in `config.json`:
+
+```json
+{
+    "providers": ["claude", "codex"]
+}
+```
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/bozdemir/claude-usage-widget/main/screenshots/osd-codex.png" alt="OSD showing Codex 5h and 7d rows beneath Claude's Session, Weekly and Fable rows" width="320" />
+</p>
+
+You get two extra rows in bars view — **Codex 5h** and **Codex 7d** — or a second pair of rings (a 2×2 grid) in gauge view, styled to match whichever of the 11 themes you're on.
+
+- **Data source** — the widget speaks JSON-RPC over stdio to your local `codex app-server` (`account/rateLimits/read`) — the same numbers `codex` reports itself. No scraping, no account data stored or logged.
+- **Cheap** — the RPC is spawned at most once per `codex_poll_seconds` (default 300 s), with an on-disk cache served in between; the read is hard-bounded so a stalled `codex` can never hang a refresh.
+- **Graceful** — the Codex rows auto-hide when the `codex` CLI is missing, logged out, or returns no rate-limit data. POSIX-only for now (Linux/macOS).
+
+The default `providers` is `["claude"]`, so existing users see no change.
 
 ## Configuration
 
