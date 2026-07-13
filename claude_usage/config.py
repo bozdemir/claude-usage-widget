@@ -45,6 +45,21 @@ DEFAULT_CONFIG: Config = {
     # refresh.
     "refresh_max_seconds": 300,
 
+    # Optional path to a JSON file a Claude Code statusLine command dumps its
+    # rate-limit payload to ({"captured_at": iso, "rate_limits": {"five_hour":
+    # {"used_percentage", "resets_at"}, "seven_day": {...}}}). Claude Code
+    # re-renders the statusline continuously during an active session, so a
+    # fresh copy of this file carries the same numbers as /api/oauth/usage at
+    # zero API cost. Empty = disabled; see "Statusline-fed rate limits" in
+    # the README.
+    "statusline_cache_path": "",
+    # With statusline_cache_path set: while the dump is seconds-fresh, skip
+    # the /api/oauth/usage call and only hit the endpoint at most once per
+    # this many seconds — it is a low-budget endpoint shared with Claude
+    # Code, and the scoped/overage fields plus headless (`claude -p`)
+    # consumption are all it's still needed for.
+    "usage_endpoint_min_seconds": 300,
+
     # Opacity of the floating OSD overlay window (0.0 = fully transparent,
     # 1.0 = fully opaque).  0.75 keeps it readable without obscuring content.
     "osd_opacity": 0.75,
