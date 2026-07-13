@@ -25,6 +25,27 @@ from claude_usage.config import load_config, user_config_path
 _instance_lock = None
 
 
+def _instance_lock_path() -> str:
+    """Per-user path for the single-instance guard lock file.
+
+    A fixed name in the world-shared, sticky-bit ``/tmp`` (Linux) would let one
+    user's running instance block *other* users' launches — and, after a hard
+    kill, permanently wedge them, since a non-owner can't unlink the stale lock
+    to reclaim it. So prefer the per-user ``XDG_RUNTIME_DIR`` and always
+    disambiguate the filename by username. (macOS ``/var/folders`` and Windows
+    ``%TEMP%`` are already per-user, so there this is just belt-and-braces.)
+    """
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    base = runtime if runtime and os.path.isdir(runtime) else tempfile.gettempdir()
+    try:
+        import getpass
+        user = getpass.getuser()
+    except Exception:
+        user = str(os.getpid())
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in user) or "user"
+    return os.path.join(base, f"claude-usage-widget-{safe}.lock")
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Return the argparse parser used by the CLI dispatcher."""
     p = argparse.ArgumentParser(
@@ -272,8 +293,7 @@ def _launch_gui() -> None:
     # kill never wedges future launches. The lock must outlive this function,
     # hence the module-level reference.
     global _instance_lock
-    _instance_lock = QLockFile(
-        os.path.join(tempfile.gettempdir(), "claude-usage-widget.lock"))
+    _instance_lock = QLockFile(_instance_lock_path())
     if not _instance_lock.tryLock(100):
         print("claude-usage is already running; exiting.", file=sys.stderr)
         sys.exit(0)

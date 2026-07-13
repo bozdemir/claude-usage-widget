@@ -931,7 +931,12 @@ def _load_statusline_rate_limits(
     try:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-        captured = datetime.fromisoformat(str(data["captured_at"])).timestamp()
+        # Python 3.10's fromisoformat rejects a trailing 'Z'; normalize it to
+        # +00:00 so statusline scripts that emit Zulu timestamps work on 3.10.
+        captured_str = str(data["captured_at"]).strip()
+        if captured_str.endswith("Z"):
+            captured_str = captured_str[:-1] + "+00:00"
+        captured = datetime.fromisoformat(captured_str).timestamp()
         age = now_ts - captured
         if age > max_age_seconds or age < -300:
             return None

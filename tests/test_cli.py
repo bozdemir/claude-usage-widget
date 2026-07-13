@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import unittest
 from dataclasses import asdict
@@ -208,6 +209,38 @@ class TestStatusline(unittest.TestCase):
         self.assertEqual(rc, 0)
         detach.assert_not_called()
         gui.assert_not_called()
+
+
+class TestInstanceLockPath(unittest.TestCase):
+    """The single-instance guard lock must be per-user (not a shared /tmp name
+    that lets one user block — or, after a hard kill, wedge — other users)."""
+
+    def test_path_is_per_user_and_dot_lock(self):
+        import getpass
+        from claude_usage.cli import _instance_lock_path
+        p = _instance_lock_path()
+        self.assertTrue(p.endswith(".lock"))
+        # Disambiguated by the current username (or pid as a last resort).
+        user = "".join(c if c.isalnum() or c in "-_." else "_"
+                       for c in getpass.getuser()) or "user"
+        self.assertIn(user, os.path.basename(p))
+
+    def test_prefers_xdg_runtime_dir_when_present(self):
+        import tempfile
+        from claude_usage.cli import _instance_lock_path
+        runtime = tempfile.mkdtemp()
+        try:
+            with patch.dict(os.environ, {"XDG_RUNTIME_DIR": runtime}):
+                self.assertTrue(_instance_lock_path().startswith(runtime))
+        finally:
+            os.rmdir(runtime)
+
+    def test_falls_back_to_tempdir_when_xdg_missing(self):
+        import tempfile
+        from claude_usage.cli import _instance_lock_path
+        env = {k: v for k, v in os.environ.items() if k != "XDG_RUNTIME_DIR"}
+        with patch.dict(os.environ, env, clear=True):
+            self.assertTrue(_instance_lock_path().startswith(tempfile.gettempdir()))
 
 
 if __name__ == "__main__":
