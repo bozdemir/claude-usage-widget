@@ -61,6 +61,7 @@ METRICS = {
     "osd_width":       440,
     "osd_height":      172,
     "osd_height_scoped": 212,  # +1 Session/Weekly row footprint (2*line_h + row_gap + 2)
+    "codex_rows_height": 80,   # 2 × (osd_height_scoped − osd_height) = two extra rows
     "osd_radius":      6,
     "osd_padding":     12,
     "osd_row_gap":     8,
@@ -161,6 +162,37 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
                   hex_to_qcolor(t["text_secondary"]), body_f)
         y_bar = y_row + line_h + 2 * s
         draw_ascii_bar(p, x, y_bar + fm.ascent(), data.scoped_pct,
+                       m["osd_bar_cols"],
+                       hex_to_qcolor(t["accent"]), hex_to_qcolor(t["very_dim"]),
+                       body_f)
+
+    # codex rows — optional second-provider (OpenAI Codex) 5h + 7d windows.
+    # Mirrors the session/weekly rows exactly and pushes the ticker below
+    # down by two rows via the updated y_bar. Drawn only when active.
+    if getattr(data, "codex_available", False):
+        # codex 5h — mirrors the session row
+        y_row = y_bar + line_h + m["osd_row_gap"] * s
+        draw_text(p, x, y_row + fm.ascent(), "codex 5h",
+                  hex_to_qcolor(t["text_secondary"]), body_f)
+        right = f"{data.codex_session_reset_min}m · {int(data.codex_session_pct*100)}%"
+        rw = fm.horizontalAdvance(right)
+        draw_text(p, x + w - rw, y_row + fm.ascent(), right,
+                  hex_to_qcolor(t["text_secondary"]), body_f)
+        y_bar = y_row + line_h + 2 * s
+        draw_ascii_bar(p, x, y_bar + fm.ascent(), data.codex_session_pct,
+                       m["osd_bar_cols"],
+                       hex_to_qcolor(t["accent"]), hex_to_qcolor(t["very_dim"]),
+                       body_f)
+        # codex 7d — mirrors the weekly row
+        y_row = y_bar + line_h + m["osd_row_gap"] * s
+        draw_text(p, x, y_row + fm.ascent(), "codex 7d",
+                  hex_to_qcolor(t["text_secondary"]), body_f)
+        right = f"{data.codex_weekly_reset_hrs}h {data.codex_weekly_reset_min}m · {int(data.codex_weekly_pct*100)}%"
+        rw = fm.horizontalAdvance(right)
+        draw_text(p, x + w - rw, y_row + fm.ascent(), right,
+                  hex_to_qcolor(t["text_secondary"]), body_f)
+        y_bar = y_row + line_h + 2 * s
+        draw_ascii_bar(p, x, y_bar + fm.ascent(), data.codex_weekly_pct,
                        m["osd_bar_cols"],
                        hex_to_qcolor(t["accent"]), hex_to_qcolor(t["very_dim"]),
                        body_f)

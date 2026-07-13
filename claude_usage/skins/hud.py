@@ -56,6 +56,9 @@ THEME = {
 
 METRICS = {
     "osd_width": 360, "osd_height": 220, "osd_height_scoped": 370,
+    # Codex adds TWO gauges below the pair, each the same footprint as the
+    # scoped gauge (osd_height_scoped - osd_height). Additive with scoped.
+    "codex_rows_height": 2 * (370 - 220),
     "osd_radius": 10, "osd_padding": 14,
     "ring_size": 118, "ring_stroke": 10,
     "ring_size_popup": 140, "ring_stroke_popup": 12,
@@ -149,11 +152,15 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     # 270° gauge centred below the SESSION/WEEKLY pair. Present only when the
     # API reports it; otherwise the OSD renders byte-for-byte as before.
     scoped_present = data.scoped_pct is not None
+    # Optional second provider (Codex): two extra gauges below the pair, drawn
+    # in the identical HUD style. When absent the OSD renders byte-for-byte as
+    # before. The overlay grows the panel by METRICS['codex_rows_height'].
+    codex_present = getattr(data, "codex_available", False)
 
-    # gauges — equally spaced. When a scoped gauge is present the pair stays
-    # anchored to the original-height centre (top of the taller window) so the
-    # third gauge can sit beneath it and the ticker slides down to the bottom.
-    if scoped_present:
+    # gauges — equally spaced. When a scoped/codex gauge is present the pair
+    # stays anchored to the original-height centre (top of the taller window)
+    # so the extra gauges sit beneath it and the ticker slides to the bottom.
+    if scoped_present or codex_present:
         y_mid = rect.y() + m["osd_height"] * s / 2 + 10 * s
     else:
         y_mid = rect.y() + rect.height() / 2 + 10 * s
@@ -182,11 +189,24 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     # Scoped weekly cap — a native third gauge centred below the pair, using
     # the exact same renderer/fonts/spacing as WEEKLY. Gated purely on
     # scoped_pct so a set-but-empty label still renders (fallback "SCOPED").
+    single_row = (m["osd_height_scoped"] - m["osd_height"]) * s
     if scoped_present:
         scoped_label = (data.scoped_label or "SCOPED").upper()
-        y_scoped = y_mid + (m["osd_height_scoped"] - m["osd_height"]) * s
+        y_scoped = y_mid + single_row
         paint_gauge(p, cx, y_scoped, data.scoped_pct, scoped_label,
                     f"{data.scoped_reset_hrs}h {data.scoped_reset_min}m", s)
+
+    # Codex (optional second provider) — two more centred gauges below the
+    # pair (and below the scoped gauge if present), same renderer/fonts/spacing
+    # as SESSION/WEEKLY. The scoped gauge, when shown, occupies the first slot.
+    if codex_present:
+        base = 1 if scoped_present else 0
+        y_codex_5h = y_mid + (base + 1) * single_row
+        paint_gauge(p, cx, y_codex_5h, data.codex_session_pct, "CODEX 5H",
+                    f"{data.codex_session_reset_min}m", s)
+        y_codex_7d = y_mid + (base + 2) * single_row
+        paint_gauge(p, cx, y_codex_7d, data.codex_weekly_pct, "CODEX 7D",
+                    f"{data.codex_weekly_reset_hrs}h {data.codex_weekly_reset_min}m", s)
 
     # Ticker strip along the bottom — bordered separator + amber-tiered
     # quartile colours matching the cockpit palette.

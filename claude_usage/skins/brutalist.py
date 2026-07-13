@@ -59,6 +59,10 @@ METRICS = {
     # + 14px bar + 9pt reset line + spacing) — so the third row drops in below
     # WEEKLY without crowding the ticker strip.
     "osd_height_scoped": 286,
+    # When the optional Codex second provider is active the OSD grows by TWO
+    # extra SESSION/WEEKLY-style rows (Codex 5h + Codex 7d), i.e. twice the
+    # single-row footprint the scoped row already reserves (286 - 224 = 62).
+    "codex_rows_height": 124,
 }
 
 FONTS = {"family_mono": "Space Mono", "body_pt": 10, "title_pt": 11}
@@ -150,6 +154,18 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     if data.scoped_pct is not None and data.scoped_label:
         yy = row(yy, data.scoped_label.upper(), data.scoped_pct,
                  f"RESETS {data.scoped_reset_hrs}H {data.scoped_reset_min}M",
+                 t["ink"])
+
+    # Optional Codex second provider — two more rows in the same black/red
+    # bar rhythm (5h session mirrors SESSION's red bar, 7d mirrors WEEKLY's
+    # black bar). Guarded so the default (codex_available=False) panel is
+    # byte-for-byte identical. The ticker below is anchored to rect.bottom(),
+    # which the taller codex_rows_height-grown panel pushes down for us.
+    if getattr(data, "codex_available", False):
+        yy = row(yy, "CODEX 5H", data.codex_session_pct,
+                 f"RESETS {data.codex_session_reset_min}M", t["accent"])
+        yy = row(yy, "CODEX 7D", data.codex_weekly_pct,
+                 f"RESETS {data.codex_weekly_reset_hrs}H {data.codex_weekly_reset_min}M",
                  t["ink"])
 
     # 2px rule above the ticker strip — matches the Swiss-grid section

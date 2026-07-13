@@ -40,6 +40,16 @@ class SkinData:
     scoped_reset_hrs: int = 0
     scoped_reset_min: int = 0
     scoped_label: str = ""
+    # Optional second provider (OpenAI Codex). codex_available=False → skins
+    # draw no Codex rows. The 5h window mirrors Session (minutes), the 7d
+    # window mirrors Weekly (hrs + min), so each skin renders them with its
+    # own Session/Weekly row style.
+    codex_available: bool = False
+    codex_session_pct: float = 0.0
+    codex_session_reset_min: int = 0
+    codex_weekly_pct: float = 0.0
+    codex_weekly_reset_hrs: int = 0
+    codex_weekly_reset_min: int = 0
     live_tok_per_min: float = 0.0  # in thousands (e.g. 10.5 means 10.5k)
     is_live: bool = False
     subagent_count: int = 0
@@ -260,6 +270,23 @@ def from_usage_stats(
             scoped_reset_hrs = sc_left // 3600
             scoped_reset_min = (sc_left % 3600) // 60
 
+    # Optional Codex provider — 5h mirrors Session, 7d mirrors Weekly.
+    codex_available = bool(getattr(stats, "codex_available", False))
+    codex_session_pct = codex_weekly_pct = 0.0
+    codex_session_reset_min = codex_weekly_reset_hrs = codex_weekly_reset_min = 0
+    if codex_available:
+        codex_session_pct = max(0.0, min(1.0, float(
+            getattr(stats, "codex_session_utilization", 0.0) or 0.0)))
+        codex_weekly_pct = max(0.0, min(1.0, float(
+            getattr(stats, "codex_weekly_utilization", 0.0) or 0.0)))
+        if getattr(stats, "codex_session_reset", 0) > 0:
+            cs_left = max(0, int(stats.codex_session_reset - now_ts))
+            codex_session_reset_min = cs_left // 60
+        if getattr(stats, "codex_weekly_reset", 0) > 0:
+            cw_left = max(0, int(stats.codex_weekly_reset - now_ts))
+            codex_weekly_reset_hrs = cw_left // 3600
+            codex_weekly_reset_min = (cw_left % 3600) // 60
+
     live = getattr(stats, "live_activity", None)
     tpm = float(getattr(live, "tokens_per_minute", 0.0) or 0.0)
     is_live = bool(getattr(live, "is_live", False))
@@ -285,6 +312,12 @@ def from_usage_stats(
         scoped_reset_hrs=scoped_reset_hrs,
         scoped_reset_min=scoped_reset_min,
         scoped_label=scoped_label,
+        codex_available=codex_available,
+        codex_session_pct=codex_session_pct,
+        codex_session_reset_min=codex_session_reset_min,
+        codex_weekly_pct=codex_weekly_pct,
+        codex_weekly_reset_hrs=codex_weekly_reset_hrs,
+        codex_weekly_reset_min=codex_weekly_reset_min,
         live_tok_per_min=tpm / 1000.0,
         is_live=is_live,
         subagent_count=int(getattr(stats, "active_subagent_count", 0) or 0),

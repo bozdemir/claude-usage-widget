@@ -470,6 +470,9 @@ class UsageOverlay(QWidget):
             base_h = m["osd_height"]
             if self._scoped_label:
                 base_h = m.get("osd_height_scoped", m["osd_height"] + SCOPED_ROW_HEIGHT)
+            if self._codex_available:
+                # Two Codex rows drawn beneath — additive with the scoped row.
+                base_h += m.get("codex_rows_height", 2 * SCOPED_ROW_HEIGHT)
             height = int(base_h * self._scale)
             if self.isVisible():
                 tr = self.frameGeometry().topRight()
@@ -711,6 +714,9 @@ class UsageOverlay(QWidget):
                 if self._scoped_label:
                     skin_base = self._skin.METRICS.get(
                         "osd_height_scoped", skin_base + SCOPED_ROW_HEIGHT)
+                if self._codex_available:
+                    skin_base += self._skin.METRICS.get(
+                        "codex_rows_height", 2 * SCOPED_ROW_HEIGHT)
                 skin_h = int(skin_base * s)
                 self._skin.paint_osd(p, QRectF(0, 0, w, skin_h), data, self._scale)
                 # Draw news inside the skin's frame: above the skin's own ticker.

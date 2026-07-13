@@ -57,6 +57,10 @@ METRICS = {
     # +1 receipt row (fm.height()≈15 + the 16px SESSION→WEEKLY rhythm) for the
     # optional scoped weekly cap; the overlay switches to this when present.
     "osd_height_scoped": 265,
+    # +2 receipt rows (Codex 5h / 7d) when a second provider is present; twice
+    # the single scoped-row footprint (265-234=31). The overlay adds this on top
+    # of any scoped height so both providers can show at once.
+    "codex_rows_height": 62,
     "popup_width": 540, "popup_padding": 26,
     "grain_step_px": 3, "ticker_h": 22,
 }
@@ -167,6 +171,38 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
         p.drawRect(QRectF(x, yy, w, 8 * s))
         p.setPen(Qt.NoPen); p.setBrush(hex_to_qcolor(t["ink"]))
         p.drawRect(QRectF(x, yy, w * data.scoped_pct, 8 * s))
+
+    # CODEX — optional second-provider pair (Codex 5h + 7d). Mirrors the
+    # SESSION/WEEKLY rows exactly so they read as two more native receipt lines.
+    # Only drawn when a second provider reports in; each row advances yy the same
+    # way the scoped block does, so the ticker/footer flow down. When absent,
+    # nothing runs and the layout is byte-for-byte the pre-Codex one.
+    if getattr(data, "codex_available", False):
+        yy += 8 * s + 6 * s
+        draw_text(p, x, yy + fm.ascent(), "CODEX 5H",
+                  hex_to_qcolor(t["ink"]), body_f)
+        right = f"{int(data.codex_session_pct * 100)}% · {data.codex_session_reset_min}m"
+        rw = fm.horizontalAdvance(right)
+        draw_text(p, x + w - rw, yy + fm.ascent(), right,
+                  hex_to_qcolor(t["ink"]), body_f)
+        yy += fm.height() + 2 * s
+        p.setPen(hex_to_qcolor(t["rule"])); p.setBrush(hex_to_qcolor(t["bar_track"]))
+        p.drawRect(QRectF(x, yy, w, 8 * s))
+        p.setPen(Qt.NoPen); p.setBrush(hex_to_qcolor(t["ink"]))
+        p.drawRect(QRectF(x, yy, w * data.codex_session_pct, 8 * s))
+
+        yy += 8 * s + 6 * s
+        draw_text(p, x, yy + fm.ascent(), "CODEX 7D",
+                  hex_to_qcolor(t["ink"]), body_f)
+        right = f"{int(data.codex_weekly_pct * 100)}% · {data.codex_weekly_reset_hrs}h{data.codex_weekly_reset_min}m"
+        rw = fm.horizontalAdvance(right)
+        draw_text(p, x + w - rw, yy + fm.ascent(), right,
+                  hex_to_qcolor(t["ink"]), body_f)
+        yy += fm.height() + 2 * s
+        p.setPen(hex_to_qcolor(t["rule"])); p.setBrush(hex_to_qcolor(t["bar_track"]))
+        p.drawRect(QRectF(x, yy, w, 8 * s))
+        p.setPen(Qt.NoPen); p.setBrush(hex_to_qcolor(t["ink"]))
+        p.drawRect(QRectF(x, yy, w * data.codex_weekly_pct, 8 * s))
 
     # Ticker marquee (between the weekly bar and the thank-you footer).
     yy += 8 * s + 6 * s

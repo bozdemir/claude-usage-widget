@@ -48,6 +48,9 @@ METRICS = {
     "osd_radius": 8, "osd_padding": 0,
     "seg_title_w": 96, "seg_live_w": 96,
     "bar_h": 3,
+    # Two extra stacked rows (Codex 5h + Codex 7d), each the same footprint
+    # the scoped row already claims: 2 × (osd_height_scoped - osd_height).
+    "codex_rows_height": 108,
 }
 
 FONTS = {"family_mono": "JetBrains Mono", "family_ui": "Inter",
@@ -170,6 +173,32 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
         seg(xs, mid_w * 2, data.scoped_label.upper(), scoped_pct,
             f"{data.scoped_reset_hrs}h", t["accent2"],
             top=base_bottom, bh=base_h)
+
+    # optional Codex second-provider rows — two stacked bands mirroring the
+    # SESSION (5h) and WEEKLY (7d) rows in this skin's style. Drawn AFTER the
+    # scoped row so the running vertical cursor flows Session → Weekly →
+    # [scoped] → Codex 5h → Codex 7d. Nothing is painted when the provider
+    # is absent, keeping the byte-identical default intact.
+    if getattr(data, "codex_available", False):
+        # start below the first strip row, plus the scoped row if it drew one
+        codex_top = base_bottom
+        if scoped_pct is not None and getattr(data, "scoped_label", ""):
+            codex_top = base_bottom + base_h
+        # Codex 5h — mirrors SESSION (accent, "{min}m" reset)
+        p.setPen(hex_to_qcolor(t["border"]))
+        p.drawLine(QPointF(rect.x() + 4 * s, codex_top),
+                   QPointF(rect.right() - 4 * s, codex_top))
+        seg(xs, mid_w * 2, "CODEX 5H", data.codex_session_pct,
+            f"{data.codex_session_reset_min}m", t["accent"],
+            top=codex_top, bh=base_h)
+        # Codex 7d — mirrors WEEKLY (accent2, "{hrs}h" reset)
+        codex_top += base_h
+        p.setPen(hex_to_qcolor(t["border"]))
+        p.drawLine(QPointF(rect.x() + 4 * s, codex_top),
+                   QPointF(rect.right() - 4 * s, codex_top))
+        seg(xs, mid_w * 2, "CODEX 7D", data.codex_weekly_pct,
+            f"{data.codex_weekly_reset_hrs}h", t["accent2"],
+            top=codex_top, bh=base_h)
 
 
 # ---- POPUP ---------------------------------------------------------
