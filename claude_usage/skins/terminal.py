@@ -61,6 +61,9 @@ METRICS = {
     "osd_width":       440,
     "osd_height":      172,
     "osd_height_scoped": 212,  # +1 Session/Weekly row footprint (2*line_h + row_gap + 2)
+    # +2 rows for the optional Codex 5h / 7d pair (same 40px row footprint).
+    "osd_height_codex": 252,
+    "osd_height_scoped_codex": 292,
     "osd_radius":      6,
     "osd_padding":     12,
     "osd_row_gap":     8,
@@ -164,6 +167,27 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
                        m["osd_bar_cols"],
                        hex_to_qcolor(t["accent"]), hex_to_qcolor(t["very_dim"]),
                        body_f)
+
+    # Codex provider rows — optional 5h / 7d pair, each mirroring the weekly
+    # row exactly. Gated on codex_available so the no-Codex OSD is unchanged.
+    if data.codex_available:
+        for c_label, c_pct, c_reset in (
+            ("codex 5h", data.codex_session_pct, f"{data.codex_session_reset_min}m"),
+            ("codex 7d", data.codex_weekly_pct,
+             f"{data.codex_weekly_reset_hrs}h {data.codex_weekly_reset_min}m"),
+        ):
+            y_row = y_bar + line_h + m["osd_row_gap"] * s
+            draw_text(p, x, y_row + fm.ascent(), c_label,
+                      hex_to_qcolor(t["text_secondary"]), body_f)
+            right = f"{c_reset} · {int(c_pct * 100)}%"
+            rw = fm.horizontalAdvance(right)
+            draw_text(p, x + w - rw, y_row + fm.ascent(), right,
+                      hex_to_qcolor(t["text_secondary"]), body_f)
+            y_bar = y_row + line_h + 2 * s
+            draw_ascii_bar(p, x, y_bar + fm.ascent(), c_pct,
+                           m["osd_bar_cols"],
+                           hex_to_qcolor(t["accent"]), hex_to_qcolor(t["very_dim"]),
+                           body_f)
 
     # ticker strip — dashed separator + colour-quartile cost tags
     y_tick = y_bar + line_h + 6 * s

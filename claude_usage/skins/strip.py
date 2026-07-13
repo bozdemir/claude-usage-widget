@@ -45,6 +45,9 @@ THEME = {
 
 METRICS = {
     "osd_width": 480, "osd_height": 54, "osd_height_scoped": 108,
+    # Codex 5h / 7d render as ONE extra strip row (a CODEX 5H | CODEX 7D pair
+    # side-by-side, like SESSION | WEEKLY), so codex adds a single 54px row.
+    "osd_height_codex": 108, "osd_height_scoped_codex": 162,
     "osd_radius": 8, "osd_padding": 0,
     "seg_title_w": 96, "seg_live_w": 96,
     "bar_h": 3,
@@ -170,6 +173,25 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
         seg(xs, mid_w * 2, data.scoped_label.upper(), scoped_pct,
             f"{data.scoped_reset_hrs}h", t["accent2"],
             top=base_bottom, bh=base_h)
+
+    # Codex provider — one extra strip row (CODEX 5H | CODEX 7D side-by-side,
+    # same seg() painter as SESSION | WEEKLY). Gated on codex_available so the
+    # no-Codex strip is byte-for-byte. Drops below the scoped row when present.
+    if data.codex_available:
+        codex_top = base_bottom + (base_h if (scoped_pct is not None
+                                              and getattr(data, "scoped_label", "")) else 0.0)
+        p.setPen(hex_to_qcolor(t["border"]))
+        p.drawLine(QPointF(rect.x() + 4 * s, codex_top),
+                   QPointF(rect.right() - 4 * s, codex_top))
+        seg(xs, mid_w, "CDX 5H", data.codex_session_pct,
+            f"{data.codex_session_reset_min}m", t["accent"],
+            top=codex_top, bh=base_h)
+        p.setPen(hex_to_qcolor(t["border"]))
+        p.drawLine(QPointF(xs + mid_w, codex_top + 4 * s),
+                   QPointF(xs + mid_w, codex_top + base_h - 4 * s))
+        seg(xs + mid_w, mid_w, "CDX 7D", data.codex_weekly_pct,
+            f"{data.codex_weekly_reset_hrs}h", t["accent2"],
+            top=codex_top, bh=base_h)
 
 
 # ---- POPUP ---------------------------------------------------------

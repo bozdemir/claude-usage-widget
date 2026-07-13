@@ -459,18 +459,39 @@ class UsageOverlay(QWidget):
 
     # ------------------------------------------------------------- internals
 
+    def _skin_base_height(self) -> float:
+        """Unscaled OSD height for the active skin, accounting for the optional
+        scoped-cap row and the optional Codex provider rows (5h + 7d).
+
+        ``_apply_size`` (window) and ``paint`` (the rect handed to paint_osd)
+        both derive their height here so they can never disagree — a mismatch
+        would let the extra rows spill outside the painted panel. Skins may
+        declare tuned ``osd_height_codex`` / ``osd_height_scoped_codex`` keys;
+        otherwise each extra row adds the skin's own scoped-row footprint.
+        """
+        m = self._skin.METRICS
+        base = m["osd_height"]
+        row = m.get("osd_height_scoped", base + SCOPED_ROW_HEIGHT) - base
+        scoped = bool(self._scoped_label)
+        codex = bool(self._codex_available)
+        if scoped and codex:
+            return m.get("osd_height_scoped_codex", base + 3 * row)
+        if codex:
+            return m.get("osd_height_codex", base + 2 * row)
+        if scoped:
+            return m.get("osd_height_scoped", base + row)
+        return base
+
     def _apply_size(self) -> None:
         """Resize the window to match ``_scale``, view mode, and chrome state."""
         if self._skin is not None and not self._minimized:
             # Skins declare their own OSD footprint — honour it instead of
             # squeezing the handoff layout into the default's 260×122 box.
-            # When a scoped weekly cap is present the skin draws a third row,
-            # so it exposes a taller "osd_height_scoped" we switch to.
+            # The taller scoped / Codex variants are resolved by
+            # _skin_base_height so the window matches the painted rect.
             m = self._skin.METRICS
             width = int(m["osd_width"] * self._scale)
-            base_h = m["osd_height"]
-            if self._scoped_label:
-                base_h = m.get("osd_height_scoped", m["osd_height"] + SCOPED_ROW_HEIGHT)
+            base_h = self._skin_base_height()
             height = int(base_h * self._scale)
             if self.isVisible():
                 tr = self.frameGeometry().topRight()
@@ -705,14 +726,10 @@ class UsageOverlay(QWidget):
             try:
                 s = self._scale
                 # Paint into the SAME rect height the window was sized to in
-                # _apply_size — the taller osd_height_scoped when a scoped cap
-                # is present — or the skin's panel/ticker only cover the base
-                # height and the third row spills outside the panel.
-                skin_base = self._skin.METRICS["osd_height"]
-                if self._scoped_label:
-                    skin_base = self._skin.METRICS.get(
-                        "osd_height_scoped", skin_base + SCOPED_ROW_HEIGHT)
-                skin_h = int(skin_base * s)
+                # _apply_size — the taller scoped / Codex variants resolved by
+                # _skin_base_height — or the skin's panel/ticker only cover the
+                # base height and the extra rows spill outside the panel.
+                skin_h = int(self._skin_base_height() * s)
                 self._skin.paint_osd(p, QRectF(0, 0, w, skin_h), data, self._scale)
                 # Draw news inside the skin's frame: above the skin's own ticker.
                 if getattr(self._skin, "WANTS_TICKER", False):

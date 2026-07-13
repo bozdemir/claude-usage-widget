@@ -57,6 +57,10 @@ METRICS = {
     # +1 receipt row (fm.height()≈15 + the 16px SESSION→WEEKLY rhythm) for the
     # optional scoped weekly cap; the overlay switches to this when present.
     "osd_height_scoped": 265,
+    # +2 receipt rows for the optional Codex 5h / 7d pair (same ~31px row
+    # rhythm as the scoped cap); scoped_codex stacks all three extra rows.
+    "osd_height_codex": 296,
+    "osd_height_scoped_codex": 327,
     "popup_width": 540, "popup_padding": 26,
     "grain_step_px": 3, "ticker_h": 22,
 }
@@ -167,6 +171,27 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
         p.drawRect(QRectF(x, yy, w, 8 * s))
         p.setPen(Qt.NoPen); p.setBrush(hex_to_qcolor(t["ink"]))
         p.drawRect(QRectF(x, yy, w * data.scoped_pct, 8 * s))
+
+    # CODEX — optional 5h / 7d pair, each mirroring the WEEKLY row exactly.
+    # Gated on codex_available so the no-Codex receipt is byte-for-byte.
+    if data.codex_available:
+        for c_label, c_pct, c_reset in (
+            ("CODEX 5H", data.codex_session_pct, f"{data.codex_session_reset_min}m"),
+            ("CODEX 7D", data.codex_weekly_pct,
+             f"{data.codex_weekly_reset_hrs}h{data.codex_weekly_reset_min}m"),
+        ):
+            yy += 8 * s + 6 * s
+            draw_text(p, x, yy + fm.ascent(), c_label,
+                      hex_to_qcolor(t["ink"]), body_f)
+            right = f"{int(c_pct * 100)}% · {c_reset}"
+            rw = fm.horizontalAdvance(right)
+            draw_text(p, x + w - rw, yy + fm.ascent(), right,
+                      hex_to_qcolor(t["ink"]), body_f)
+            yy += fm.height() + 2 * s
+            p.setPen(hex_to_qcolor(t["rule"])); p.setBrush(hex_to_qcolor(t["bar_track"]))
+            p.drawRect(QRectF(x, yy, w, 8 * s))
+            p.setPen(Qt.NoPen); p.setBrush(hex_to_qcolor(t["ink"]))
+            p.drawRect(QRectF(x, yy, w * c_pct, 8 * s))
 
     # Ticker marquee (between the weekly bar and the thank-you footer).
     yy += 8 * s + 6 * s

@@ -51,7 +51,11 @@ THEME = {
 }
 
 METRICS = {
-    "osd_width": 380, "osd_height": 196, "osd_height_scoped": 256, "osd_radius": 8, "osd_padding": 14,
+    "osd_width": 380, "osd_height": 196, "osd_height_scoped": 256,
+    # +2 rows for the optional Codex 5h / 7d pair (same 60px row footprint as
+    # the scoped cap); scoped_codex stacks all three extra rows.
+    "osd_height_codex": 316, "osd_height_scoped_codex": 376,
+    "osd_radius": 8, "osd_padding": 14,
     "popup_width": 540, "popup_padding": 18,
     "ring_size": 58, "ring_stroke": 6, "row_bar_height": 4,
     "ticker_h": 24,
@@ -134,6 +138,17 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
         rows.append((
             (data.scoped_label or "SCOPED").upper(), data.scoped_pct,
             f"{data.scoped_reset_hrs}h {data.scoped_reset_min}m", t["accent2"],
+        ))
+    # Optional Codex provider — two native rows (5h / 7d) in the same idiom,
+    # gated on codex_available so the no-Codex panel is byte-for-byte unchanged.
+    if data.codex_available:
+        rows.append((
+            "CODEX 5H", data.codex_session_pct,
+            f"{data.codex_session_reset_min}m", t["accent"],
+        ))
+        rows.append((
+            "CODEX 7D", data.codex_weekly_pct,
+            f"{data.codex_weekly_reset_hrs}h {data.codex_weekly_reset_min}m", t["accent2"],
         ))
     y_cursor = y + fm.height() + 8 * s
     fm_metric = QFontMetrics(metric_f)

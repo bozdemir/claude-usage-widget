@@ -59,6 +59,10 @@ METRICS = {
     # + 14px bar + 9pt reset line + spacing) — so the third row drops in below
     # WEEKLY without crowding the ticker strip.
     "osd_height_scoped": 286,
+    # +2 rows for the optional Codex 5h / 7d pair (same ~62px row footprint as
+    # the scoped cap); scoped_codex stacks all three extra rows below WEEKLY.
+    "osd_height_codex": 348,
+    "osd_height_scoped_codex": 410,
 }
 
 FONTS = {"family_mono": "Space Mono", "body_pt": 10, "title_pt": 11}
@@ -150,6 +154,15 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     if data.scoped_pct is not None and data.scoped_label:
         yy = row(yy, data.scoped_label.upper(), data.scoped_pct,
                  f"RESETS {data.scoped_reset_hrs}H {data.scoped_reset_min}M",
+                 t["ink"])
+
+    # Optional Codex provider — two native rows in the SESSION/WEEKLY idiom,
+    # gated on codex_available so the no-Codex panel stays byte-for-byte.
+    if data.codex_available:
+        yy = row(yy, "CODEX 5H", data.codex_session_pct,
+                 f"RESETS {data.codex_session_reset_min}M", t["accent"])
+        yy = row(yy, "CODEX 7D", data.codex_weekly_pct,
+                 f"RESETS {data.codex_weekly_reset_hrs}H {data.codex_weekly_reset_min}M",
                  t["ink"])
 
     # 2px rule above the ticker strip — matches the Swiss-grid section

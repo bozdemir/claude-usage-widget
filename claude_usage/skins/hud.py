@@ -56,6 +56,9 @@ THEME = {
 
 METRICS = {
     "osd_width": 360, "osd_height": 220, "osd_height_scoped": 370,
+    # Codex 5h / 7d render as ONE extra gauge row (a side-by-side pair, like
+    # SESSION/WEEKLY), so codex adds a single 150px gauge row — not two.
+    "osd_height_codex": 370, "osd_height_scoped_codex": 520,
     "osd_radius": 10, "osd_padding": 14,
     "ring_size": 118, "ring_stroke": 10,
     "ring_size_popup": 140, "ring_stroke_popup": 12,
@@ -149,11 +152,13 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     # 270° gauge centred below the SESSION/WEEKLY pair. Present only when the
     # API reports it; otherwise the OSD renders byte-for-byte as before.
     scoped_present = data.scoped_pct is not None
+    codex_present = data.codex_available
 
-    # gauges — equally spaced. When a scoped gauge is present the pair stays
-    # anchored to the original-height centre (top of the taller window) so the
-    # third gauge can sit beneath it and the ticker slides down to the bottom.
-    if scoped_present:
+    # gauges — equally spaced. When a scoped gauge and/or the Codex pair is
+    # present the SESSION/WEEKLY pair stays anchored to the original-height
+    # centre (top of the taller window) so the extra rows sit beneath it and
+    # the ticker slides down to the bottom.
+    if scoped_present or codex_present:
         y_mid = rect.y() + m["osd_height"] * s / 2 + 10 * s
     else:
         y_mid = rect.y() + rect.height() / 2 + 10 * s
@@ -187,6 +192,20 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
         y_scoped = y_mid + (m["osd_height_scoped"] - m["osd_height"]) * s
         paint_gauge(p, cx, y_scoped, data.scoped_pct, scoped_label,
                     f"{data.scoped_reset_hrs}h {data.scoped_reset_min}m", s)
+
+    # Codex provider — one extra gauge row rendered as a CODEX 5H / CODEX 7D
+    # pair in the same two columns as SESSION/WEEKLY, using the identical
+    # renderer/fonts/spacing. Gated on codex_available so the no-Codex OSD is
+    # byte-for-byte. When a scoped gauge is also present the pair drops one
+    # further row beneath it.
+    if codex_present:
+        codex_key = "osd_height_scoped_codex" if scoped_present else "osd_height_codex"
+        y_codex = y_mid + (m[codex_key] - m["osd_height"]) * s
+        paint_gauge(p, rect.x() + third * 0.5, y_codex, data.codex_session_pct,
+                    "CODEX 5H", f"{data.codex_session_reset_min}m", s)
+        paint_gauge(p, rect.x() + third * 2.5, y_codex, data.codex_weekly_pct,
+                    "CODEX 7D",
+                    f"{data.codex_weekly_reset_hrs}h {data.codex_weekly_reset_min}m", s)
 
     # Ticker strip along the bottom — bordered separator + amber-tiered
     # quartile colours matching the cockpit palette.
