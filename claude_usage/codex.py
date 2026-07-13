@@ -47,22 +47,34 @@ def find_codex_bin() -> str | None:
 
 
 def _rate_limits_rpc(codex_bin: str, timeout: float = RPC_TIMEOUT_SECONDS) -> dict[str, Any] | None:
-    """Run one ``account/rateLimits/read`` round-trip against ``codex app-server``."""
+    """Run one ``account/rateLimits/read`` round-trip against ``codex app-server``.
+
+    The read side is hard-bounded by a wall-clock deadline using ``select`` +
+    raw ``os.read`` rather than ``readline``: ``select`` readiness only
+    guarantees at least one byte, so a blocking ``readline`` on a partial line
+    with no trailing newline could block past the deadline and hang the refresh
+    thread — which, via the widget's single-flight ``_refreshing`` latch, would
+    freeze *every* subsequent refresh. Accumulating bytes and splitting on
+    newlines ourselves keeps the whole call bounded at ``timeout`` seconds no
+    matter how the app-server behaves.
+    """
     proc = subprocess.Popen(
         [codex_bin, "app-server"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
-        text=True,
     )
 
     def send(obj: dict[str, Any]) -> None:
         assert proc.stdin is not None
-        proc.stdin.write(json.dumps(obj) + "\n")
+        proc.stdin.write((json.dumps(obj) + "\n").encode("utf-8"))
         proc.stdin.flush()
 
     result: dict[str, Any] | None = None
+    buf = b""
     try:
+        assert proc.stdout is not None
+        fd = proc.stdout.fileno()
         send({
             "jsonrpc": "2.0",
             "id": 1,
@@ -74,33 +86,49 @@ def _rate_limits_rpc(codex_bin: str, timeout: float = RPC_TIMEOUT_SECONDS) -> di
             }},
         })
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline and result is None:
-            assert proc.stdout is not None
-            ready, _, _ = select.select(
-                [proc.stdout], [], [], max(0.0, deadline - time.monotonic()))
+        while result is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            ready, _, _ = select.select([fd], [], [], remaining)
             if not ready:
                 break
-            line = proc.stdout.readline()
-            if not line:
+            chunk = os.read(fd, 65536)
+            if not chunk:  # EOF — app-server exited
                 break
-            try:
-                msg = json.loads(line)
-            except ValueError:
-                continue
-            if msg.get("id") == 1:
-                send({"jsonrpc": "2.0", "method": "initialized"})
-                # The app-server needs a beat between the handshake and the
-                # first real request or it drops it on the floor.
-                time.sleep(0.6)
-                send({"jsonrpc": "2.0", "id": 2,
-                      "method": "account/rateLimits/read", "params": {}})
-            elif msg.get("id") == 2:
-                result = msg.get("result")
+            buf += chunk
+            while b"\n" in buf and result is None:
+                raw, buf = buf.split(b"\n", 1)
+                if not raw.strip():
+                    continue
+                try:
+                    msg = json.loads(raw.decode("utf-8", "replace"))
+                except ValueError:
+                    continue
+                if msg.get("id") == 1:
+                    send({"jsonrpc": "2.0", "method": "initialized"})
+                    # The app-server needs a beat between the handshake and the
+                    # first real request or it drops it on the floor.
+                    time.sleep(0.6)
+                    send({"jsonrpc": "2.0", "id": 2,
+                          "method": "account/rateLimits/read", "params": {}})
+                elif msg.get("id") == 2:
+                    result = msg.get("result")
     finally:
         try:
             proc.kill()
         except OSError:
             pass
+        try:
+            proc.wait(timeout=1)  # reap so we don't leave a zombie
+        except Exception:
+            pass
+        for pipe in (proc.stdin, proc.stdout):
+            try:
+                if pipe is not None:
+                    pipe.close()
+            except OSError:
+                pass
     return result
 
 
