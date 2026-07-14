@@ -3,6 +3,30 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## 0.12.0
+
+### Added
+- **Second provider: OpenAI Codex (opt-in).** Add `"codex"` to the `providers`
+  config and the widget shows your local OpenAI Codex 5h/weekly usage beneath
+  Claude's — two extra bars in bars view, a 2×2 ring grid in gauge — rendered
+  natively in **all 11 themes**. It reads `codex app-server` over JSON-RPC
+  (`account/rateLimits/read`), throttled to `codex_poll_seconds` (default 300 s)
+  with an on-disk cache and a deadline-bounded read that can't hang a refresh;
+  the rows auto-hide when the `codex` CLI is missing, logged out, or returns no
+  data. Off by default, POSIX-only. Thanks @faithpricejp-source (#17/#18/#21).
+- **statusLine-fed rate limits (opt-in).** Point `statusline_cache_path` at a
+  JSON file your Claude Code `statusLine` command dumps its rate-limit payload
+  to, and the widget uses it as a zero-cost, seconds-fresh source: it skips the
+  `/api/oauth/usage` call while the dump is fresh (forcing a real one at most
+  once per `usage_endpoint_min_seconds`) and falls back to it when the endpoint
+  throttles. Off by default. Thanks @faithpricejp-source (#20).
+
+### Fixed
+- **Single-instance guard.** Launching a second `claude-usage` no longer stacks
+  another OSD on top of the first — a per-user `QLockFile` makes the extra
+  launch exit cleanly, and a hard-killed instance's stale lock is reclaimed
+  automatically. Thanks @faithpricejp-source (#19).
+
 ## 0.11.1
 
 ### Fixed
