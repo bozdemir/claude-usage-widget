@@ -88,7 +88,7 @@ TICKER_FRAME_INTERVAL_MS = 40  # ~25 fps — smooth without waking the CPU
 
 # Scroll-wheel scale limits
 SCALE_MIN = 0.6
-SCALE_MAX = 2.0
+SCALE_MAX = 4.0
 SCALE_STEP = 0.1
 
 # Distance the mouse must move between press and release before a left-click
