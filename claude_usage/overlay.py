@@ -660,9 +660,13 @@ class UsageOverlay(QWidget):
                 webbrowser.open(self._latest_news_url)
             else:
                 self.clicked.emit()
-        elif self._dragging:
+        elif self._dragging and not self._system_move_started:
             # Drag finished — remember exactly where the user dropped it as
-            # the new "custom" position so it survives a restart.
+            # the new "custom" position so it survives a restart. Skipped after
+            # a Wayland compositor move (startSystemMove): a Wayland client
+            # can't read its own global position, so frameGeometry would persist
+            # a bogus coordinate — and Wayland ignores absolute positioning
+            # anyway, so there's nothing useful to remember.
             tl = self.frameGeometry().topLeft()
             self._position = OSD_POSITION_CUSTOM
             self._custom_xy = (tl.x(), tl.y())
