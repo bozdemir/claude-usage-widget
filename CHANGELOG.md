@@ -3,7 +3,7 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
-## Unreleased
+## 0.12.1
 
 ### Changed
 - **Scroll-wheel zoom now reaches 4.0×** (was 2.0×) — on hi-DPI / large displays
