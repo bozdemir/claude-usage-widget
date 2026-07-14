@@ -3,6 +3,16 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## 0.12.2
+
+### Fixed
+- **Window dragging on native Wayland.** Under a native Wayland session
+  (`QT_QPA_PLATFORM=wayland`) the OSD couldn't be dragged — Wayland forbids a
+  client moving its own window. It now hands the drag to the compositor via
+  `QWindow.startSystemMove()`, leaving the X11 / macOS / Windows path unchanged.
+  Thanks @hdogan (#23). (The drop position isn't persisted as a "custom" spot on
+  Wayland, since a client can't read its own global coordinates there.)
+
 ## 0.12.1
 
 ### Changed
