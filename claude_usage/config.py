@@ -87,7 +87,7 @@ DEFAULT_CONFIG: Config = {
     # Webhooks (opt-in). Map event -> URL. Supported events:
     #   threshold_crossed, daily_report, anomaly, budget_projection, burn_alert
     "webhooks": {},
-    # Appearance: theme palette name (see themes.py for the 5 ships).
+    # Appearance: theme palette name (see themes.py — 11 in all: 5 classics + 6 skins).
     "theme": "default",
     # Whether the OSD paints a scrolling per-turn cost ticker along the
     # bottom edge. Toggle at runtime via the right-click menu.

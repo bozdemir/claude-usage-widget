@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+- **Scroll-wheel zoom now reaches 4.0×** (was 2.0×) — on hi-DPI / large displays
+  a corner OSD stays readable from across the room. `SCALE_MIN`/`SCALE_STEP`
+  and the default size are unchanged. Thanks @faithpricejp-source (#22).
+
 ## 0.12.0
 
 ### Added

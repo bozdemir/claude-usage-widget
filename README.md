@@ -103,7 +103,7 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 - **Detail popup** -- usage bars, forecast, 5h/7d sparklines, 90-day heatmap, 52-week GitHub-style calendar, per-model cost breakdown, top projects, active sessions (resizable)
 - **Auto-refresh** -- every 60 seconds by default; the interval adapts automatically, backing off up to 300 s when the endpoint rate-limits and snapping back on the next clean refresh (`refresh_seconds` / `refresh_max_seconds`)
 - **Positioning** -- snap the OSD to any screen corner via right-click → "OSD Position", or drag it anywhere; the spot is remembered (`osd_position`, `osd_x`/`osd_y`)
-- **Resizable** -- scroll wheel on the OSD (0.6x -- 2.0x); drag the popup window edges to widen it
+- **Resizable** -- scroll wheel on the OSD (0.6x -- 4.0x); drag the popup window edges to widen it
 - **Draggable** -- left-click drag on the OSD
 - **Cost estimation** -- USD equivalent per model, cache savings, pay-as-you-go comparison for flat-fee subscribers
 - **Usage forecasting** -- burn-rate prediction: "At current rate: 2h 30m to limit"
@@ -119,8 +119,9 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 - **Threshold notifications** -- native desktop notifications on crossing 75% / 90%
 - **Webhooks** -- optional POST to Slack / Discord / custom URLs on threshold, daily, or anomaly events
 - **Localhost JSON API** -- optional `http://127.0.0.1:8765/usage` for tmux / polybar / waybar integrations (prompt previews redacted at the serialization boundary)
-- **CLI mode** -- `--json`, `--field`, `--export csv` for scripts and status bars, plus `--statusline` for Claude Code's built-in [statusLine](docs/integrations/claude-code-statusline.md)
+- **CLI mode** -- `--json`, `--once`, `--field`, `--export csv` for scripts and status bars, plus `--statusline` for Claude Code's built-in [statusLine](docs/integrations/claude-code-statusline.md)
 - **Update notifications** -- a daily background check against the GitHub Releases API; when a newer version is published you get one desktop notification and a banner in the right-click menu (notified once per version, never nagging). The running build's version is also shown at the foot of the menu.
+- **Single-instance guard** -- a second `claude-usage` launch (login item, script, double-click) detects the running one via a per-user lock file and exits cleanly instead of stacking a duplicate OSD; a lock left behind by a crashed instance is reclaimed automatically.
 
 ## Requirements
 
@@ -167,10 +168,11 @@ python3 main.py
 | **Left-click**      | Open the details popup |
 | **Left-click drag** | Move the OSD |
 | **Right-click**     | Open context menu (Details, Refresh, OSD Opacity, OSD View, OSD Position, Theme, Minimize/Restore, Show cost ticker, Show news ticker, Always on top, version, Quit) |
-| **Scroll up / down**| Resize (0.6x -- 2.0x) |
+| **Scroll up / down**| Resize (0.6x -- 4.0x) |
 
 ### Context menu (right-click OSD)
 
+- **(usage summary)** -- a dim, non-clickable header at the top showing your live session/weekly % (with the live token-per-minute rate while a session is writing)
 - **Details…** -- open the detail popup
 - **Refresh** -- force an immediate data refresh
 - **OSD Opacity** -- 100% / 75% / 50% / 25%
@@ -182,6 +184,7 @@ python3 main.py
 - **Show news ticker** -- toggle the Anthropic/Claude news headline strip on the OSD
 - **Always on top** -- keep the OSD pinned above other windows (default), or turn it off to let it sit as a normal background desktop widget the window manager stacks behind your focused windows; persisted
 - **claude-usage v`<version>`** -- a dim, disabled line showing the running build's version; when a newer release is published an **↑ Update available: `<tag>`** item appears above it (click to copy the `pip install --upgrade` command)
+- **Updated `<time>` ago** -- a dim, non-clickable line showing how long since the last successful refresh
 - **Quit** -- exit the widget
 
 ## Statusline-fed rate limits
@@ -255,7 +258,7 @@ cp config.json.example config.json
 | `statusline_cache_path` | `""` | Path to a statusLine-dumped rate-limit JSON file (see [Statusline-fed rate limits](#statusline-fed-rate-limits)). Empty = disabled. |
 | `usage_endpoint_min_seconds` | `300` | With `statusline_cache_path` set: while the dump is seconds-fresh, `/api/oauth/usage` is called at most once per this many seconds. |
 | `osd_opacity` | `0.75` | OSD background opacity (0.15--1.0) |
-| `osd_scale` | `1.0` | OSD scale factor (0.6--2.0) |
+| `osd_scale` | `1.0` | OSD scale factor (0.6--4.0) |
 | `providers` | `["claude"]` | Add `"codex"` to also poll the local OpenAI Codex CLI (`codex app-server`) and show its 5h/weekly usage beneath Claude's — an extra ring row in gauge view, two extra bars in bars view. POSIX-only. |
 | `codex_poll_seconds` | `300` | How often (seconds) to spawn the codex app-server RPC; an on-disk cache is served in between. |
 | `daily_message_limit` | `200` | Daily message limit for local tracking in the popup |
@@ -268,7 +271,7 @@ cp config.json.example config.json
 | `show_news` | `false` | Whether the live Anthropic/Claude news headline strip is shown on the OSD. Off by default because it makes outbound calls to a 3rd-party feed. Toggle at runtime via right-click → "Show news ticker". |
 | `osd_position` | `top-right` | Where the OSD anchors: `top-left`, `top-right`, `bottom-left`, `bottom-right`, or `custom`. Set from right-click → "OSD Position", or automatically to `custom` when you drag the overlay. |
 | `osd_x` / `osd_y` | `null` | Exact screen coordinates used only when `osd_position` is `custom`. Written automatically on drag. |
-| `osd_scale` | `1.0` | OSD zoom level (0.6–2.0). Updated automatically when you scroll the mouse wheel over the OSD, so it reopens at the same size. |
+| `osd_scale` | `1.0` | OSD zoom level (0.6–4.0). Updated automatically when you scroll the mouse wheel over the OSD, so it reopens at the same size. |
 | `osd_minimized` | `false` | Whether the OSD is in its collapsed thin-strip form. Written automatically via right-click → "Minimize / Restore". |
 | `osd_visible` | `true` | Whether the OSD overlay is shown. Written on quit so the widget reopens in the same visible/hidden state. |
 | `osd_always_on_top` | `true` | Keep the OSD pinned above other windows. Set to `false` (or right-click → "Always on top") to let it sit as a normal background desktop widget. |
@@ -283,7 +286,7 @@ cp config.json.example config.json
 | `budget_notify_enabled` / `budget_notify_ratio` | `true` / `1.0` | Whether the budget projection notification fires, and at what fraction of the cap (`0.9` warns at 90%). |
 | `burn_alerts_enabled` | `true` | Real-time OSD badge + debounced notification when the 5h window burns fast or a turn / retry-loop spikes tokens. Tune with `burn_warn_pct_per_min` (`2.0`), `burn_crit_pct_per_min` (`5.0`), `burn_window_seconds` (`600`), `spike_token_multiplier` (`4.0`), `spike_min_tokens` (`20000`), `spike_baseline_min_turns` (`5`), `retry_storm_turns` (`3`), `retry_storm_window_seconds` (`120`), `burn_alert_cooldown_seconds` (`900`). |
 
-Keys omitted from `config.json` fall back to built-in defaults. `claude_dir` is not included in the example file because the default is correct for most setups.
+Keys omitted from `config.json` fall back to built-in defaults, so `config.json.example` is an intentionally minimal starter listing only the most commonly changed keys. Everything else in the table above — the opt-in providers (Codex), statusline/endpoint tuning, the burn / peak / budget alerts, the localhost API, webhooks, and the auto-persisted OSD state — simply uses its default until you add it.
 
 ## Themes
 
@@ -331,7 +334,7 @@ The response also carries a `limits` array with any **model-scoped weekly caps**
 
 Qt's `QWidget` with `FramelessWindowHint | Tool | WindowStaysOnTopHint` plus `WA_TranslucentBackground` gives us a transparent, borderless floating window that behaves identically on X11, XWayland, native Wayland, macOS, and Windows. All drawing goes through `QPainter` (`drawRoundedRect`, `drawText`), so there's a single code path with no platform shims.
 
-**Scale and opacity** -- the overlay stores a `scale` (0.6 -- 2.0, default 1.0) and `opacity` (0.15 -- 1.0, default 0.75). Scale multiplies every pixel dimension before drawing, so the widget resizes proportionally. Opacity is the alpha channel of the background fill only; bar and text remain at full alpha so they stay legible at low opacity.
+**Scale and opacity** -- the overlay stores a `scale` (0.6 -- 4.0, default 1.0) and `opacity` (0.15 -- 1.0, default 0.75). Scale multiplies every pixel dimension before drawing, so the widget resizes proportionally. Opacity is the alpha channel of the background fill only; bar and text remain at full alpha so they stay legible at low opacity.
 
 **Refresh cycle** -- a daemon thread wakes on the poll timer, performs the API call, and emits a Qt signal back to the GUI thread (`Signal(object)`). The GUI thread then updates the OSD and the popup together. The poll interval is adaptive: it runs at `refresh_seconds` (default 60) while refreshes succeed, and backs off exponentially toward `refresh_max_seconds` (default 300) whenever a poll is rate-limited or errors, snapping back to the base on the next clean refresh — Anthropic's `/api/oauth/usage` is a low-budget endpoint shared with Claude Code, so a fixed fast poll against it just prolongs throttling. User interactions (scroll, drag, right-click) update in place and request an immediate repaint.
 

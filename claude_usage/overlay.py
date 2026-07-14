@@ -7,7 +7,7 @@ Interactions:
     Left-click (no drag)  — emit ``clicked`` (opens the detail popup)
     Left-click + drag     — move the overlay
     Right-click           — emit ``rightClicked`` (shows context menu)
-    Scroll wheel          — resize (0.6x -- 2.0x)
+    Scroll wheel          — resize (0.6x -- 4.0x)
     Right-click-drag      — not used
 """
 
