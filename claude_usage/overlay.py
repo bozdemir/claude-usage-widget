@@ -271,6 +271,7 @@ class UsageOverlay(QWidget):
         self._press_pos: QPoint | None = None        # mouse pos on press (global)
         self._press_win_pos: QPoint | None = None    # window pos on press
         self._dragging: bool = False
+        self._system_move_started: bool = False      # wayland fix
 
         # Whether to pin above all other windows. Off => a normal background
         # desktop widget the WM can stack behind focused windows.
@@ -623,6 +624,7 @@ class UsageOverlay(QWidget):
             self._press_pos = event.globalPosition().toPoint()
             self._press_win_pos = self.frameGeometry().topLeft()
             self._dragging = False
+            self._system_move_started = False
         elif event.button() == Qt.RightButton:
             self.rightClicked.emit(event.globalPosition().toPoint())
 
@@ -632,7 +634,11 @@ class UsageOverlay(QWidget):
         delta = event.globalPosition().toPoint() - self._press_pos
         if not self._dragging and (abs(delta.x()) > DRAG_THRESHOLD or abs(delta.y()) > DRAG_THRESHOLD):
             self._dragging = True
-        if self._dragging and self._press_win_pos is not None:
+            if QApplication.platformName().startswith("wayland"):
+                window = self.windowHandle()
+                if window is not None:
+                    self._system_move_started = window.startSystemMove()
+        if self._dragging and not self._system_move_started and self._press_win_pos is not None:
             self.move(self._press_win_pos + delta)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
@@ -664,6 +670,7 @@ class UsageOverlay(QWidget):
         self._press_pos = None
         self._press_win_pos = None
         self._dragging = False
+        self._system_move_started = False
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         """Mouse wheel rescales the OSD; disabled while minimized so the
