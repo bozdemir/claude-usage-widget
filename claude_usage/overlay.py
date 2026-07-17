@@ -282,9 +282,8 @@ class UsageOverlay(QWidget):
         self.setWindowFlags(self._window_flags())
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
-        # NET_WM hint: tell the window manager this is a Notification, so dock
-        # / taskbar / Alt-Tab overlays all skip it.
-        self.setAttribute(Qt.WA_X11NetWmWindowTypeNotification, True)
+        # NET_WM window type — conditional on the pin state, see the method.
+        self._apply_window_type_attr()
         # macOS hides Qt.Tool windows whenever the owning app is deactivated
         # (i.e. you click another app), so the OSD would silently vanish on
         # focus loss even though the process keeps running. This attribute
@@ -589,6 +588,23 @@ class UsageOverlay(QWidget):
             flags |= Qt.WindowStaysOnTopHint | Qt.BypassWindowManagerHint
         return flags
 
+    def _apply_window_type_attr(self) -> None:
+        """Type the native window to match the always-on-top setting.
+
+        ``_NET_WM_WINDOW_TYPE_NOTIFICATION`` keeps the OSD out of the dock /
+        taskbar / Alt-Tab, but X11 window managers ALSO stack notification
+        windows in a layer above normal ones. Setting it unconditionally
+        therefore pinned the OSD on top even with always-on-top off, silently
+        overriding the setting issue #13 added (dropping the Bypass and
+        StaysOnTop flags there was necessary but not sufficient). ``Qt.Tool``
+        already types the window ``_NET_WM_WINDOW_TYPE_UTILITY``, which
+        taskbars skip just the same, so when unpinned we drop the Notification
+        type and let the WM stack us like any normal window.
+        """
+        self.setAttribute(
+            Qt.WA_X11NetWmWindowTypeNotification, self._always_on_top
+        )
+
     def set_always_on_top(self, on: bool) -> None:
         """Pin the OSD above other windows, or release it to normal stacking.
 
@@ -607,7 +623,7 @@ class UsageOverlay(QWidget):
         # Alt-Tab, and losing the Mac hint makes it vanish on focus loss.
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
-        self.setAttribute(Qt.WA_X11NetWmWindowTypeNotification, True)
+        self._apply_window_type_attr()
         self.setAttribute(Qt.WA_MacAlwaysShowToolWindow, True)
         if was_visible:
             self.show()

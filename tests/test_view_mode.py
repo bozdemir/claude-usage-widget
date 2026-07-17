@@ -105,6 +105,35 @@ class TestAlwaysOnTop(unittest.TestCase):
             self.assertTrue(ov.windowFlags() & Qt.FramelessWindowHint)
             self.assertTrue(ov.windowFlags() & Qt.Tool)
 
+    def test_window_type_follows_pin_state(self) -> None:
+        """_NET_WM_WINDOW_TYPE_NOTIFICATION makes X11 WMs stack a window above
+        normal ones, so it has to track the pin state. Setting it
+        unconditionally kept the OSD on top even when unpinned — dropping the
+        StaysOnTop/Bypass flags alone was not enough."""
+        pinned = UsageOverlay({"osd_always_on_top": True})
+        self.assertTrue(
+            pinned.testAttribute(Qt.WA_X11NetWmWindowTypeNotification)
+        )
+        unpinned = UsageOverlay({"osd_always_on_top": False})
+        self.assertFalse(
+            unpinned.testAttribute(Qt.WA_X11NetWmWindowTypeNotification)
+        )
+
+    def test_toggle_round_trips_window_type(self) -> None:
+        ov = UsageOverlay({})
+        ov.set_always_on_top(False)
+        self.assertFalse(ov.testAttribute(Qt.WA_X11NetWmWindowTypeNotification))
+        ov.set_always_on_top(True)
+        self.assertTrue(ov.testAttribute(Qt.WA_X11NetWmWindowTypeNotification))
+
+    def test_toggle_keeps_translucency_and_mac_hint(self) -> None:
+        """setWindowFlags re-creates the native window and can drop attributes
+        with native effects — losing translucency paints an opaque black box."""
+        ov = UsageOverlay({})
+        ov.set_always_on_top(False)
+        self.assertTrue(ov.testAttribute(Qt.WA_TranslucentBackground))
+        self.assertTrue(ov.testAttribute(Qt.WA_MacAlwaysShowToolWindow))
+
 
 if __name__ == "__main__":
     unittest.main()

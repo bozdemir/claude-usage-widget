@@ -3,6 +3,21 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## 0.12.3
+
+### Fixed
+- **"Always on top" did nothing on X11 — and the menu looked out of sync.**
+  The OSD was unconditionally typed `_NET_WM_WINDOW_TYPE_NOTIFICATION` to keep
+  it out of the dock / taskbar / Alt-Tab, but X11 window managers also stack
+  notification windows in a layer *above* normal ones. So turning the toggle
+  off left the OSD pinned on top regardless, and the right-click menu — which
+  correctly showed the setting as off — read as "wrong" against a window that
+  refused to sink. Dropping the `WindowStaysOnTopHint`/`BypassWindowManagerHint`
+  flags in 0.9.1 (#13) was necessary but not sufficient. The window type now
+  tracks the setting: `Notification` when pinned, and unpinned it falls back to
+  the `_NET_WM_WINDOW_TYPE_UTILITY` that `Qt.Tool` already sets — which
+  taskbars skip just the same, so nothing is lost but the pin.
+
 ## 0.12.2
 
 ### Fixed
