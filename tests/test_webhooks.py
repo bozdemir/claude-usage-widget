@@ -48,6 +48,29 @@ class TestWebhookDispatcher(unittest.TestCase):
         self._wait_for_dispatch()
         self.assertFalse(self.sent)
 
+    def test_every_advertised_event_actually_fires(self):
+        """Every event the widget fires anywhere must pass the KNOWN_EVENTS
+        gate. budget_projection and burn_alert shipped in 0.11.0 but were
+        never added to KNOWN_EVENTS, so fire() silently dropped them and the
+        advertised webhooks never sent a single request."""
+        advertised = (
+            "threshold_crossed",
+            "daily_report",
+            "anomaly",
+            "budget_projection",
+            "burn_alert",
+        )
+        cfg = {ev: f"https://example.com/{ev}" for ev in advertised}
+        d = WebhookDispatcher(cfg, sender=self.sender)
+        for ev in advertised:
+            d.fire(ev, {"probe": ev})
+        for _ in range(50):
+            if len(self.sent) >= len(advertised):
+                break
+            time.sleep(0.01)
+        fired = sorted(payload["event"] for _, payload in self.sent)
+        self.assertEqual(fired, sorted(advertised))
+
     def test_sender_failure_does_not_raise(self):
         bad_sender = MagicMock(side_effect=RuntimeError("network down"))
         d = WebhookDispatcher(self.cfg, sender=bad_sender)

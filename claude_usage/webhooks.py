@@ -1,4 +1,4 @@
-"""Webhook dispatcher for usage events (threshold, daily, anomaly).
+"""Webhook dispatcher for usage events (threshold, daily, anomaly, budget, burn).
 
 Uses urllib so we don't pull in ``requests`` as a runtime dependency. All
 dispatches run in a daemon thread; network errors are swallowed so a
@@ -14,7 +14,13 @@ from typing import Any, Callable
 from urllib.request import Request, urlopen
 
 
-KNOWN_EVENTS = ("threshold_crossed", "daily_report", "anomaly")
+KNOWN_EVENTS = (
+    "threshold_crossed",
+    "daily_report",
+    "anomaly",
+    "budget_projection",
+    "burn_alert",
+)
 
 
 def _default_sender(url: str, payload: dict) -> None:
