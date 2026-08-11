@@ -92,6 +92,9 @@ DEFAULT_CONFIG: Config = {
     # Whether the OSD paints a scrolling per-turn cost ticker along the
     # bottom edge. Toggle at runtime via the right-click menu.
     "show_ticker": True,
+    # News ticker (opt-in): a second strip with Anthropic/Claude headlines.
+    # Off by default because it calls out to a third-party feed.
+    "show_news": False,
     # OSD view mode — "bars" (default) or "gauge". See overlay.VIEW_MODES.
     "osd_view_mode": "bars",
     # Where the OSD anchors on screen. One of the four corners, or "custom"

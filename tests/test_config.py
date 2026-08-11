@@ -32,6 +32,15 @@ class TestDefaultConfig(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertIn(key, DEFAULT_CONFIG)
 
+    def test_both_ticker_toggles_have_defaults(self) -> None:
+        """show_news is read via cfg.get() all over the codebase and is
+        documented as a config key, so it must exist in DEFAULT_CONFIG just
+        like show_ticker — otherwise example/config generators skip it."""
+        self.assertIn("show_ticker", DEFAULT_CONFIG)
+        self.assertIn("show_news", DEFAULT_CONFIG)
+        self.assertTrue(DEFAULT_CONFIG["show_ticker"])
+        self.assertFalse(DEFAULT_CONFIG["show_news"])
+
     def test_has_osd_keys(self) -> None:
         """DEFAULT_CONFIG includes osd_opacity and osd_scale with their expected default values."""
         self.assertIn("osd_opacity", DEFAULT_CONFIG)

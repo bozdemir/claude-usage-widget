@@ -11,5 +11,6 @@
     "notify_thresholds": [0.75, 0.90],
     "theme": "default",
     "show_ticker": true,
+    "show_news": false,
     "osd_view_mode": "bars"
 }
