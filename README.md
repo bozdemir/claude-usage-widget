@@ -2,6 +2,8 @@
 
 A cross-platform desktop widget that displays your Claude Code usage limits in real time. Always-on-top OSD overlay showing session and weekly utilization — built with PySide6 (Qt), so a single `pip install` works on Linux, macOS, and Windows.
 
+![PyPI](https://img.shields.io/pypi/v/claude-usage-widget)
+![Tests](https://github.com/bozdemir/claude-usage-widget/actions/workflows/tests.yml/badge.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)
 ![Python](https://img.shields.io/badge/python-3.10+-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
@@ -99,7 +101,7 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 - **Live token stream** -- `● LIVE 5.3k tok/min` badge on the OSD while a Claude Code session is actively writing, derived from the conversation JSONLs
 - **Per-turn cost ticker** -- a scrolling strip at the bottom of the OSD shows the USD cost of each assistant turn as it lands (`$0.156 ← Bash · 116`), colour-coded by quartile within the visible window so the tape always stays visually varied. Toggle via right-click → "Show cost ticker" or set `"show_ticker": false` in `config.json`.
 - **Live news ticker (opt-in)** -- a second scrolling strip shows the latest Anthropic/Claude headlines sourced from Hacker News (top stories with 50+ upvotes). Fetched lazily, cached locally for 1 hour. Click the strip to open the article in your browser. **Off by default** because it makes outbound calls to a 3rd-party feed; enable via right-click → "Show news ticker" or set `"show_news": true` in `config.json`.
-- **Subagent rozet** -- when you spawn parallel subagents via the Task tool, the `CLAUDE` title gets a `⚙ N` counter next to it showing how many are currently writing. Hidden when zero so single-session use isn't cluttered.
+- **Subagent badge** -- when you spawn parallel subagents via the Task tool, the `CLAUDE` title gets a `⚙ N` counter next to it showing how many are currently writing. Hidden when zero so single-session use isn't cluttered.
 - **Detail popup** -- usage bars, forecast, 5h/7d sparklines, 90-day heatmap, 52-week GitHub-style calendar, per-model cost breakdown, top projects, active sessions (resizable)
 - **Auto-refresh** -- every 60 seconds by default; the interval adapts automatically, backing off up to 300 s when the endpoint rate-limits and snapping back on the next clean refresh (`refresh_seconds` / `refresh_max_seconds`)
 - **Positioning** -- snap the OSD to any screen corner via right-click → "OSD Position", or drag it anywhere; the spot is remembered (`osd_position`, `osd_x`/`osd_y`)
@@ -112,14 +114,14 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 - **AI-generated weekly report** -- Claude Haiku writes a 3-4 sentence summary of your past week of usage (cached 1h; never leaks prompt text)
 - **Anomaly detection** -- flags days whose utilisation exceeds the 7/90-day baseline
 - **Cost optimisation tips** -- suggests cache-hit-rate improvements and model-mix changes
-- **Real-time burn/spike alerts** -- a bright OSD badge (`▲42%` / `▲SPIKE` / `▲STORM`) plus a debounced, once-per-episode notification when your 5-hour window burns abnormally fast or a single turn / retry-loop spikes tokens
+- **Real-time burn/spike alerts** -- a bright OSD badge (`▲42%` / `▲SPIKE` / `▲STORM`) plus a debounced, once-per-episode notification when your 5-hour window burns abnormally fast or a single turn / retry-loop spikes tokens. The badge renders on the 5 classic themes for now; notifications and the `burn_alert` webhook fire on all 11
 - **Peak-window awareness** -- an unobtrusive popup hint during Anthropic's weekday reduced-limit window (default ~5–11 AM Pacific; fully configurable)
 - **Monthly budget** -- optional spend cap: set `monthly_budget_usd` to see month-to-date + projected end-of-month spend in the popup and get a once-per-month heads-up when you're on track to exceed it
 - **Themes** -- 11 in all: 5 classic palettes (default, catppuccin-mocha, dracula, nord, gruvbox-dark) plus 6 designed skins (terminal, dashboard, hud, receipt, strip, brutalist)
 - **Threshold notifications** -- native desktop notifications on crossing 75% / 90%
-- **Webhooks** -- optional POST to Slack / Discord / custom URLs on threshold, daily, or anomaly events
+- **Webhooks** -- optional POST to Slack / Discord / custom URLs on threshold, daily-report, anomaly, budget-projection, or burn-alert events
 - **Localhost JSON API** -- optional `http://127.0.0.1:8765/usage` for tmux / polybar / waybar integrations (prompt previews redacted at the serialization boundary)
-- **CLI mode** -- `--json`, `--once`, `--field`, `--export csv` for scripts and status bars, plus `--statusline` for Claude Code's built-in [statusLine](docs/integrations/claude-code-statusline.md)
+- **CLI mode** -- `--json`, `--once`, `--field`, `--export csv|json` (with `--days N`, default 30) for scripts and status bars, plus `--statusline` for Claude Code's built-in [statusLine](docs/integrations/claude-code-statusline.md)
 - **Update notifications** -- a daily background check against the GitHub Releases API; when a newer version is published you get one desktop notification and a banner in the right-click menu (notified once per version, never nagging). The running build's version is also shown at the foot of the menu.
 - **Single-instance guard** -- a second `claude-usage` launch (login item, script, double-click) detects the running one via a per-user lock file and exits cleanly instead of stacking a duplicate OSD; a lock left behind by a crashed instance is reclaimed automatically.
 
@@ -135,11 +137,37 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 ```bash
 pip install --user --upgrade claude-usage-widget
 claude-usage              # launches the OSD overlay (foreground)
-claude-usage --detach     # …or run it in the background and free the shell
+claude-usage --detach     # …or run it in the background and free the shell (Linux/macOS; on Windows use Start-Process or pythonw)
 claude-usage --version    # 0.12.3
 ```
 
 That's it — no `apt`, no `brew`, no PyGObject, no rumps. `pip` pulls in just two pure-Python wheels (PySide6-Essentials, which ships Qt, and certifi for HTTPS), so the widget is self-contained with zero system libraries.
+
+<details>
+<summary><b>Autostart on login</b> (desktop entry or systemd user service)</summary>
+
+Add `claude-usage --detach` to your desktop environment's autostart (KDE/GNOME: *Autostart* settings — make sure the entry points at the venv/pip path that actually has the widget installed), or use a systemd user service:
+
+```ini
+# ~/.config/systemd/user/claude-usage.service
+[Unit]
+Description=Claude Usage Widget
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/claude-usage
+Restart=on-failure
+
+[Install]
+WantedBy=graphical-session.target
+```
+
+```bash
+systemctl --user enable --now claude-usage
+```
+
+The single-instance guard makes double-starts harmless — a second launch just exits.
+</details>
 
 ### macOS (Homebrew — optional)
 
@@ -183,7 +211,7 @@ python3 main.py
 - **Show cost ticker** -- toggle the scrolling per-turn cost strip on the OSD
 - **Show news ticker** -- toggle the Anthropic/Claude news headline strip on the OSD
 - **Always on top** -- keep the OSD pinned above other windows (default), or turn it off to let it sit as a normal background desktop widget the window manager stacks behind your focused windows; persisted
-- **claude-usage v`<version>`** -- a dim, disabled line showing the running build's version; when a newer release is published an **↑ Update available: `<tag>`** item appears above it (click to copy the `pip install --upgrade` command)
+- **claude-usage v`<version>`** -- a dim, disabled line showing the running build's version; when a newer release is published an **↑ Update available: `<tag>`** banner appears at the top of the menu, under the usage summary (click to copy the `pip install --upgrade` command)
 - **Updated `<time>` ago** -- a dim, non-clickable line showing how long since the last successful refresh
 - **Quit** -- exit the widget
 
@@ -258,7 +286,6 @@ cp config.json.example config.json
 | `statusline_cache_path` | `""` | Path to a statusLine-dumped rate-limit JSON file (see [Statusline-fed rate limits](#statusline-fed-rate-limits)). Empty = disabled. |
 | `usage_endpoint_min_seconds` | `300` | With `statusline_cache_path` set: while the dump is seconds-fresh, `/api/oauth/usage` is called at most once per this many seconds. |
 | `osd_opacity` | `0.75` | OSD background opacity (0.15--1.0) |
-| `osd_scale` | `1.0` | OSD scale factor (0.6--4.0) |
 | `providers` | `["claude"]` | Add `"codex"` to also poll the local OpenAI Codex CLI (`codex app-server`) and show its 5h/weekly usage beneath Claude's — an extra ring row in gauge view, two extra bars in bars view. POSIX-only. |
 | `codex_poll_seconds` | `300` | How often (seconds) to spawn the codex app-server RPC; an on-disk cache is served in between. |
 | `daily_message_limit` | `200` | Daily message limit for local tracking in the popup |
@@ -315,6 +342,8 @@ Available themes (gallery above):
 - **strip** -- cool mint on mono-gray, ultra-compact menu-bar vibe
 - **brutalist** -- white, heavy rules, one crimson accent (light)
 
+Every theme also styles the detail popup — see [`screenshots/popup-<theme>.png`](screenshots/) for each one.
+
 ## How It Works
 
 The widget reads your Claude Code OAuth token using the same lookup order as Claude Code itself — the `CLAUDE_CODE_OAUTH_TOKEN` environment variable, then `~/.claude/.credentials.json`, then (macOS only) the Keychain — and calls Claude Code's own `/api/oauth/usage` endpoint, the same one the Claude UI uses, to read your plan-level utilization:
@@ -326,13 +355,13 @@ The widget reads your Claude Code OAuth token using the same lookup order as Cla
 }
 ```
 
-These are the same values shown on the [claude.ai usage page](https://claude.ai/settings/usage). (A tiny `/v1/messages` call that reads `anthropic-ratelimit-*` headers remains as a fallback if the OAuth endpoint is unreachable.) The widget also reads local data from `~/.claude/` for message counts, token usage per model, and active session tracking.
+These are the same values shown on the [claude.ai usage page](https://claude.ai/settings/usage). (A tiny `/v1/messages` call that reads `anthropic-ratelimit-*` headers remains as a fallback, but only when an API key is in use — with an OAuth token, the normal case, an unreachable endpoint falls back to the last-known on-disk samples instead.) The widget also reads local data from `~/.claude/` for message counts, token usage per model, and active session tracking.
 
 The response also carries a `limits` array with any **model-scoped weekly caps** (e.g. a separate "Fable" weekly limit). The widget surfaces the highest-utilised scoped cap as an auto-appearing third bar, labelled by the model's display name; when the API stops reporting it the bar disappears on its own.
 
 ### How the OSD works
 
-Qt's `QWidget` with `FramelessWindowHint | Tool | WindowStaysOnTopHint` plus `WA_TranslucentBackground` gives us a transparent, borderless floating window that behaves identically on X11, XWayland, native Wayland, macOS, and Windows. All drawing goes through `QPainter` (`drawRoundedRect`, `drawText`), so there's a single code path with no platform shims.
+Qt's `QWidget` with `FramelessWindowHint | Tool | WindowDoesNotAcceptFocus` plus `WA_TranslucentBackground` gives us a transparent, borderless floating window (`WindowStaysOnTopHint` and the X11 notification window type are added only while "Always on top" is enabled). All drawing goes through `QPainter` (`drawRoundedRect`, `drawText`), so there's a single code path with no platform shims. On Linux the widget defaults to `QT_QPA_PLATFORM=xcb` (X11/XWayland); under a native Wayland session dragging still works — the compositor moves the window via `startSystemMove()` — but the dropped position can't be persisted, since Wayland doesn't let a client read its own screen coordinates. Corner presets work everywhere.
 
 **Scale and opacity** -- the overlay stores a `scale` (0.6 -- 4.0, default 1.0) and `opacity` (0.15 -- 1.0, default 0.75). Scale multiplies every pixel dimension before drawing, so the widget resizes proportionally. Opacity is the alpha channel of the background fill only; bar and text remain at full alpha so they stay legible at low opacity.
 
@@ -346,9 +375,9 @@ The OSD renders a `● LIVE 5.3k tok/min` badge when a Claude Code session is ac
 
 A thin scrolling strip along the bottom of the OSD shows the USD cost of each assistant turn as it lands (`$0.156 ← Bash · 116`). The same JSONL scan that powers the live-tokens badge reads `usage.{input, output, cache_read, cache_creation}_tokens` from each unique message (dedup'd by Anthropic's `message.id`) and multiplies by the Anthropic-published rates in `pricing.py`. Multi-tool turns collapse to a compact `Read+2` label. Items are colour-coded by quartile rank within the current 40-item buffer (dim → blue → amber → red), so you always see four tiers regardless of whether you're on Haiku, Sonnet, or Opus — the tape stays meaningful when every turn happens to land in a narrow dollar band. Disable with the right-click menu or `show_ticker: false` in `config.json`.
 
-### Subagent rozet
+### Subagent badge
 
-Right next to the `CLAUDE` title, a `⚙ N` badge shows how many Task-tool subagents are actively writing. Detection is a stat-only glob of `~/.claude/projects/<proj>/<uuid>/subagents/agent-*.jsonl` filtered to files whose mtime is within the last 60 s — no file contents opened, negligible cost on every refresh. The rozet is hidden when the count is zero so single-session users aren't nagged by a permanent `⚙ 0`.
+Right next to the `CLAUDE` title, a `⚙ N` badge shows how many Task-tool subagents are actively writing. Detection is a stat-only glob of `~/.claude/projects/<proj>/<uuid>/subagents/agent-*.jsonl` filtered to files whose mtime is within the last 60 s — no file contents opened, negligible cost on every refresh. The badge is hidden when the count is zero so single-session users aren't nagged by a permanent `⚙ 0`.
 
 ### Prompt-cache opportunities
 
@@ -367,6 +396,9 @@ GitHub-style yearly activity grid below the 90-day strip. Rows are weekdays (Sun
 ### OSD not visible
 - Check if the process is running: `ps aux | grep claude-usage` (Linux/macOS) or the Task Manager (Windows).
 - Try launching from a terminal: `claude-usage` — any startup error prints to stderr.
+- If you started it with `--detach`, check the log: `tail ~/.cache/claude-usage/widget.log`.
+- It may simply be off-screen — right-click the tray/any visible part → **OSD Position ▸ Top Right** to snap it back (custom drag positions are clamped to a visible screen, but a resolution change can still tuck it into a corner).
+- Already running? The single-instance guard makes a second launch print nothing and exit — look for the existing OSD instead.
 
 ### Linux: `qt.qpa.plugin: Could not load the Qt platform plugin "xcb"`
 Qt 6.5+ needs one tiny system library that ships separately from the wheel:
@@ -392,12 +424,30 @@ sudo pacman -S libnotify          # Arch
 ### Status shows "Rate limited"
 The usage figures come from Anthropic's `/api/oauth/usage` endpoint, a low-budget endpoint shared with Claude Code. Polling it too often can trip its rate limit; the widget handles this gracefully (it keeps showing your last-known numbers and backs the poll interval off automatically), so it's harmless. If you see it a lot, raise `refresh_seconds` in `config.json`.
 
+## FAQ
+
+**Does it need an API key?**
+No. It reuses the OAuth token Claude Code already created (env var → `~/.claude/.credentials.json` → macOS Keychain). If the `claude` CLI works, the widget works; it never has credentials of its own.
+
+**Does it cost me anything / use my token budget?**
+The usage fetch hits a lightweight status endpoint, not a model. The only feature that calls a model is the AI weekly report (one short Claude Haiku call, cached for an hour) — and it silently no-ops without a token.
+
+**Does it send my prompts or data anywhere?**
+Prompts, no — raw prompt text is redacted from the CLI, `--statusline`, and the localhost API. Network-wise it talks to Anthropic (the same endpoints Claude Code uses) plus two non-Anthropic calls you control: a once-daily version check against the GitHub Releases API (metadata only; on by default, it's how update notifications work) and the opt-in news ticker / webhooks (off unless you enable them).
+
+**How is this different from the claude.ai usage page?**
+Same numbers, always-on-top, no browser — plus live tokens/min, a per-turn cost ticker, forecasts, heatmaps, per-model cost breakdown, an AI weekly summary, CLI/API surfaces, and webhooks.
+
+**How do I update?**
+`pip install --user --upgrade claude-usage-widget` (or `brew upgrade claude-usage-widget`), then restart the widget. An *Update available* banner also appears in the right-click menu when a new release lands.
+
 ## Contributing
 
 Contributions are welcome. A few guidelines:
 
 - **Bug reports** — open an issue with your OS, Python version, and the full error output.
 - **Pull requests** — keep changes focused. One fix or feature per PR. Run the widget manually before submitting.
+- **Tests** — run the suite headless with `QT_QPA_PLATFORM=offscreen python -m pytest -q` (install `pytest` first) and add a test when you change behavior. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full dev setup.
 - **Minimal runtime dependencies** — just PySide6-Essentials (Qt) and certifi (HTTPS CA bundle). No system libraries, no PyGObject/rumps; everything else uses the Python stdlib and platform-native CLIs. PRs that add heavier deps will be asked to make them optional.
 - **Code style** — follow the existing conventions. No formatter is enforced; just match the surrounding code.
 
