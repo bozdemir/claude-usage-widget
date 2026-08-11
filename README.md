@@ -398,7 +398,7 @@ GitHub-style yearly activity grid below the 90-day strip. Rows are weekdays (Sun
 - Try launching from a terminal: `claude-usage` — any startup error prints to stderr.
 - If you started it with `--detach`, check the log: `tail ~/.cache/claude-usage/widget.log`.
 - It may simply be off-screen — right-click the tray/any visible part → **OSD Position ▸ Top Right** to snap it back (custom drag positions are clamped to a visible screen, but a resolution change can still tuck it into a corner).
-- Already running? The single-instance guard makes a second launch print nothing and exit — look for the existing OSD instead.
+- Already running? The single-instance guard makes a second launch print `claude-usage is already running; exiting.` to stderr and quit — look for the existing OSD instead. If a hidden or stuck instance is holding the lock, clear it with `pkill -f claude-usage` and relaunch.
 
 ### Linux: `qt.qpa.plugin: Could not load the Qt platform plugin "xcb"`
 Qt 6.5+ needs one tiny system library that ships separately from the wheel:
@@ -421,6 +421,9 @@ sudo pacman -S libnotify          # Arch
 - The OAuth token is loaded in this order: the `CLAUDE_CODE_OAUTH_TOKEN` environment variable, then `~/.claude/.credentials.json`, then (macOS only) the login Keychain.
 - **macOS — blank session/weekly with "No credentials":** Claude Code often stores the token only in the Keychain, and a GUI launch (Finder / Homebrew / a login item) may not have access to it. Launch `claude-usage` once from a Terminal and click **Always Allow** on the Keychain prompt, or export `CLAUDE_CODE_OAUTH_TOKEN`.
 
+### Codex rows disappeared
+The opt-in Codex rows auto-hide whenever `codex app-server` returns no rate-limit data. The most common cause is an expired OpenAI token — run `codex login` and the rows come back on the next poll. They also stay hidden when the `codex` CLI isn't on `PATH`, and on Windows (the provider is POSIX-only).
+
 ### Status shows "Rate limited"
 The usage figures come from Anthropic's `/api/oauth/usage` endpoint, a low-budget endpoint shared with Claude Code. Polling it too often can trip its rate limit; the widget handles this gracefully (it keeps showing your last-known numbers and backs the poll interval off automatically), so it's harmless. If you see it a lot, raise `refresh_seconds` in `config.json`.
 
@@ -433,7 +436,7 @@ No. It reuses the OAuth token Claude Code already created (env var → `~/.claud
 The usage fetch hits a lightweight status endpoint, not a model. The only feature that calls a model is the AI weekly report (one short Claude Haiku call, cached for an hour) — and it silently no-ops without a token.
 
 **Does it send my prompts or data anywhere?**
-Prompts, no — raw prompt text is redacted from the CLI, `--statusline`, and the localhost API. Network-wise it talks to Anthropic (the same endpoints Claude Code uses) plus two non-Anthropic calls you control: a once-daily version check against the GitHub Releases API (metadata only; on by default, it's how update notifications work) and the opt-in news ticker / webhooks (off unless you enable them).
+Prompts, no — raw prompt text is redacted from the CLI, `--statusline`, and the localhost API. Network-wise it talks to Anthropic (the same endpoints Claude Code uses) plus two kinds of non-Anthropic calls: a once-daily version check against the GitHub Releases API (metadata only, best-effort — this is how update notifications work) and the opt-in news ticker / webhooks (off unless you enable them).
 
 **How is this different from the claude.ai usage page?**
 Same numbers, always-on-top, no browser — plus live tokens/min, a per-turn cost ticker, forecasts, heatmaps, per-model cost breakdown, an AI weekly summary, CLI/API surfaces, and webhooks.
