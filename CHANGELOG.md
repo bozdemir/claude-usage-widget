@@ -3,6 +3,31 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## 0.12.4
+
+### Fixed
+- **`budget_projection` and `burn_alert` webhooks actually fire.** Both were
+  advertised in 0.11.0, but `KNOWN_EVENTS` was never extended and the
+  dispatcher silently drops unknown events — so neither webhook ever sent a
+  single request. Found by a documentation audit cross-checking the config
+  comment against the dispatcher; a regression test now pins every advertised
+  event to the gate.
+- **`show_news` added to `DEFAULT_CONFIG`** — it was the only documented key
+  missing from the defaults dict (runtime behavior was already correct via
+  `cfg.get` fallbacks; now `config.json.example` and the defaults agree).
+
+### Docs
+- **The GitHub wiki is retired** to a single pointer page — it had drifted
+  several releases behind the README and started giving wrong answers. Its
+  unique content moved into the repo first: an expanded README (FAQ section
+  with a corrected privacy answer, systemd/autostart recipe, off-screen and
+  Codex troubleshooting entries), `CONTRIBUTING.md`, `SECURITY.md`,
+  issue/PR templates, and `docs/RELEASING.md` (maintainer checklist,
+  replacing `docs/homebrew.md` and fixing its wrong sdist filename in the
+  sha256 step). ~40 more stale spots fixed across README (stray Turkish
+  heading, duplicate config row, outdated window-flag/Wayland/fallback
+  claims). CI now runs the suite on Python 3.10–3.12 for every push and PR.
+
 ## 0.12.3
 
 ### Fixed
