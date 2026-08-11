@@ -115,7 +115,7 @@ class TestCalculateCostUnknownModel:
         assert _approx(result["input"], 5.0)
         assert _approx(result["output"], 25.0)
         # The warning should name the Opus family fallback, not Sonnet.
-        assert any("claude-opus-4-8" in str(w.message) for w in caught)
+        assert any("claude-opus-5" in str(w.message) for w in caught)
 
     def test_opus_4_8_is_tabled_at_opus_rates_without_warning(self):
         """claude-opus-4-8 is now an exact table entry: $5/$25, no warning."""
@@ -125,6 +125,17 @@ class TestCalculateCostUnknownModel:
         assert _approx(result["input"], 5.0)
         assert _approx(result["output"], 25.0)
         assert not any(issubclass(w.category, UserWarning) for w in caught)
+
+    def test_opus_5_is_tabled_at_opus_rates_without_warning(self):
+        """claude-opus-5 (launched Aug 2026) is an exact table entry: $5/$25 —
+        same tier as Opus 4.8. Before it was tabled it fell through the family
+        fallback, which happened to price it right but warned on every refresh."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = calculate_cost("claude-opus-5", 1_000_000, 1_000_000)
+        assert _approx(result["input"], 5.0)
+        assert _approx(result["output"], 25.0)
+        assert not caught
 
     def test_fable_5_is_priced_above_sonnet(self):
         """Fable 5 is a premium tier ($10/$50) — it must NOT be billed at the

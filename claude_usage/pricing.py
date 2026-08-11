@@ -29,6 +29,17 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
         "cache_read": 0.50,
         "cache_creation": 6.25,
     },
+    # Opus 5 (launched Aug 2026): a drop-in successor to Opus 4.8 at the SAME
+    # $5/$25 tier — the one recent flagship whose fallback pricing happened to
+    # be right. Tabled explicitly anyway: exact entries silence the unknown-
+    # model warning and don't break if the family fallback target ever moves.
+    # (Fast mode bills $10/$50 but shares the model id; we price standard.)
+    "claude-opus-5": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.50,
+        "cache_creation": 6.25,
+    },
     # Opus 4.7 (July 2026): $5 input, $25 output — consistent across
     # Anthropic API, Bedrock, Vertex AI, and Foundry.
     "claude-opus-4-7": {
@@ -106,7 +117,7 @@ _FALLBACK_MODEL = "claude-sonnet-4-6"
 # tier instead of being silently under-reported at Sonnet rates. Each value
 # points at the most recent known member of that family.
 _FAMILY_FALLBACK: Dict[str, str] = {
-    "opus": "claude-opus-4-8",
+    "opus": "claude-opus-5",
     "fable": "claude-fable-5",
     "sonnet": "claude-sonnet-5",
     "haiku": "claude-haiku-4-5-20251001",
