@@ -3,6 +3,22 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## 0.12.5
+
+### Fixed
+- **"Show cost ticker" now works in the designed skins** — terminal,
+  dashboard, hud, receipt and brutalist. The toggle only ever applied to the 5
+  built-in themes: skins painted the ticker unconditionally, and each refresh
+  restarted the marquee timer, so switching it off paused the strip for a few
+  seconds and then it scrolled on regardless. With the toggle off the skin now
+  gets no ticker items and the marquee stays stopped. The panel keeps its
+  height on the skins by design — the strip is part of each skin's
+  composition, so the row goes blank rather than the panel collapsing.
+  Thanks @carr-james (#25).
+- **`claude-opus-5` priced explicitly** ($5/$25, same tier as Opus 4.8) —
+  the family fallback already landed on the right numbers, but every refresh
+  logged an "unknown model" warning; that's gone.
+
 ## 0.12.4
 
 ### Fixed
