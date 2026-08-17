@@ -353,8 +353,12 @@ class UsageOverlay(QWidget):
         # Animate whenever we have items and a view that actually draws the
         # ticker — default bars mode, or a skin that opts in via its
         # module-level WANTS_TICKER flag.
+        # Skins declare WANTS_TICKER, but the user's toggle still wins —
+        # without the _ticker_enabled check here, every refresh restarted the
+        # marquee a few seconds after the user switched it off (issue #25).
         skin_wants_ticker = (
             self._skin is not None
+            and self._ticker_enabled
             and self._ticker_items
             and getattr(self._skin, "WANTS_TICKER", False)
         )
@@ -457,6 +461,24 @@ class UsageOverlay(QWidget):
         self.minimizedChanged.emit(self._minimized)
 
     # ------------------------------------------------------------- internals
+
+    def _skin_data_for_paint(self):
+        """SkinData for the active skin, with the cost-ticker toggle applied.
+
+        Skins paint whatever ``ticker_items`` they're handed — they have no
+        notion of the user's "Show cost ticker" setting. So the toggle is
+        applied HERE, once, for all skins: when it's off the skin gets an
+        empty list and its marquee helper draws nothing (issue #25). The panel
+        keeps its footprint — a skin's ticker strip is part of its composition,
+        so the row simply stays blank rather than collapsing.
+        """
+        data = _skin_data_from_stats(
+            self._last_stats, ticker_offset=self._ticker_offset,
+        )
+        if not self._ticker_enabled and data.ticker_items:
+            from dataclasses import replace as _replace
+            data = _replace(data, ticker_items=[])
+        return data
 
     def _skin_base_height(self) -> float:
         """Unscaled OSD height for the active skin, folding in the optional
@@ -743,9 +765,7 @@ class UsageOverlay(QWidget):
             from PySide6.QtCore import QRectF
             p.setRenderHint(QPainter.Antialiasing, True)
             p.setRenderHint(QPainter.TextAntialiasing, True)
-            data = _skin_data_from_stats(
-                self._last_stats, ticker_offset=self._ticker_offset,
-            )
+            data = self._skin_data_for_paint()
             try:
                 s = self._scale
                 # Paint into the SAME rect height the window was sized to in
