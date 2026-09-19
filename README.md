@@ -111,7 +111,7 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 - **Usage forecasting** -- burn-rate prediction: "At current rate: 2h 30m to limit"
 - **Per-project breakdown** -- top 5 projects by token usage today
 - **Prompt-cache opportunities** -- scans recent sessions for repeated prompt prefixes and suggests `cache_control` changes with a concrete $ savings estimate
-- **AI-generated weekly report** -- Claude Haiku writes a 3-4 sentence summary of your past week of usage (cached 1h; never leaks prompt text)
+- **AI-generated weekly report (opt-in)** -- Claude Haiku writes a 3-4 sentence summary of your past week of usage (cached 1h; never leaks prompt text). Off by default; enable with `"ai_report_enabled": true`
 - **Anomaly detection** -- flags days whose utilisation exceeds the 7/90-day baseline
 - **Cost optimisation tips** -- suggests cache-hit-rate improvements and model-mix changes
 - **Real-time burn/spike alerts** -- a bright OSD badge (`▲42%` / `▲SPIKE` / `▲STORM`) plus a debounced, once-per-episode notification when your 5-hour window burns abnormally fast or a single turn / retry-loop spikes tokens. The badge renders on the 5 classic themes for now; notifications and the `burn_alert` webhook fire on all 11
@@ -385,7 +385,7 @@ Scans your recent conversation history for repeated user-prompt prefixes (≥102
 
 ### AI-generated weekly report
 
-A 3-4 sentence natural-language summary of the past week (top projects, total volume, cost/model mix) is generated on demand by Claude Haiku 4.5 and cached at `~/.claude/widget-cache/weekly-report.json` for one hour. The generator runs on a background thread so refresh stays synchronous. If the OAuth token is missing or Anthropic is unreachable, the section simply disappears -- no retries, no errors in your face.
+A 3-4 sentence natural-language summary of the past week (top projects, total volume, cost/model mix) is generated on demand by Claude Haiku 4.5 and cached at `~/.claude/widget-cache/weekly-report.json` for one hour. The generator runs on a background thread so refresh stays synchronous. If the OAuth token is missing or Anthropic is unreachable, the section simply disappears. **Off by default** -- set `"ai_report_enabled": true` in `config.json` to turn it on. A failed attempt caches nothing, so while enabled it is retried on each refresh.
 
 ### Calendar heatmap (52 weeks × 7 days)
 
@@ -433,7 +433,7 @@ The usage figures come from Anthropic's `/api/oauth/usage` endpoint, a low-budge
 No. It reuses the OAuth token Claude Code already created (env var → `~/.claude/.credentials.json` → macOS Keychain). If the `claude` CLI works, the widget works; it never has credentials of its own.
 
 **Does it cost me anything / use my token budget?**
-The usage fetch hits a lightweight status endpoint, not a model. The only feature that calls a model is the AI weekly report (one short Claude Haiku call, cached for an hour) — and it silently no-ops without a token.
+The usage fetch hits a lightweight status endpoint, not a model. The only feature that calls a model is the opt-in AI weekly report (one short Claude Haiku call, cached for an hour) — and it silently no-ops without a token.
 
 **Does it send my prompts or data anywhere?**
 Prompts, no — raw prompt text is redacted from the CLI, `--statusline`, and the localhost API. Network-wise it talks to Anthropic (the same endpoints Claude Code uses) plus two kinds of non-Anthropic calls: a once-daily version check against the GitHub Releases API (metadata only, best-effort — this is how update notifications work) and the opt-in news ticker / webhooks (off unless you enable them).

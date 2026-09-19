@@ -1675,8 +1675,14 @@ class ClaudeUsageApp(QObject):
         # Weekly report: kick off a background regeneration if the on-disk
         # cache is stale and we're not already generating. Pass a snapshot
         # of the stats so the worker never observes a torn mid-refresh mix
-        # of fields.
-        if not stats.weekly_report_text and not self._weekly_report_in_flight:
+        # of fields. Opt-in: it sends the Claude Code OAuth token to
+        # /v1/messages, and a failed attempt caches nothing, so it would
+        # otherwise retry on every refresh.
+        if (
+            self.config.get("ai_report_enabled", False)
+            and not stats.weekly_report_text
+            and not self._weekly_report_in_flight
+        ):
             self._weekly_report_in_flight = True
             threading.Thread(
                 target=self._generate_weekly_report,
