@@ -99,6 +99,10 @@ class TestLoadConfig(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_ai_report_is_opt_in(self) -> None:
+        """The AI weekly report (which spends the OAuth token) defaults off."""
+        self.assertIs(DEFAULT_CONFIG["ai_report_enabled"], False)
+
     def test_missing_file_returns_defaults(self) -> None:
         """load_config returns DEFAULT_CONFIG (as a new dict) when the path does not exist."""
         cfg = load_config("/nonexistent/path.json")

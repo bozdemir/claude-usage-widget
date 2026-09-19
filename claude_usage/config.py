@@ -92,6 +92,9 @@ DEFAULT_CONFIG: Config = {
     # Whether the OSD paints a scrolling per-turn cost ticker along the
     # bottom edge. Toggle at runtime via the right-click menu.
     "show_ticker": True,
+    # AI weekly report (opt-in): asks Claude Haiku for a usage summary via
+    # /v1/messages using the Claude Code OAuth token. Off by default.
+    "ai_report_enabled": False,
     # News ticker (opt-in): a second strip with Anthropic/Claude headlines.
     # Off by default because it calls out to a third-party feed.
     "show_news": False,
