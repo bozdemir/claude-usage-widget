@@ -228,19 +228,82 @@ def _collect_tokens_single_pass(
     # we're aggregating, plus a one-day slack for clock skew / slow flushes.
     mtime_cutoff = datetime.now().timestamp() - 8 * 86400
 
-    for jsonl_path in glob.glob(os.path.join(projects_dir, "*", "*.jsonl")):
-        parts = jsonl_path.split(os.sep)
-        # Subagent conversations share tokens with their parent; skip to avoid double-counting
-        if "subagents" in parts:
-            continue
-        try:
-            if os.path.getmtime(jsonl_path) < mtime_cutoff:
-                continue
-        except OSError:
-            continue
-        _parse_tokens_file(jsonl_path, today_prefix, week_prefixes, result)
+    seen_msg_ids: set[str] = set()
+    for jsonl_path, project_name in _iter_usage_files(projects_dir, mtime_cutoff):
+        _parse_tokens_file(
+            jsonl_path, today_prefix, week_prefixes, result,
+            project_name=project_name, seen_msg_ids=seen_msg_ids,
+        )
 
     return result
+
+
+def _iter_usage_files(projects_dir: str, mtime_cutoff: float):
+    """Yield ``(path, project_name)`` for every billed conversation JSONL.
+
+    Covers top-level sessions (``projects/<proj>/<session>.jsonl``) AND Task
+    subagent transcripts (``projects/<proj>/<session>/subagents/agent-*.jsonl``).
+    Subagent turns are separate API calls with their own message ids — not
+    replays of the parent's usage — so leaving them out under-reports spend.
+    Any id that does appear in both is counted once by the callers' shared
+    ``seen_msg_ids`` set. Files not modified since *mtime_cutoff* are skipped.
+    """
+    patterns = (
+        os.path.join(projects_dir, "*", "*.jsonl"),
+        os.path.join(projects_dir, "*", "*", "subagents", "*.jsonl"),
+    )
+    for pattern in patterns:
+        for jsonl_path in glob.glob(pattern):
+            try:
+                if os.path.getmtime(jsonl_path) < mtime_cutoff:
+                    continue
+            except OSError:
+                continue
+            # Project = first directory under projects/ (e.g. "-home-user-my-project").
+            rel = os.path.relpath(jsonl_path, projects_dir)
+            yield jsonl_path, rel.split(os.sep, 1)[0]
+
+
+def _usage_counts(usage: dict[str, Any]) -> tuple[int, int, int, int]:
+    """Return ``(input, output, cache_read, cache_creation)`` from a usage block."""
+    return (
+        usage.get("input_tokens", 0) or 0,
+        usage.get("output_tokens", 0) or 0,
+        usage.get("cache_read_input_tokens", 0) or 0,
+        usage.get("cache_creation_input_tokens", 0) or 0,
+    )
+
+
+def _is_duplicate_turn(msg: dict[str, Any], seen_msg_ids: set[str] | None) -> bool:
+    """True if this assistant message id was already counted in this pass.
+
+    Claude Code writes one JSONL line per content block of a response (text,
+    tool_use, thinking…), and every line repeats the response's full ``usage``.
+    Summing each line over-counts tokens and cost ~2x, so only the first line
+    per ``message.id`` counts. Lines without an id can't be deduplicated and
+    are counted as-is.
+    """
+    if seen_msg_ids is None:
+        return False
+    msg_id = msg.get("id")
+    if not msg_id:
+        return False
+    if msg_id in seen_msg_ids:
+        return True
+    seen_msg_ids.add(msg_id)
+    return False
+
+
+def _new_token_bucket() -> dict[str, int]:
+    return {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
+
+
+def _add_to_bucket(bucket: dict[str, int], counts: tuple[int, int, int, int]) -> None:
+    input_t, output_t, cache_read, cache_creation = counts
+    bucket["input"] += input_t
+    bucket["output"] += output_t
+    bucket["cache_read"] += cache_read
+    bucket["cache_creation"] += cache_creation
 
 
 def _parse_tokens_file(
@@ -248,20 +311,22 @@ def _parse_tokens_file(
     today_prefix: str,
     week_prefixes: list[str],
     result: dict[str, Any],
+    project_name: str | None = None,
+    seen_msg_ids: set[str] | None = None,
 ) -> None:
     """Extract token usage from a single conversation JSONL file.
 
-    Mutates *result* in-place.  Only processes ``assistant`` entries because
-    those are the ones that carry the ``usage`` block with ``output_tokens``.
+    Mutates *result* (and *seen_msg_ids*) in-place.  Only processes
+    ``assistant`` entries because those are the ones that carry the ``usage``
+    block with ``output_tokens``.
     """
     try:
         f = open(path, encoding="utf-8", errors="replace")
     except OSError:
         return
 
-    # Project name = name of the immediate parent directory under projects/
-    # (e.g. "-home-user-my-project"). Used for per-project token breakdowns.
-    project_name = os.path.basename(os.path.dirname(path))
+    if project_name is None:
+        project_name = os.path.basename(os.path.dirname(path))
 
     with f:
         for line in f:
@@ -286,35 +351,25 @@ def _parse_tokens_file(
             msg = entry.get("message", {})
             if not isinstance(msg, dict):
                 continue
+            if _is_duplicate_turn(msg, seen_msg_ids):
+                continue
 
             usage = msg.get("usage", {})
-            output_tokens = usage.get("output_tokens", 0) or 0
-            input_tokens = usage.get("input_tokens", 0) or 0
-            cache_read = usage.get("cache_read_input_tokens", 0) or 0
-            cache_creation = usage.get("cache_creation_input_tokens", 0) or 0
+            counts = _usage_counts(usage)
+            output_tokens = counts[1]
             model = msg.get("model", "unknown")
 
             result["week_output"] += output_tokens
 
-            week_bucket = result["week_by_model_detailed"].setdefault(
-                model, {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0},
-            )
-            week_bucket["input"] += input_tokens
-            week_bucket["output"] += output_tokens
-            week_bucket["cache_read"] += cache_read
-            week_bucket["cache_creation"] += cache_creation
+            week_bucket = result["week_by_model_detailed"].setdefault(model, _new_token_bucket())
+            _add_to_bucket(week_bucket, counts)
 
             if is_today:
                 result["today_output"] += output_tokens
                 result["today_by_model"][model] = result["today_by_model"].get(model, 0) + output_tokens
 
-                today_bucket = result["today_by_model_detailed"].setdefault(
-                    model, {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0},
-                )
-                today_bucket["input"] += input_tokens
-                today_bucket["output"] += output_tokens
-                today_bucket["cache_read"] += cache_read
-                today_bucket["cache_creation"] += cache_creation
+                today_bucket = result["today_by_model_detailed"].setdefault(model, _new_token_bucket())
+                _add_to_bucket(today_bucket, counts)
 
                 result["today_by_project"][project_name] = (
                     result["today_by_project"].get(project_name, 0) + output_tokens
@@ -344,15 +399,9 @@ def _collect_month_tokens(
     now_ts = now_ts if now_ts is not None else datetime.now().timestamp()
     mtime_cutoff = now_ts - 32 * 86400
 
-    for jsonl_path in glob.glob(os.path.join(projects_dir, "*", "*.jsonl")):
-        if "subagents" in jsonl_path.split(os.sep):
-            continue
-        try:
-            if os.path.getmtime(jsonl_path) < mtime_cutoff:
-                continue
-        except OSError:
-            continue
-        _parse_month_tokens_file(jsonl_path, month_prefix, by_model)
+    seen_msg_ids: set[str] = set()
+    for jsonl_path, _project in _iter_usage_files(projects_dir, mtime_cutoff):
+        _parse_month_tokens_file(jsonl_path, month_prefix, by_model, seen_msg_ids)
 
     return by_model
 
@@ -361,6 +410,7 @@ def _parse_month_tokens_file(
     path: str,
     month_prefix: str,
     by_model: dict[str, dict[str, int]],
+    seen_msg_ids: set[str] | None = None,
 ) -> None:
     """Accumulate one file's assistant-turn tokens into *by_model* in-place."""
     try:
@@ -386,15 +436,11 @@ def _parse_month_tokens_file(
             msg = entry.get("message", {})
             if not isinstance(msg, dict):
                 continue
-            usage = msg.get("usage", {})
+            if _is_duplicate_turn(msg, seen_msg_ids):
+                continue
             model = msg.get("model", "unknown")
-            bucket = by_model.setdefault(
-                model, {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0},
-            )
-            bucket["input"] += usage.get("input_tokens", 0) or 0
-            bucket["output"] += usage.get("output_tokens", 0) or 0
-            bucket["cache_read"] += usage.get("cache_read_input_tokens", 0) or 0
-            bucket["cache_creation"] += usage.get("cache_creation_input_tokens", 0) or 0
+            bucket = by_model.setdefault(model, _new_token_bucket())
+            _add_to_bucket(bucket, _usage_counts(msg.get("usage", {})))
 
 
 # Preserved for test compatibility -- superseded by _collect_tokens_single_pass

@@ -535,11 +535,13 @@ class TestCollectTokensSinglePass(unittest.TestCase):
             self.assertEqual(result["today_by_model"]["model-a"], 50)
             self.assertEqual(result["today_by_model"]["model-b"], 75)
 
-    def test_skips_subagent_paths(self) -> None:
-        """Files under a subagents/ directory are excluded from the single-pass scan."""
+    def test_counts_subagent_transcripts_under_parent_project(self) -> None:
+        """Task subagent transcripts (<proj>/<session>/subagents/*.jsonl) are
+        separate billed API calls: counted, and attributed to the parent project."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            normal_dir = _make_conversation_dir(tmpdir)
-            sub_dir = _make_conversation_dir(tmpdir, subagent=True)
+            normal_dir = _make_conversation_dir(tmpdir, "-home-proj")
+            sub_dir = os.path.join(normal_dir, "session-abc", "subagents")
+            os.makedirs(sub_dir)
             today_str = datetime.now().strftime("%Y-%m-%d")
 
             _write_conversation(normal_dir, [
@@ -547,10 +549,37 @@ class TestCollectTokensSinglePass(unittest.TestCase):
             ])
             _write_conversation(sub_dir, [
                 _assistant_entry(f"{today_str}T10:00:00", output_tokens=5000),
-            ], filename="subagent-session.jsonl")
+            ], filename="agent-1.jsonl")
 
             result = _collect_tokens_single_pass(tmpdir, today_str, [today_str])
-            self.assertEqual(result["today_output"], 100)
+            self.assertEqual(result["today_output"], 5100)
+            self.assertEqual(result["today_by_project"], {"-home-proj": 5100})
+
+    def test_dedupes_repeated_lines_of_one_response(self) -> None:
+        """Claude Code writes one line per content block, each repeating the
+        response's usage; a message id is counted once, even across files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            normal_dir = _make_conversation_dir(tmpdir)
+            sub_dir = os.path.join(normal_dir, "session-abc", "subagents")
+            os.makedirs(sub_dir)
+            today_str = datetime.now().strftime("%Y-%m-%d")
+
+            def line(msg_id: str) -> dict[str, Any]:
+                entry = _assistant_entry(f"{today_str}T10:00:00", output_tokens=100,
+                                         cache_create=1000)
+                entry["message"]["id"] = msg_id
+                return entry
+
+            _write_conversation(normal_dir, [line("msg_1"), line("msg_1"), line("msg_2")])
+            _write_conversation(sub_dir, [line("msg_2")], filename="agent-1.jsonl")
+
+            result = _collect_tokens_single_pass(tmpdir, today_str, [today_str])
+            self.assertEqual(result["today_output"], 200)
+            bucket = result["today_by_model_detailed"]["claude-opus-4-6"]
+            self.assertEqual(bucket["cache_creation"], 2000)
+
+            month = _collect_month_tokens(tmpdir, today_str[:7])
+            self.assertEqual(month["claude-opus-4-6"]["output"], 200)
 
     def test_no_projects_directory_returns_zeroes(self) -> None:
         """Returns zero totals when the projects/ directory is absent."""
