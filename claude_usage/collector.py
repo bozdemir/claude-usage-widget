@@ -243,6 +243,19 @@ def _collect_tokens_single_pass(
     return result
 
 
+def _cache_creation_1h(usage: dict[str, Any]) -> int:
+    """The 1-hour-TTL subset of ``cache_creation_input_tokens``.
+
+    Reported under ``usage.cache_creation.ephemeral_1h_input_tokens``; it
+    bills at 2x input rather than the 5-minute 1.25x (see
+    :func:`pricing.calculate_cost`).
+    """
+    split = usage.get("cache_creation")
+    if not isinstance(split, dict):
+        return 0
+    return split.get("ephemeral_1h_input_tokens", 0) or 0
+
+
 def _parse_tokens_file(
     path: str,
     today_prefix: str,
@@ -292,29 +305,32 @@ def _parse_tokens_file(
             input_tokens = usage.get("input_tokens", 0) or 0
             cache_read = usage.get("cache_read_input_tokens", 0) or 0
             cache_creation = usage.get("cache_creation_input_tokens", 0) or 0
+            cache_creation_1h = _cache_creation_1h(usage)
             model = msg.get("model", "unknown")
 
             result["week_output"] += output_tokens
 
             week_bucket = result["week_by_model_detailed"].setdefault(
-                model, {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0},
+                model, {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0, "cache_creation_1h": 0},
             )
             week_bucket["input"] += input_tokens
             week_bucket["output"] += output_tokens
             week_bucket["cache_read"] += cache_read
             week_bucket["cache_creation"] += cache_creation
+            week_bucket["cache_creation_1h"] += cache_creation_1h
 
             if is_today:
                 result["today_output"] += output_tokens
                 result["today_by_model"][model] = result["today_by_model"].get(model, 0) + output_tokens
 
                 today_bucket = result["today_by_model_detailed"].setdefault(
-                    model, {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0},
+                    model, {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0, "cache_creation_1h": 0},
                 )
                 today_bucket["input"] += input_tokens
                 today_bucket["output"] += output_tokens
                 today_bucket["cache_read"] += cache_read
                 today_bucket["cache_creation"] += cache_creation
+                today_bucket["cache_creation_1h"] += cache_creation_1h
 
                 result["today_by_project"][project_name] = (
                     result["today_by_project"].get(project_name, 0) + output_tokens
@@ -389,12 +405,13 @@ def _parse_month_tokens_file(
             usage = msg.get("usage", {})
             model = msg.get("model", "unknown")
             bucket = by_model.setdefault(
-                model, {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0},
+                model, {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0, "cache_creation_1h": 0},
             )
             bucket["input"] += usage.get("input_tokens", 0) or 0
             bucket["output"] += usage.get("output_tokens", 0) or 0
             bucket["cache_read"] += usage.get("cache_read_input_tokens", 0) or 0
             bucket["cache_creation"] += usage.get("cache_creation_input_tokens", 0) or 0
+            bucket["cache_creation_1h"] += _cache_creation_1h(usage)
 
 
 # Preserved for test compatibility -- superseded by _collect_tokens_single_pass

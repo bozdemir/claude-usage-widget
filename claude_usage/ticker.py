@@ -87,6 +87,10 @@ def _extract_ticker_item(entry: dict) -> TickerItem | None:
         output_t = int(usage.get("output_tokens", 0) or 0)
         cache_read = int(usage.get("cache_read_input_tokens", 0) or 0)
         cache_creation = int(usage.get("cache_creation_input_tokens", 0) or 0)
+        split = usage.get("cache_creation")
+        cache_creation_1h = int(
+            (split.get("ephemeral_1h_input_tokens", 0) if isinstance(split, dict) else 0) or 0
+        )
     except (TypeError, ValueError):
         return None
     if output_t <= 0:
@@ -105,6 +109,7 @@ def _extract_ticker_item(entry: dict) -> TickerItem | None:
         output_tokens=output_t,
         cache_read=cache_read,
         cache_creation=cache_creation,
+        cache_creation_1h=cache_creation_1h,
     )
 
     tool_names: list[str] = []

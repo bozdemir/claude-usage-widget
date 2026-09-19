@@ -314,5 +314,38 @@ class TestCalculateStatsCost:
         assert _approx(stats["total"], 3.0)
 
 
+
+class TestPricingCorrections:
+    def test_fable_5_1_cache_reads_are_quarter_dollar(self):
+        p = MODEL_PRICING["claude-fable-5-1"]
+        assert (p["input"], p["output"], p["cache_read"]) == (10.0, 50.0, 0.25)
+
+    def test_dated_sonnet_4_5_prices_at_sonnet_4_tier_not_sonnet_5(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # exact/dated match must not warn
+            cost = calculate_cost("claude-sonnet-4-5-20250929", 1_000_000, 1_000_000)
+        assert _approx(cost["total"], 3.0 + 15.0)
+
+    def test_dated_opus_4_prices_at_legacy_tier(self):
+        cost = calculate_cost("claude-opus-4-20250514", 1_000_000, 0)
+        assert _approx(cost["total"], 15.0)
+
+    def test_one_hour_cache_writes_bill_at_twice_input(self):
+        # 1M writes, 400k of them 1h: 600k x 6.25 + 400k x 10 (Opus 5).
+        cost = calculate_cost("claude-opus-5", 0, 0, cache_creation=1_000_000,
+                              cache_creation_1h=400_000)
+        assert _approx(cost["cache_creation"], 0.6 * 6.25 + 0.4 * 10.0)
+
+    def test_one_hour_subset_clamped_to_total_writes(self):
+        cost = calculate_cost("claude-opus-5", 0, 0, cache_creation=100,
+                              cache_creation_1h=500)
+        assert _approx(cost["cache_creation"], 100 * 10.0 / 1_000_000)
+
+    def test_stats_cost_passes_one_hour_split_through(self):
+        stats = calculate_stats_cost({"claude-opus-5": {
+            "cache_creation": 1_000_000, "cache_creation_1h": 1_000_000}})
+        assert _approx(stats["total"], 10.0)
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])

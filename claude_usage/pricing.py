@@ -7,12 +7,14 @@ callers request an unknown model (in which case we silently fall back to
 Sonnet pricing so billing never crashes a running collector).
 
 Cache rates follow the standard Anthropic formula:
-    cache_read     = input_rate × 0.1   (10% of input cost for reads)
-    cache_creation = input_rate × 1.25  (25% markup for cache writes)
+    cache_read        = input_rate × 0.1   (0.025 on Fable 5.1; tabled per model)
+    cache_creation    = input_rate × 1.25  (5-minute TTL writes)
+    cache_creation_1h = input_rate × 2     (1-hour TTL writes)
 """
 
 from __future__ import annotations
 
+import re
 import warnings
 from typing import Dict, Mapping
 
@@ -55,10 +57,9 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
         "cache_read": 0.50,
         "cache_creation": 6.25,
     },
-    # Sonnet 5 (launched 2026-06-30, the new Free/Pro default): introductory
-    # $2 input / $10 output through 2026-08-31, then reverts to the standard
-    # $3/$15 tier. UPDATE these two rates to 3.0/10.0→15.0 after the intro
-    # window ends (cache rates scale off input: read = input×0.1, write ×1.25).
+    # Sonnet 5 (launched 2026-06-30): $2 input / $10 output. Announced as
+    # introductory pricing through 2026-08-31, but Anthropic has since made
+    # $2/$10 the standard price — the scheduled rise to $3/$15 did not happen.
     "claude-sonnet-5": {
         "input": 2.0,
         "output": 10.0,
@@ -81,7 +82,55 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
         "cache_read": 1.00,
         "cache_creation": 12.50,
     },
+    # Fable 5.1: same $10/$50 tier as Fable 5, but cache reads bill at 0.025x
+    # input ($0.25) instead of the usual 0.1x.
+    "claude-fable-5-1": {
+        "input": 10.0,
+        "output": 50.0,
+        "cache_read": 0.25,
+        "cache_creation": 12.50,
+    },
+    # Older models still seen in Claude Code logs (Task subagents often pin
+    # them). Tabled explicitly because the family fallback maps them to the
+    # newest family member, which is priced differently: Sonnet 4.x is $3/$15
+    # (not Sonnet 5's $2/$10) and Opus 4.0/4.1 is $15/$75 (not $5/$25).
+    "claude-opus-4-5": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.50,
+        "cache_creation": 6.25,
+    },
+    "claude-opus-4-1": {
+        "input": 15.0,
+        "output": 75.0,
+        "cache_read": 1.50,
+        "cache_creation": 18.75,
+    },
+    "claude-opus-4": {
+        "input": 15.0,
+        "output": 75.0,
+        "cache_read": 1.50,
+        "cache_creation": 18.75,
+    },
+    "claude-sonnet-4-5": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.30,
+        "cache_creation": 3.75,
+    },
+    "claude-sonnet-4": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.30,
+        "cache_creation": 3.75,
+    },
     # Haiku 4.5: $1 input, $5 output (entry-tier pricing).
+    "claude-haiku-4-5": {
+        "input": 1.0,
+        "output": 5.0,
+        "cache_read": 0.10,
+        "cache_creation": 1.25,
+    },
     "claude-haiku-4-5-20251001": {
         "input": 1.0,
         "output": 5.0,
@@ -126,6 +175,13 @@ _FAMILY_FALLBACK: Dict[str, str] = {
 # Conversion factor: prices are per one million tokens.
 _PER_MILLION = 1_000_000.0
 
+# Trailing snapshot date on a model id, e.g. the "-20250929" in
+# "claude-sonnet-4-5-20250929".
+_DATE_SUFFIX = re.compile(r"-\d{8}$")
+
+# 1-hour TTL cache writes bill at 2x the base input rate on every model.
+_CACHE_WRITE_1H_MULTIPLIER = 2.0
+
 # Cache of models already warned about, so repeated refreshes don't spam stderr.
 _WARNED_MODELS: set[str] = set()
 
@@ -155,6 +211,10 @@ def _resolve_pricing(model: str) -> Dict[str, float]:
     pricing = MODEL_PRICING.get(model)
     if pricing is not None:
         return pricing
+    # Dated snapshot ids ("claude-sonnet-4-5-20250929") price like their alias.
+    pricing = MODEL_PRICING.get(_DATE_SUFFIX.sub("", model))
+    if pricing is not None:
+        return pricing
     fallback = _family_fallback_model(model) or _FALLBACK_MODEL
     if model not in _WARNED_MODELS:
         _WARNED_MODELS.add(model)
@@ -181,6 +241,7 @@ def calculate_cost(
     output_tokens: int,
     cache_read: int = 0,
     cache_creation: int = 0,
+    cache_creation_1h: int = 0,
 ) -> Dict[str, float]:
     """Compute the USD cost for a single request-shaped token bundle.
 
@@ -189,7 +250,11 @@ def calculate_cost(
         input_tokens: Non-cached input tokens billed at the full input rate.
         output_tokens: Output/generation tokens.
         cache_read: Tokens served from the prompt cache (cheap read).
-        cache_creation: Tokens written into the prompt cache (creation rate).
+        cache_creation: ALL tokens written into the prompt cache — this is
+            ``usage.cache_creation_input_tokens``, which includes 1h writes.
+        cache_creation_1h: The subset of ``cache_creation`` written with the
+            1-hour TTL (``usage.cache_creation.ephemeral_1h_input_tokens``),
+            billed at 2x input instead of the 5-minute 1.25x rate.
 
     Returns:
         A dict with per-category dollar amounts plus ``total`` and
@@ -204,11 +269,15 @@ def calculate_cost(
     output_tokens = max(int(output_tokens), 0)
     cache_read = max(int(cache_read), 0)
     cache_creation = max(int(cache_creation), 0)
+    cache_creation_1h = min(max(int(cache_creation_1h), 0), cache_creation)
 
     input_cost = input_tokens * pricing["input"] / _PER_MILLION
     output_cost = output_tokens * pricing["output"] / _PER_MILLION
     cache_read_cost = cache_read * pricing["cache_read"] / _PER_MILLION
-    cache_creation_cost = cache_creation * pricing["cache_creation"] / _PER_MILLION
+    cache_creation_cost = (
+        (cache_creation - cache_creation_1h) * pricing["cache_creation"]
+        + cache_creation_1h * pricing["input"] * _CACHE_WRITE_1H_MULTIPLIER
+    ) / _PER_MILLION
 
     # Savings: what the cached-read tokens would have cost at the full input
     # rate, minus what we actually paid for them.
@@ -234,8 +303,8 @@ def calculate_stats_cost(
 
     Args:
         by_model: Mapping of ``{model: {"input": N, "output": N,
-            "cache_read": N, "cache_creation": N}}``. Missing keys default
-            to zero so callers can pass sparse dicts.
+            "cache_read": N, "cache_creation": N, "cache_creation_1h": N}}``.
+            Missing keys default to zero so callers can pass sparse dicts.
 
     Returns:
         A dict with ``total``, summed per-category costs, ``cache_savings``
@@ -259,6 +328,7 @@ def calculate_stats_cost(
             output_tokens=int(counts.get("output", 0) or 0),
             cache_read=int(counts.get("cache_read", 0) or 0),
             cache_creation=int(counts.get("cache_creation", 0) or 0),
+            cache_creation_1h=int(counts.get("cache_creation_1h", 0) or 0),
         )
         per_model[model] = breakdown
         for key in totals:

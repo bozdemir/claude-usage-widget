@@ -863,11 +863,12 @@ class UsagePopup(QWidget):
             out_t = int(counts.get("output", 0) or 0)
             cr_t = int(counts.get("cache_read", 0) or 0)
             cc_t = int(counts.get("cache_creation", 0) or 0)
+            cc_1h = int(counts.get("cache_creation_1h", 0) or 0)
             total_in += in_t
             total_out += out_t
             total_cr += cr_t
             total_cc += cc_t
-            bk = calculate_cost(model, in_t, out_t, cr_t, cc_t)
+            bk = calculate_cost(model, in_t, out_t, cr_t, cc_t, cc_1h)
             rows.append((_short_model_name(model), model, in_t, out_t, cr_t, cc_t, bk))
         rows.sort(key=lambda r: r[6]["total"], reverse=True)
 
@@ -902,8 +903,10 @@ class UsagePopup(QWidget):
                     margin_bottom=2,
                 )
             if cc_t > 0:
+                # Blended 5m/1h write rate, so "tokens × rate = $" adds up.
+                cc_rate = bk["cache_creation"] * 1_000_000 / cc_t
                 self._add_dim_line(
-                    f"     cache write: {_format_tokens(cc_t):>7} × ${rates['cache_creation']:.2f}/M = ${bk['cache_creation']:.2f}",
+                    f"     cache write: {_format_tokens(cc_t):>7} × ${cc_rate:.2f}/M = ${bk['cache_creation']:.2f}",
                     margin_bottom=4,
                 )
 

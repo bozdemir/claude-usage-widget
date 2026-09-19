@@ -552,6 +552,26 @@ class TestCollectTokensSinglePass(unittest.TestCase):
             result = _collect_tokens_single_pass(tmpdir, today_str, [today_str])
             self.assertEqual(result["today_output"], 100)
 
+    def test_splits_out_one_hour_cache_writes(self) -> None:
+        """usage.cache_creation.ephemeral_1h_input_tokens is carried as its own
+        bucket key so pricing can bill it at the 1-hour write rate."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            normal_dir = _make_conversation_dir(tmpdir)
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            entry = _assistant_entry(f"{today_str}T10:00:00", cache_create=1000)
+            entry["message"]["usage"]["cache_creation"] = {
+                "ephemeral_5m_input_tokens": 600,
+                "ephemeral_1h_input_tokens": 400,
+            }
+            _write_conversation(normal_dir, [entry])
+
+            result = _collect_tokens_single_pass(tmpdir, today_str, [today_str])
+            bucket = result["today_by_model_detailed"]["claude-opus-4-6"]
+            self.assertEqual(bucket["cache_creation"], 1000)
+            self.assertEqual(bucket["cache_creation_1h"], 400)
+            month = _collect_month_tokens(tmpdir, today_str[:7])
+            self.assertEqual(month["claude-opus-4-6"]["cache_creation_1h"], 400)
+
     def test_no_projects_directory_returns_zeroes(self) -> None:
         """Returns zero totals when the projects/ directory is absent."""
         with tempfile.TemporaryDirectory() as tmpdir:
