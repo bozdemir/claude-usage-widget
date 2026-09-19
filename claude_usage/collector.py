@@ -264,13 +264,31 @@ def _iter_usage_files(projects_dir: str, mtime_cutoff: float):
             yield jsonl_path, rel.split(os.sep, 1)[0]
 
 
-def _usage_counts(usage: dict[str, Any]) -> tuple[int, int, int, int]:
-    """Return ``(input, output, cache_read, cache_creation)`` from a usage block."""
+def _cache_creation_1h(usage: dict[str, Any]) -> int:
+    """The 1-hour-TTL subset of ``cache_creation_input_tokens``.
+
+    Reported under ``usage.cache_creation.ephemeral_1h_input_tokens``; it
+    bills at 2x input rather than the 5-minute 1.25x (see
+    :func:`pricing.calculate_cost`).
+    """
+    split = usage.get("cache_creation")
+    if not isinstance(split, dict):
+        return 0
+    return split.get("ephemeral_1h_input_tokens", 0) or 0
+
+
+def _usage_counts(usage: dict[str, Any]) -> tuple[int, int, int, int, int]:
+    """Return ``(input, output, cache_read, cache_creation, cache_creation_1h)``.
+
+    ``cache_creation_1h`` is a *subset* of ``cache_creation``, not a sibling;
+    it is priced separately because 1-hour-TTL writes bill at 2x input.
+    """
     return (
         usage.get("input_tokens", 0) or 0,
         usage.get("output_tokens", 0) or 0,
         usage.get("cache_read_input_tokens", 0) or 0,
         usage.get("cache_creation_input_tokens", 0) or 0,
+        _cache_creation_1h(usage),
     )
 
 
@@ -295,15 +313,19 @@ def _is_duplicate_turn(msg: dict[str, Any], seen_msg_ids: set[str] | None) -> bo
 
 
 def _new_token_bucket() -> dict[str, int]:
-    return {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
+    return {
+        "input": 0, "output": 0, "cache_read": 0,
+        "cache_creation": 0, "cache_creation_1h": 0,
+    }
 
 
-def _add_to_bucket(bucket: dict[str, int], counts: tuple[int, int, int, int]) -> None:
-    input_t, output_t, cache_read, cache_creation = counts
+def _add_to_bucket(bucket: dict[str, int], counts: tuple[int, int, int, int, int]) -> None:
+    input_t, output_t, cache_read, cache_creation, cache_creation_1h = counts
     bucket["input"] += input_t
     bucket["output"] += output_t
     bucket["cache_read"] += cache_read
     bucket["cache_creation"] += cache_creation
+    bucket["cache_creation_1h"] += cache_creation_1h
 
 
 def _parse_tokens_file(
