@@ -99,6 +99,17 @@ class TestLoadConfig(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_user_claude_dir_tilde_is_expanded(self) -> None:
+        """A user-supplied "~/..." claude_dir is expanded, not taken literally."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump({"claude_dir": "~/.claude-alt"}, f)
+            path = f.name
+        try:
+            cfg = load_config(path)
+            self.assertEqual(cfg["claude_dir"], os.path.expanduser("~/.claude-alt"))
+        finally:
+            os.unlink(path)
+
     def test_missing_file_returns_defaults(self) -> None:
         """load_config returns DEFAULT_CONFIG (as a new dict) when the path does not exist."""
         cfg = load_config("/nonexistent/path.json")
@@ -257,7 +268,12 @@ class TestLoadConfig(unittest.TestCase):
         finally:
             os.unlink(path)
 
-    @unittest.skipIf(os.getuid() == 0, "Cannot test permission errors as root")
+    # chmod(0o000) only sets the read-only flag on Windows, so the file stays
+    # readable there; os.getuid doesn't exist on Windows at all.
+    @unittest.skipIf(
+        sys.platform == "win32" or os.getuid() == 0,
+        "Cannot test permission errors on Windows or as root",
+    )
     def test_unreadable_file_returns_defaults_with_warning(self) -> None:
         """A file that exists but is not readable returns defaults and warns."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:

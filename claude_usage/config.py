@@ -181,6 +181,10 @@ def load_config(path: str) -> Config:
 
     # Merge: user values overwrite defaults, unknown keys are added.
     cfg.update(user_cfg)
+    # A user-supplied "~/.claude" would otherwise fail isdir() and silently
+    # zero every local figure.
+    if isinstance(cfg.get("claude_dir"), str):
+        cfg["claude_dir"] = os.path.expanduser(cfg["claude_dir"])
     return cfg
 
 
