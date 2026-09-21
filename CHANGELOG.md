@@ -3,6 +3,66 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## 0.13.0
+
+### Fixed
+
+- **Token and cost figures were roughly 2.7x too high.** Claude Code writes one
+  JSONL line per content block of a response (text, `tool_use`, thinking), and
+  every one of those lines repeats that response's full `usage` block. Both
+  token scans summed every line, so today/week/month tokens, cost, and the
+  month-to-date budget were all inflated. On a week of real logs there were
+  about 2.2 assistant lines per unique `message.id`. They now count each
+  `message.id` once, the same key the cost ticker and the live badge already
+  deduped on. **Your numbers will drop sharply after upgrading. The new ones
+  are the correct ones.** Thanks @boordg (#26).
+- **Task subagent spend was missing entirely.** Subagent transcripts live under
+  `projects/<project>/<session>/subagents/`, which the old glob never reached,
+  so everything your Task subagents burned was invisible. They are separate API
+  calls with their own message ids, not replays of the parent's usage, and they
+  are now scanned and attributed to the parent project. The cost ticker and the
+  live tok/min rate cover them too, so the tape adds up to the today figure.
+  Thanks @boordg (#26).
+- **Fable 5.1 cost several times too much.** `claude-fable-5-1` was not in the
+  pricing table, so it inherited Fable 5's `$1.00`/MTok cache-read rate. Fable
+  5.1 bills cache hits at 0.025x input, which is `$0.25`/MTok, and since Claude
+  Code traffic is mostly cache reads this dominated the figure. Thanks @boordg
+  (#27).
+- **Older model ids were priced as their newest sibling.** The family fallback
+  sends an unknown id to the most recent member of its family, which is wrong
+  for the dated ids Claude Code logs still carry (Task subagents often pin
+  them): Sonnet 4.5 was billed at Sonnet 5's `$2`/`$10` instead of `$3`/`$15`,
+  and Opus 4.0/4.1 at Opus 5's `$5`/`$25` instead of `$15`/`$75`. Sonnet 4.5/4,
+  Opus 4.5/4.1/4 and undated `claude-haiku-4-5` are now tabled, and a trailing
+  `-YYYYMMDD` is stripped before lookup. Thanks @boordg (#27).
+- **1-hour cache writes were under-priced.** They bill at 2x input, not the
+  5-minute 1.25x. The collector now carries
+  `usage.cache_creation.ephemeral_1h_input_tokens` as a subset bucket and the
+  cost card shows the blended rate, so tokens x rate still equals the dollar
+  figure in all 11 themes.
+- **A `~` in `claude_dir` silently zeroed everything.** `"claude_dir":
+  "~/.claude"` in `config.json` was used literally, failed `os.path.isdir`, and
+  every local figure read 0 with no error. The same trap in
+  `statusline_cache_path` is fixed too. Thanks @boordg (#29).
+- **A resumed session could hide a turn's real usage.** Resuming or forking
+  writes a replay of the turn with every usage field zeroed, and whichever copy
+  the scan reached first won. One message in testing carried 956k cache-read
+  tokens in one file and zeros in another, and the zeroed copy won on directory
+  order. Only real usage claims a message id now, so the result no longer
+  depends on filesystem ordering.
+- **`tests/test_config.py` did not collect on Windows**, erroring out all 30
+  tests in the file because the `skipIf` called `os.getuid()` at class
+  definition time. CI is Ubuntu-only so it never showed up. Thanks @boordg
+  (#29).
+
+### Changed
+
+- **The AI weekly report is now opt-in** (`"ai_report_enabled": true`, off by
+  default). It spends your Claude subscription credentials on a Haiku call
+  without ever asking, and a failed attempt cached nothing so it retried on
+  every refresh. It now has a one-hour cooldown after a failure, and turning it
+  off also stops a cached report from being displayed. Thanks @boordg (#28).
+
 ## 0.12.5
 
 ### Fixed
