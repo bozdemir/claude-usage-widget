@@ -581,6 +581,76 @@ class TestCollectTokensSinglePass(unittest.TestCase):
             month = _collect_month_tokens(tmpdir, today_str[:7])
             self.assertEqual(month["claude-opus-4-6"]["output"], 200)
 
+    def test_counts_subagents_nested_under_workflows(self) -> None:
+        """Workflow-spawned agents live at subagents/workflows/<wf-id>/, a level
+        deeper than a plain subagents/*.jsonl glob reaches."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            normal_dir = _make_conversation_dir(tmpdir, "-home-proj")
+            deep_dir = os.path.join(normal_dir, "session-abc", "subagents",
+                                    "workflows", "wf_abc123")
+            os.makedirs(deep_dir)
+            today_str = datetime.now().strftime("%Y-%m-%d")
+
+            _write_conversation(normal_dir, [
+                _assistant_entry(f"{today_str}T10:00:00", output_tokens=100),
+            ])
+            _write_conversation(deep_dir, [
+                _assistant_entry(f"{today_str}T10:00:00", output_tokens=7000),
+            ], filename="agent-deep.jsonl")
+
+            result = _collect_tokens_single_pass(tmpdir, today_str, [today_str])
+            self.assertEqual(result["today_output"], 7100)
+            self.assertEqual(result["today_by_project"], {"-home-proj": 7100})
+
+    def test_subagent_journal_files_are_not_counted(self) -> None:
+        """journal.jsonl sits beside the agent transcripts but carries no billed
+        turns; it must not be picked up by the recursive scan."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            normal_dir = _make_conversation_dir(tmpdir, "-home-proj")
+            deep_dir = os.path.join(normal_dir, "session-abc", "subagents",
+                                    "workflows", "wf_abc123")
+            os.makedirs(deep_dir)
+            today_str = datetime.now().strftime("%Y-%m-%d")
+
+            _write_conversation(normal_dir, [
+                _assistant_entry(f"{today_str}T10:00:00", output_tokens=100),
+            ])
+            _write_conversation(deep_dir, [
+                _assistant_entry(f"{today_str}T10:00:00", output_tokens=5000),
+            ], filename="journal.jsonl")
+
+            result = _collect_tokens_single_pass(tmpdir, today_str, [today_str])
+            self.assertEqual(result["today_output"], 100)
+
+    def test_zeroed_replay_does_not_shadow_the_real_turn(self) -> None:
+        """A resumed session replays the turn with usage zeroed. Whichever copy
+        the scan reaches first, the real figures must survive."""
+        today_str = datetime.now().strftime("%Y-%m-%d")
+
+        def line(output_tokens: int, cache_read: int) -> dict[str, Any]:
+            entry = _assistant_entry(f"{today_str}T10:00:00",
+                                     output_tokens=output_tokens,
+                                     input_tokens=0, cache_read=cache_read)
+            entry["message"]["id"] = "msg_shared"
+            return entry
+
+        # Same pair of files in both orders: the result must not depend on
+        # which one glob happens to return first.
+        for zeroed_first in (True, False):
+            with self.subTest(zeroed_first=zeroed_first):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    conv_dir = _make_conversation_dir(tmpdir)
+                    names = ["a-session.jsonl", "b-session.jsonl"]
+                    zero_name, real_name = names if zeroed_first else names[::-1]
+                    _write_conversation(conv_dir, [line(0, 0)], filename=zero_name)
+                    _write_conversation(conv_dir, [line(3517, 956563)],
+                                        filename=real_name)
+
+                    result = _collect_tokens_single_pass(tmpdir, today_str, [today_str])
+                    self.assertEqual(result["today_output"], 3517)
+                    bucket = result["today_by_model_detailed"]["claude-opus-4-6"]
+                    self.assertEqual(bucket["cache_read"], 956563)
+
     def test_splits_out_one_hour_cache_writes(self) -> None:
         """usage.cache_creation.ephemeral_1h_input_tokens is carried as its own
         bucket key so pricing can bill it at the 1-hour write rate."""

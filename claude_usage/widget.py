@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import time
 import warnings
 from datetime import datetime, timezone
 from typing import Any
@@ -132,6 +133,12 @@ def _format_session_duration(total_seconds: int) -> str:
 # ---------------------------------------------------------------------------
 # Custom-painted atomic widgets
 # ---------------------------------------------------------------------------
+
+
+# How long to wait before retrying the AI weekly report after a failed
+# attempt. A failure caches nothing, so without this the enabled path would
+# re-request on every refresh (~1440 times a day at the 60 s default).
+WEEKLY_REPORT_RETRY_SECONDS = 3600.0
 
 class _ProgressBar(QWidget):
     """Thin rounded bar, fill colour depends on utilisation."""
@@ -1146,6 +1153,10 @@ class ClaudeUsageApp(QObject):
         # Tracks whether a weekly-report generation is already in flight, so
         # the hourly check doesn't spawn multiple Haiku calls in parallel.
         self._weekly_report_in_flight = False
+        # Epoch seconds before which no new attempt is made, set after a
+        # failure so an unreachable or rejecting endpoint isn't retried on
+        # every single refresh.
+        self._weekly_report_retry_after = 0.0
 
     # ----------------------------------------------------------- menu build
 
@@ -1682,8 +1693,7 @@ class ClaudeUsageApp(QObject):
         # /v1/messages, and a failed attempt caches nothing, so it would
         # otherwise retry on every refresh.
         if (
-            self.config.get("ai_report_enabled", False)
-            and not stats.weekly_report_text
+            self._weekly_report_wanted(stats)
             and not self._weekly_report_in_flight
         ):
             self._weekly_report_in_flight = True
@@ -1728,6 +1738,18 @@ class ClaudeUsageApp(QObject):
         target.raise_()
         target.activateWindow()
 
+    def _weekly_report_wanted(self, stats: UsageStats) -> bool:
+        """Whether a weekly-report generation should be kicked off now.
+
+        Off unless opted in, skipped when we already have text, and held back
+        while a previous failure's cooldown is still running.
+        """
+        if not self.config.get("ai_report_enabled", False):
+            return False
+        if stats.weekly_report_text:
+            return False
+        return time.time() >= self._weekly_report_retry_after
+
     def _generate_weekly_report(self, snapshot: UsageStats) -> None:
         try:
             from claude_usage.ai_report import generate_report
@@ -1745,13 +1767,18 @@ class ClaudeUsageApp(QObject):
                 )[:3],
                 "by_model": snapshot.today_by_model_detailed,
             }
-            generate_report(
+            report = generate_report(
                 claude_dir=claude_dir,
                 summary=summary,
                 token_loader=lambda: _load_credentials(claude_dir),
             )
+            if report is None:
+                # A failed attempt caches nothing, so without a cooldown the
+                # next refresh would try again -- ~1440 silently failing
+                # authenticated requests a day at the 60 s default.
+                self._weekly_report_retry_after = time.time() + WEEKLY_REPORT_RETRY_SECONDS
         except Exception:
-            pass
+            self._weekly_report_retry_after = time.time() + WEEKLY_REPORT_RETRY_SECONDS
         finally:
             self._weekly_report_in_flight = False
 

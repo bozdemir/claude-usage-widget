@@ -119,7 +119,7 @@ def build_popup_data(stats, now: float | None = None):
     the popup shape (e.g. the OSD-only paint dispatch) pay nothing for it.
     """
     from .popup_data import PopupData, CostRow, ProjectRow, TickerItem, ActiveSessionRow
-    from claude_usage.pricing import get_pricing
+    from claude_usage.pricing import calculate_cost
 
     now_ts = now if now is not None else time.time()
     osd = from_usage_stats(stats, now=now_ts)
@@ -138,10 +138,21 @@ def build_popup_data(stats, now: float | None = None):
             reverse=True,
         )
         primary_model, counts = ranked[0]
-        # Family-aware lookup keeps these rows consistent with the popup's
-        # big total (cost_today_usd), which is computed via calculate_cost.
-        rates = get_pricing(primary_model)
+        # Price the rows through calculate_cost itself rather than looking the
+        # rates up separately, so they are consistent with the popup's big
+        # total (cost_today_usd) by construction. It also gets cache writes
+        # right: the 1-hour-TTL subset bills at 2x input, not the 5-minute
+        # 1.25x, so the displayed rate is the blend and tokens x rate = $
+        # still adds up.
         per_m = 1_000_000.0
+        breakdown = calculate_cost(
+            primary_model,
+            int(counts.get("input", 0) or 0),
+            int(counts.get("output", 0) or 0),
+            int(counts.get("cache_read", 0) or 0),
+            int(counts.get("cache_creation", 0) or 0),
+            int(counts.get("cache_creation_1h", 0) or 0),
+        )
         spec = [
             ("input",        "input_tokens",           "input"),
             ("output",       "output_tokens",          "output"),
@@ -152,13 +163,13 @@ def build_popup_data(stats, now: float | None = None):
             tokens = int(counts.get(key, 0) or 0)
             if tokens <= 0:
                 continue
-            rate = rates[key]
-            value = tokens * rate / per_m
+            value = float(breakdown[key])
+            rate = value * per_m / tokens
             cost_rows.append(CostRow(
                 label=label,
                 tokens=_fmt_tokens(tokens),
                 rate=f"${rate:.2f}/M",
-                value_usd=float(value),
+                value_usd=value,
             ))
 
     top_projects = [

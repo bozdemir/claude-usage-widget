@@ -103,9 +103,12 @@ def analyze_cache_opportunities(
     # prefix_hash -> dict(project, text, tokens, occurrences, model)
     buckets: dict[str, dict[str, Any]] = {}
 
+    # Top-level sessions only, deliberately. This looks for repeated prompt
+    # prefixes worth a cache_control breakpoint, and the suggestions are about
+    # the conversations the user drives. Subagent transcripts are counted in
+    # the token/cost totals (see collector._iter_usage_files) but their
+    # prompts aren't something the user edits, so they're not sampled here.
     for jsonl_path in glob.glob(os.path.join(projects_dir, "*", "*.jsonl")):
-        if os.sep + "subagents" + os.sep in jsonl_path:
-            continue
         try:
             if os.path.getmtime(jsonl_path) < cutoff:
                 continue

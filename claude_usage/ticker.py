@@ -13,6 +13,7 @@ inside the window. No network, no threads, no mutation of global state.
 from __future__ import annotations
 
 import glob
+import itertools
 import json
 import os
 import time
@@ -20,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterator
 
+from claude_usage.subagents import iter_subagent_transcripts
 from claude_usage.pricing import calculate_cost
 
 # How far back we surface items on the ticker.  Longer than the live-stream
@@ -46,16 +48,20 @@ class TickerItem:
 
 
 def _iter_recent_jsonl(projects_dir: str, mtime_cutoff: float) -> Iterator[str]:
-    """Yield main-session JSONL paths whose mtime is >= *mtime_cutoff*.
+    """Yield conversation JSONL paths whose mtime is >= *mtime_cutoff*.
 
-    Skips ``/subagents/`` trees — those are child sessions whose tokens are
-    already billed against the parent turn that spawned them.
+    Includes Task subagent transcripts. They are separate API calls with
+    their own message ids, not replays of the parent's usage, so the chips
+    have to cover them for the tape to add up to the today figure the OSD
+    shows. Turns are deduped by ``message.id`` downstream either way.
     """
     if not os.path.isdir(projects_dir):
         return
-    for path in glob.glob(os.path.join(projects_dir, "*", "*.jsonl")):
-        if os.sep + "subagents" + os.sep in path:
-            continue
+    paths = itertools.chain(
+        glob.glob(os.path.join(projects_dir, "*", "*.jsonl")),
+        iter_subagent_transcripts(projects_dir),
+    )
+    for path in paths:
         try:
             if os.path.getmtime(path) < mtime_cutoff:
                 continue

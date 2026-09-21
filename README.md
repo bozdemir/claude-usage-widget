@@ -296,6 +296,7 @@ cp config.json.example config.json
 | `theme` | `default` | Color theme for the OSD and popup. One of `default`, `catppuccin-mocha`, `dracula`, `nord`, `gruvbox-dark`, `terminal`, `dashboard`, `hud`, `receipt`, `strip`, `brutalist` |
 | `show_ticker` | `true` | Whether the scrolling per-turn cost ticker is painted at the bottom of the OSD. Toggle at runtime via right-click → "Show cost ticker". |
 | `show_news` | `false` | Whether the live Anthropic/Claude news headline strip is shown on the OSD. Off by default because it makes outbound calls to a 3rd-party feed. Toggle at runtime via right-click → "Show news ticker". |
+| `ai_report_enabled` | `false` | Whether the AI-generated weekly report is produced. **Off by default** because it spends your Claude subscription credentials on a Haiku call. See [AI-generated weekly report](#ai-generated-weekly-report). |
 | `osd_position` | `top-right` | Where the OSD anchors: `top-left`, `top-right`, `bottom-left`, `bottom-right`, or `custom`. Set from right-click → "OSD Position", or automatically to `custom` when you drag the overlay. |
 | `osd_x` / `osd_y` | `null` | Exact screen coordinates used only when `osd_position` is `custom`. Written automatically on drag. |
 | `osd_scale` | `1.0` | OSD zoom level (0.6–4.0). Updated automatically when you scroll the mouse wheel over the OSD, so it reopens at the same size. |

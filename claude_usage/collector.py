@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import glob
+import itertools
 import json
 import math
 import os
@@ -32,7 +33,7 @@ from claude_usage.burn import (
 from claude_usage.cache_analyzer import CacheOpportunity, analyze_cache_opportunities
 from claude_usage.history import aggregate, append_sample, load_samples, prune
 from claude_usage.live_stream import LiveActivity, detect_live_activity
-from claude_usage.subagents import count_active_subagents
+from claude_usage.subagents import count_active_subagents, iter_subagent_transcripts
 from claude_usage.ticker import TickerItem, scan_ticker_items
 from claude_usage.trends import daily_heatmap, hourly_histogram, monthly_summary
 from claude_usage.news_fetcher import NewsItem, get_news_items
@@ -242,26 +243,26 @@ def _iter_usage_files(projects_dir: str, mtime_cutoff: float):
     """Yield ``(path, project_name)`` for every billed conversation JSONL.
 
     Covers top-level sessions (``projects/<proj>/<session>.jsonl``) AND Task
-    subagent transcripts (``projects/<proj>/<session>/subagents/agent-*.jsonl``).
+    subagent transcripts anywhere under ``projects/<proj>/<session>/subagents/``,
+    including the ``workflows/<wf-id>/`` level the runner nests them at.
     Subagent turns are separate API calls with their own message ids — not
     replays of the parent's usage — so leaving them out under-reports spend.
     Any id that does appear in both is counted once by the callers' shared
     ``seen_msg_ids`` set. Files not modified since *mtime_cutoff* are skipped.
     """
-    patterns = (
-        os.path.join(projects_dir, "*", "*.jsonl"),
-        os.path.join(projects_dir, "*", "*", "subagents", "*.jsonl"),
+    paths = itertools.chain(
+        glob.glob(os.path.join(projects_dir, "*", "*.jsonl")),
+        iter_subagent_transcripts(projects_dir),
     )
-    for pattern in patterns:
-        for jsonl_path in glob.glob(pattern):
-            try:
-                if os.path.getmtime(jsonl_path) < mtime_cutoff:
-                    continue
-            except OSError:
+    for jsonl_path in paths:
+        try:
+            if os.path.getmtime(jsonl_path) < mtime_cutoff:
                 continue
-            # Project = first directory under projects/ (e.g. "-home-user-my-project").
-            rel = os.path.relpath(jsonl_path, projects_dir)
-            yield jsonl_path, rel.split(os.sep, 1)[0]
+        except OSError:
+            continue
+        # Project = first directory under projects/ (e.g. "-home-user-my-project").
+        rel = os.path.relpath(jsonl_path, projects_dir)
+        yield jsonl_path, rel.split(os.sep, 1)[0]
 
 
 def _cache_creation_1h(usage: dict[str, Any]) -> int:
@@ -300,6 +301,13 @@ def _is_duplicate_turn(msg: dict[str, Any], seen_msg_ids: set[str] | None) -> bo
     Summing each line over-counts tokens and cost ~2x, so only the first line
     per ``message.id`` counts. Lines without an id can't be deduplicated and
     are counted as-is.
+
+    A resumed or forked session gets a replay of the turn with every usage
+    field zeroed. Those lines never claim the id, because "first line wins"
+    would otherwise resolve on ``glob`` order and silently drop the real
+    figures (one message in the maintainer's logs carries 956k cache-read
+    tokens in one file and zeros in another). Claiming only on real usage
+    makes the result independent of directory order.
     """
     if seen_msg_ids is None:
         return False
@@ -308,6 +316,8 @@ def _is_duplicate_turn(msg: dict[str, Any], seen_msg_ids: set[str] | None) -> bo
         return False
     if msg_id in seen_msg_ids:
         return True
+    if not any(_usage_counts(msg.get("usage", {}))):
+        return False
     seen_msg_ids.add(msg_id)
     return False
 
@@ -1005,6 +1015,9 @@ def _load_statusline_rate_limits(
     path = str(config.get("statusline_cache_path", "") or "")
     if not path:
         return None
+    # Same trap as claude_dir: a "~/..." value here would fail open() and the
+    # bare except below would swallow it, silently disabling the fast path.
+    path = os.path.expanduser(path)
     try:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
@@ -1293,10 +1306,14 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
     # Claude-authored weekly report — we only *read* the on-disk cache here;
     # regeneration happens in a background thread from the widget so the
     # refresh path stays synchronous and never blocks on a network call.
-    from claude_usage.ai_report import load_cached_report
-    cached_report = load_cached_report(claude_dir, now=now_ts)
-    if cached_report is not None:
-        stats.weekly_report_text = cached_report.text
+    # Opt-in, and the flag has to gate the cache read as well as generation:
+    # a stale weekly-report.json would otherwise keep the card on screen for
+    # up to an hour after the user turned the feature off.
+    if config.get("ai_report_enabled"):
+        from claude_usage.ai_report import load_cached_report
+        cached_report = load_cached_report(claude_dir, now=now_ts)
+        if cached_report is not None:
+            stats.weekly_report_text = cached_report.text
 
     # Burn-rate forecasts: project when utilization will hit 100% at the current rate.
     # Requires at least 2 samples in the window; falls back to an empty dict otherwise.

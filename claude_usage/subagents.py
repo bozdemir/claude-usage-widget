@@ -1,7 +1,9 @@
 """Count subagent (Task tool) processes that are currently active.
 
 Claude Code writes each subagent session to
-``~/.claude/projects/<proj>/<session-uuid>/subagents/agent-*.jsonl``. A file
+``~/.claude/projects/<proj>/<session-uuid>/subagents/agent-*.jsonl``, and
+since the workflow runner landed, one level deeper again under
+``subagents/workflows/<wf-id>/agent-*.jsonl``. A file
 whose mtime is within :data:`SUBAGENT_ACTIVE_SECONDS` is assumed to belong
 to a still-running subagent — the JSONL is line-flushed as the agent
 writes, so a recent mtime is a reliable "this process is working" signal.
@@ -23,6 +25,21 @@ import time
 SUBAGENT_ACTIVE_SECONDS = 60
 
 
+def iter_subagent_transcripts(projects_dir: str) -> list[str]:
+    """Return every Task subagent transcript path under *projects_dir*.
+
+    Walks the whole ``subagents/`` subtree rather than just its top level:
+    Claude Code nests workflow-spawned agents under
+    ``subagents/workflows/<wf-id>/``, and a shallow ``subagents/*.jsonl``
+    glob misses nearly all of them (2 of 363 on the maintainer's machine).
+
+    Matches ``agent-*.jsonl`` specifically so the sibling ``journal.jsonl``
+    files, which carry no assistant usage, are never opened.
+    """
+    pattern = os.path.join(projects_dir, "*", "*", "subagents", "**", "agent-*.jsonl")
+    return glob.glob(pattern, recursive=True)
+
+
 def count_active_subagents(claude_dir: str, now: float | None = None) -> int:
     """Return the number of subagent JSONLs touched in the last ACTIVE window.
 
@@ -36,8 +53,7 @@ def count_active_subagents(claude_dir: str, now: float | None = None) -> int:
     cutoff = now_ts - SUBAGENT_ACTIVE_SECONDS
 
     count = 0
-    pattern = os.path.join(projects_dir, "*", "*", "subagents", "agent-*.jsonl")
-    for path in glob.glob(pattern):
+    for path in iter_subagent_transcripts(projects_dir):
         try:
             if os.path.getmtime(path) >= cutoff:
                 count += 1

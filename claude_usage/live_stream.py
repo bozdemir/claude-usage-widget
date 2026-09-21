@@ -11,6 +11,7 @@ Pure module — no GUI, no threads.  The caller decides how often to poll.
 from __future__ import annotations
 
 import glob
+import itertools
 import json
 import os
 import time
@@ -27,6 +28,9 @@ ACTIVE_CUTOFF_SECONDS = 90
 FILE_MTIME_CUTOFF_SECONDS = 10 * 60
 
 
+from claude_usage.subagents import iter_subagent_transcripts
+
+
 @dataclass
 class LiveActivity:
     """Instantaneous usage snapshot for the OSD live indicator."""
@@ -40,14 +44,17 @@ class LiveActivity:
 def _iter_recent_jsonl(projects_dir: str, mtime_cutoff: float) -> Iterator[str]:
     """Yield conversation JSONL paths whose mtime is >= *mtime_cutoff*.
 
-    Skips ``/subagents/`` paths to avoid double-counting child sessions that
-    were spawned from the parent.
+    Includes Task subagent transcripts: they are separate API calls, so work
+    done by subagents is real throughput and belongs in the tok/min rate.
+    Turns are deduped by ``message.id`` downstream.
     """
     if not os.path.isdir(projects_dir):
         return
-    for path in glob.glob(os.path.join(projects_dir, "*", "*.jsonl")):
-        if os.sep + "subagents" + os.sep in path:
-            continue
+    paths = itertools.chain(
+        glob.glob(os.path.join(projects_dir, "*", "*.jsonl")),
+        iter_subagent_transcripts(projects_dir),
+    )
+    for path in paths:
         try:
             if os.path.getmtime(path) < mtime_cutoff:
                 continue

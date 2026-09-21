@@ -112,6 +112,14 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
         "cache_read": 1.50,
         "cache_creation": 18.75,
     },
+    # Anthropic's published alias for Opus 4 is "claude-opus-4-0"; the bare
+    # form above only catches the dated id after the -YYYYMMDD strip.
+    "claude-opus-4-0": {
+        "input": 15.0,
+        "output": 75.0,
+        "cache_read": 1.50,
+        "cache_creation": 18.75,
+    },
     "claude-sonnet-4-5": {
         "input": 3.0,
         "output": 15.0,
@@ -119,6 +127,13 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
         "cache_creation": 3.75,
     },
     "claude-sonnet-4": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.30,
+        "cache_creation": 3.75,
+    },
+    # Likewise "claude-sonnet-4-0" is the published alias for Sonnet 4.
+    "claude-sonnet-4-0": {
         "input": 3.0,
         "output": 15.0,
         "cache_read": 0.30,
@@ -167,7 +182,7 @@ _FALLBACK_MODEL = "claude-sonnet-4-6"
 # points at the most recent known member of that family.
 _FAMILY_FALLBACK: Dict[str, str] = {
     "opus": "claude-opus-5",
-    "fable": "claude-fable-5",
+    "fable": "claude-fable-5-1",
     "sonnet": "claude-sonnet-5",
     "haiku": "claude-haiku-4-5-20251001",
 }
