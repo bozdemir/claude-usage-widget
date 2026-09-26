@@ -45,7 +45,9 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
     },
     # Opus 5.5 (Sep 2026): successor to Opus 5 at a LOWER $4/$20 tier, with
     # cache reads at $0.20 (0.05x input, not the usual 0.1x). Must be tabled:
-    # the "opus" family fallback resolves to Opus 5 and over-reported it 25%.
+    # the "opus" family fallback resolves to Opus 5, which over-reported it
+    # 25% on input/output but 2.5x on cache reads ($0.50 vs $0.20) — ~2x
+    # overall on cache-read-heavy Claude Code traffic.
     # (Fast mode bills $8/$40 but shares the model id; we price standard.)
     "claude-opus-5-5": {
         "input": 4.0,

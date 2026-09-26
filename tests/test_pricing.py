@@ -139,8 +139,8 @@ class TestCalculateCostUnknownModel:
 
     def test_opus_5_5_is_tabled_at_its_lower_tier_without_warning(self):
         """claude-opus-5-5 is $4/$20 with $0.20 cache reads — cheaper than
-        Opus 5. Untabled, the family fallback billed it at Opus 5's $5/$25
-        (a 25% over-report)."""
+        Opus 5. Untabled, the family fallback billed it at Opus 5's rates:
+        25% high on input/output, 2.5x high on cache reads ($0.50)."""
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             result = calculate_cost("claude-opus-5-5", 1_000_000, 1_000_000,
