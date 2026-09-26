@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- **`claude-opus-5-5` priced at its own tier** ($4/$20, cache reads $0.20).
+  Untabled, the Opus family fallback billed it at Opus 5's $5/$25 — a 25%
+  over-report — and logged an "unknown model" warning every refresh.
+
 ## 0.13.0
 
 ### Fixed

@@ -7,7 +7,8 @@ callers request an unknown model (in which case we silently fall back to
 Sonnet pricing so billing never crashes a running collector).
 
 Cache rates follow the standard Anthropic formula:
-    cache_read        = input_rate × 0.1   (0.025 on Fable 5.1; tabled per model)
+    cache_read        = input_rate × 0.1   (0.025 on Fable 5.1, 0.05 on Opus 5.5;
+                                            tabled per model)
     cache_creation    = input_rate × 1.25  (5-minute TTL writes)
     cache_creation_1h = input_rate × 2     (1-hour TTL writes)
 """
@@ -41,6 +42,16 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
         "output": 25.0,
         "cache_read": 0.50,
         "cache_creation": 6.25,
+    },
+    # Opus 5.5 (Sep 2026): successor to Opus 5 at a LOWER $4/$20 tier, with
+    # cache reads at $0.20 (0.05x input, not the usual 0.1x). Must be tabled:
+    # the "opus" family fallback resolves to Opus 5 and over-reported it 25%.
+    # (Fast mode bills $8/$40 but shares the model id; we price standard.)
+    "claude-opus-5-5": {
+        "input": 4.0,
+        "output": 20.0,
+        "cache_read": 0.20,
+        "cache_creation": 5.00,
     },
     # Opus 4.7 (July 2026): $5 input, $25 output — consistent across
     # Anthropic API, Bedrock, Vertex AI, and Foundry.
@@ -179,7 +190,10 @@ _FALLBACK_MODEL = "claude-sonnet-4-6"
 # before the table above is updated). Anthropic embeds the family in every
 # model id, so matching on it keeps a new point release billed at its real
 # tier instead of being silently under-reported at Sonnet rates. Each value
-# points at the most recent known member of that family.
+# points at a recent member priced at the family's standard tier — not
+# necessarily the newest: Opus stays on Opus 5 ($5/$25) because Opus 5.5's
+# $4/$20 is a price cut, and an unknown Opus id is likelier an older/dated
+# variant at the $5 tier than a newer, cheaper release.
 _FAMILY_FALLBACK: Dict[str, str] = {
     "opus": "claude-opus-5",
     "fable": "claude-fable-5-1",

@@ -137,6 +137,23 @@ class TestCalculateCostUnknownModel:
         assert _approx(result["output"], 25.0)
         assert not caught
 
+    def test_opus_5_5_is_tabled_at_its_lower_tier_without_warning(self):
+        """claude-opus-5-5 is $4/$20 with $0.20 cache reads — cheaper than
+        Opus 5. Untabled, the family fallback billed it at Opus 5's $5/$25
+        (a 25% over-report)."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = calculate_cost("claude-opus-5-5", 1_000_000, 1_000_000,
+                                    cache_read=1_000_000,
+                                    cache_creation=1_000_000,
+                                    cache_creation_1h=400_000)
+        assert _approx(result["input"], 4.0)
+        assert _approx(result["output"], 20.0)
+        assert _approx(result["cache_read"], 0.20)
+        # 600k 5m writes x $5 + 400k 1h writes x $8.
+        assert _approx(result["cache_creation"], 3.0 + 3.2)
+        assert not caught
+
     def test_fable_5_is_priced_above_sonnet(self):
         """Fable 5 is a premium tier ($10/$50) — it must NOT be billed at the
         Sonnet fallback ($3/$15), which under-reported it ~3.3x."""
