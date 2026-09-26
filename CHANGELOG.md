@@ -3,6 +3,17 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- **`claude-opus-5-5` priced at its own tier** ($4/$20, cache reads $0.20).
+  Untabled, the Opus family fallback billed it at Opus 5's rates: 25% high on
+  input/output and 2.5x high on cache reads ($0.50 vs $0.20). Claude Code
+  traffic is mostly cache reads, so Opus 5.5 cost showed about **2x** its real
+  figure (a real day: $43.09 shown vs $20.94 actual). It also logged an
+  "unknown model" warning every refresh.
+
 ## 0.13.0
 
 ### Fixed
