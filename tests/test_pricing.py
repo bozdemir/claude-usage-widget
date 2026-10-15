@@ -9,6 +9,7 @@ import pytest
 
 from claude_usage.pricing import (
     MODEL_PRICING,
+    billing_model,
     calculate_cost,
     calculate_stats_cost,
 )
@@ -171,6 +172,47 @@ class TestCalculateCostUnknownModel:
         # 600k 5m writes x $2.50 + 400k 1h writes x $4.
         assert _approx(result["cache_creation"], 1.5 + 1.6)
         assert not caught
+
+    def test_haiku_5_5_short_prompt_card_without_warning(self):
+        """claude-haiku-5-5 up to 100,000 prompt tokens: $0.10 input, $0.50
+        output, $0.01 cache reads, $0.125 5m / $0.20 1h writes. Untabled, the
+        haiku fallback billed it as Haiku 4.5 ($1/$5), 10x the real rate."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = calculate_cost("claude-haiku-5-5", 1_000_000, 1_000_000,
+                                    cache_read=1_000_000,
+                                    cache_creation=1_000_000,
+                                    cache_creation_1h=400_000)
+        assert _approx(result["input"], 0.10)
+        assert _approx(result["output"], 0.50)
+        assert _approx(result["cache_read"], 0.01)
+        # 600k 5m writes x $0.125 + 400k 1h writes x $0.20.
+        assert _approx(result["cache_creation"], 0.075 + 0.08)
+        assert not caught
+
+    def test_haiku_5_5_long_prompt_card(self):
+        """Over 100,000 prompt tokens the whole request moves to the long
+        card: $0.50 input, $2.50 output, $0.05 reads, $0.625 / $1.00 writes."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = calculate_cost(billing_model("claude-haiku-5-5", 100_001),
+                                    1_000_000, 1_000_000,
+                                    cache_read=1_000_000,
+                                    cache_creation=1_000_000,
+                                    cache_creation_1h=400_000)
+        assert _approx(result["input"], 0.50)
+        assert _approx(result["output"], 2.50)
+        assert _approx(result["cache_read"], 0.05)
+        assert _approx(result["cache_creation"], 600_000 * 0.625 / 1e6 + 400_000 * 1.00 / 1e6)
+        assert not caught
+
+    def test_billing_model_tier_boundary(self):
+        """"Up to 100,000 tokens" is the short card, inclusive; one more token
+        is the long card. Models without a prompt-length tier pass through."""
+        assert billing_model("claude-haiku-5-5", 100_000) == "claude-haiku-5-5"
+        assert billing_model("claude-haiku-5-5", 100_001) != "claude-haiku-5-5"
+        assert billing_model("claude-opus-5-5", 900_000) == "claude-opus-5-5"
+        assert billing_model("unknown", 900_000) == "unknown"
 
     def test_fable_5_is_priced_above_sonnet(self):
         """Fable 5 is a premium tier ($10/$50) — it must NOT be billed at the

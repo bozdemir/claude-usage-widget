@@ -161,6 +161,23 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
         "cache_read": 0.30,
         "cache_creation": 3.75,
     },
+    # Haiku 5.5 is priced by prompt length, per request: up to 100,000
+    # prompt tokens (input + cache reads + cache writes) it is $0.10/$0.50,
+    # over that the WHOLE request, output included, is $0.50/$2.50. The
+    # second card lives under its own key; billing_model() picks it per
+    # request before anything is aggregated (see _LONG_PROMPT_TIERS).
+    "claude-haiku-5-5": {
+        "input": 0.10,
+        "output": 0.50,
+        "cache_read": 0.01,
+        "cache_creation": 0.125,
+    },
+    "claude-haiku-5-5[>100k]": {
+        "input": 0.50,
+        "output": 2.50,
+        "cache_read": 0.05,
+        "cache_creation": 0.625,
+    },
     # Haiku 4.5: $1 input, $5 output (entry-tier pricing).
     "claude-haiku-4-5": {
         "input": 1.0,
@@ -243,6 +260,31 @@ def _family_fallback_model(model: str) -> str | None:
         if family in lowered:
             return representative
     return None
+
+
+# Models whose price depends on the length of each request's prompt:
+# model id -> (threshold, key of the rate card used above the threshold).
+# Anthropic counts every input token toward the threshold, cache reads and
+# cache writes included, and prices each request on its own.
+_LONG_PROMPT_TIERS: Dict[str, tuple[int, str]] = {
+    "claude-haiku-5-5": (100_000, "claude-haiku-5-5[>100k]"),
+}
+
+
+def billing_model(model: str, prompt_tokens: int) -> str:
+    """Return the pricing key for ONE request of *model*.
+
+    For most models that is just *model*. For a prompt-length-tiered model
+    (Haiku 5.5) a request whose prompt is over the threshold is billed
+    entirely at a second rate card, so its tokens have to be kept apart from
+    the short requests: pricing a summed bucket would decide the tier on the
+    total, not per request. Callers pass ``input + cache_read +
+    cache_creation`` for that single request, before aggregating.
+    """
+    tier = _LONG_PROMPT_TIERS.get(_DATE_SUFFIX.sub("", model))
+    if tier is not None and prompt_tokens > tier[0]:
+        return tier[1]
+    return model
 
 
 def _resolve_pricing(model: str) -> Dict[str, float]:

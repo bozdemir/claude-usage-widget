@@ -145,6 +145,21 @@ def test_cost_matches_anthropic_pricing_exactly(tmp_path):
     assert abs(items[0].cost_usd - 0.0165) < 1e-9
 
 
+def test_haiku_5_5_long_prompt_turn_uses_long_card(tmp_path):
+    """A Haiku 5.5 turn whose prompt is over 100,000 tokens is billed at the
+    long card in its entirety: $0.50/M input + $2.50/M output + $0.05/M
+    cache reads. 1000*0.50 + 2000*2.50 + 150_000*0.05 = 13_000 / 1M."""
+    now = datetime.now(timezone.utc)
+    entry = _assistant_entry(
+        now - timedelta(seconds=30), "msg_h", 2000,
+        model="claude-haiku-5-5", input_tokens=1000, cache_read=150_000,
+    )
+    _write(str(tmp_path / "projects" / "p" / "s.jsonl"), [entry])
+    items = scan_ticker_items(str(tmp_path), now=now.timestamp())
+    assert len(items) == 1
+    assert abs(items[0].cost_usd - 0.013) < 1e-9
+
+
 def test_cost_reflects_model_pricing(tmp_path):
     now = datetime.now(timezone.utc)
     entries = [

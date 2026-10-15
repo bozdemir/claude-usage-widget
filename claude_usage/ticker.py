@@ -22,7 +22,7 @@ from datetime import datetime
 from typing import Iterator
 
 from claude_usage.subagents import iter_subagent_transcripts
-from claude_usage.pricing import calculate_cost
+from claude_usage.pricing import billing_model, calculate_cost
 
 # How far back we surface items on the ticker.  Longer than the live-stream
 # window because the ticker shows *finished* actions, not just "is burning".
@@ -110,7 +110,9 @@ def _extract_ticker_item(entry: dict) -> TickerItem | None:
 
     model = str(msg.get("model") or entry.get("requestModel") or "unknown")
     cost = calculate_cost(
-        model,
+        # Haiku 5.5's long-prompt card applies per turn; the item keeps the
+        # real model id for display.
+        billing_model(model, input_t + cache_read + cache_creation),
         input_tokens=input_t,
         output_tokens=output_t,
         cache_read=cache_read,

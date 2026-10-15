@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import patch
 
+from claude_usage.pricing import billing_model
 from claude_usage.collector import (
     UsageStats,
     _collect_month_tokens,
@@ -650,6 +651,39 @@ class TestCollectTokensSinglePass(unittest.TestCase):
                     self.assertEqual(result["today_output"], 3517)
                     bucket = result["today_by_model_detailed"]["claude-opus-4-6"]
                     self.assertEqual(bucket["cache_read"], 956563)
+
+    def test_haiku_5_5_prompt_length_tier_is_chosen_per_request(self) -> None:
+        """Haiku 5.5 prices each request by its own prompt length (input +
+        cache reads + cache writes). A long request must not be averaged in
+        with short ones: it lands in its own long-card bucket, in the
+        week/today scan and in the month scan alike."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conv = _make_conversation_dir(tmpdir)
+            today_str = datetime.now().strftime("%Y-%m-%d")
+
+            def turn(msg_id: str, cache_read: int) -> dict[str, Any]:
+                entry = _assistant_entry(f"{today_str}T10:00:00",
+                                         model="claude-haiku-5-5",
+                                         output_tokens=1000, input_tokens=500,
+                                         cache_read=cache_read)
+                entry["message"]["id"] = msg_id
+                return entry
+
+            # 500 + 99_500 = 100_000 (short card, inclusive) and
+            # 500 + 150_000 = 150_500 (long card).
+            _write_conversation(conv, [turn("msg_short", 99_500),
+                                       turn("msg_long", 150_000)])
+
+            result = _collect_tokens_single_pass(tmpdir, today_str, [today_str])
+            buckets = result["today_by_model_detailed"]
+            long_key = billing_model("claude-haiku-5-5", 150_500)
+            self.assertEqual(buckets["claude-haiku-5-5"]["cache_read"], 99_500)
+            self.assertEqual(buckets[long_key]["cache_read"], 150_000)
+            self.assertEqual(result["today_output"], 2000)
+
+            month = _collect_month_tokens(tmpdir, today_str[:7])
+            self.assertEqual(month["claude-haiku-5-5"]["output"], 1000)
+            self.assertEqual(month[long_key]["output"], 1000)
 
     def test_splits_out_one_hour_cache_writes(self) -> None:
         """usage.cache_creation.ephemeral_1h_input_tokens is carried as its own

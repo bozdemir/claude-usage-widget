@@ -293,6 +293,13 @@ def _usage_counts(usage: dict[str, Any]) -> tuple[int, int, int, int, int]:
     )
 
 
+def _prompt_tokens(counts: tuple[int, int, int, int, int]) -> int:
+    """One request's prompt length as Anthropic counts it for prompt-length
+    pricing: every input token, cache reads and cache writes included."""
+    input_t, _output, cache_read, cache_creation, _cache_1h = counts
+    return input_t + cache_read + cache_creation
+
+
 def _is_duplicate_turn(msg: dict[str, Any], seen_msg_ids: set[str] | None) -> bool:
     """True if this assistant message id was already counted in this pass.
 
@@ -389,7 +396,9 @@ def _parse_tokens_file(
             usage = msg.get("usage", {})
             counts = _usage_counts(usage)
             output_tokens = counts[1]
-            model = msg.get("model", "unknown")
+            # Per request, before aggregating: a prompt-length-tiered model
+            # (Haiku 5.5) gets a separate bucket for its long-prompt requests.
+            model = pricing.billing_model(msg.get("model", "unknown"), _prompt_tokens(counts))
 
             result["week_output"] += output_tokens
 
@@ -470,9 +479,10 @@ def _parse_month_tokens_file(
                 continue
             if _is_duplicate_turn(msg, seen_msg_ids):
                 continue
-            model = msg.get("model", "unknown")
+            counts = _usage_counts(msg.get("usage", {}))
+            model = pricing.billing_model(msg.get("model", "unknown"), _prompt_tokens(counts))
             bucket = by_model.setdefault(model, _new_token_bucket())
-            _add_to_bucket(bucket, _usage_counts(msg.get("usage", {})))
+            _add_to_bucket(bucket, counts)
 
 
 # Preserved for test compatibility -- superseded by _collect_tokens_single_pass
