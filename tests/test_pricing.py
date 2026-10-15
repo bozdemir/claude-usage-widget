@@ -214,6 +214,29 @@ class TestCalculateCostUnknownModel:
         assert billing_model("claude-opus-5-5", 900_000) == "claude-opus-5-5"
         assert billing_model("unknown", 900_000) == "unknown"
 
+    def test_mythos_models_are_tabled_at_their_tier(self):
+        """Mythos 5.1 / Mythos 5 (Project Glasswing) are $10/$50 like Fable,
+        with $0.25 and $1.00 cache reads. Untabled, "mythos" matched no
+        family, so they fell all the way to the generic Sonnet fallback and
+        were under-reported 3.3x."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            m51 = calculate_cost("claude-mythos-5-1", 1_000_000, 1_000_000, cache_read=1_000_000)
+            m5 = calculate_cost("claude-mythos-5", 1_000_000, 1_000_000, cache_read=1_000_000)
+        assert _approx(m51["input"], 10.0) and _approx(m51["output"], 50.0)
+        assert _approx(m51["cache_read"], 0.25)
+        assert _approx(m5["cache_read"], 1.00)
+        assert not caught
+
+    def test_unknown_mythos_falls_back_to_mythos_pricing(self):
+        """A future Mythos release resolves to the Mythos tier (most expensive
+        current member, Mythos 5), not the $3 Sonnet fallback."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            result = calculate_cost("claude-mythos-9-9", 1_000_000, 0, cache_read=1_000_000)
+        assert _approx(result["input"], 10.0)
+        assert _approx(result["cache_read"], 1.00)
+
     def test_fable_5_is_priced_above_sonnet(self):
         """Fable 5 is a premium tier ($10/$50) — it must NOT be billed at the
         Sonnet fallback ($3/$15), which under-reported it ~3.3x."""

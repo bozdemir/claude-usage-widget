@@ -112,6 +112,22 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
         "cache_read": 0.25,
         "cache_creation": 12.50,
     },
+    # Mythos 5.1 / Mythos 5 (Project Glasswing, limited availability) price
+    # exactly like Fable 5.1 / Fable 5. "mythos" matched no family, so
+    # before these rows they fell to the generic Sonnet fallback ($3/$15)
+    # and were under-reported 3.3x.
+    "claude-mythos-5-1": {
+        "input": 10.0,
+        "output": 50.0,
+        "cache_read": 0.25,
+        "cache_creation": 12.50,
+    },
+    "claude-mythos-5": {
+        "input": 10.0,
+        "output": 50.0,
+        "cache_read": 1.00,
+        "cache_creation": 12.50,
+    },
     # Older models still seen in Claude Code logs (Task subagents often pin
     # them). Tabled explicitly because the family fallback maps them to the
     # newest family member, which is priced differently: Sonnet 4.x is $3/$15
@@ -225,10 +241,12 @@ _FALLBACK_MODEL = "claude-sonnet-4-6"
 # the family rather than the newest: in a spend tool an over-count is the
 # safer mistake, and the unknown-model warning fires either way, which is
 # the signal to table it. Hence Opus 5 ($5/$25, $0.50 reads) over the
-# cheaper Opus 5.5, and Fable 5 ($1.00 reads) over Fable 5.1 ($0.25).
+# cheaper Opus 5.5, Fable 5 / Mythos 5 ($1.00 reads) over their 5.1
+# ($0.25), and Haiku 4.5 ($1/$5) over Haiku 5.5.
 _FAMILY_FALLBACK: Dict[str, str] = {
     "opus": "claude-opus-5",
     "fable": "claude-fable-5",
+    "mythos": "claude-mythos-5",
     "sonnet": "claude-sonnet-5",
     "haiku": "claude-haiku-4-5-20251001",
 }
