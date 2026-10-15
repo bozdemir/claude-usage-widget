@@ -155,9 +155,10 @@ class TestCalculateCostUnknownModel:
         assert not caught
 
     def test_sonnet_5_5_is_tabled_without_warning(self):
-        """claude-sonnet-5-5 is $2/$10 with $0.20 cache reads, the same tier
-        as Sonnet 5. It must be tabled so refreshes stop warning about an
-        unknown model."""
+        """claude-sonnet-5-5 is $2/$10 like Sonnet 5, but its cache hits are
+        0.05x input ($0.10), not the usual 0.1x ($0.20). Untabled, the family
+        fallback billed them at Sonnet 5's $0.20, double the real rate, and
+        every refresh warned about an unknown model."""
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             result = calculate_cost("claude-sonnet-5-5", 1_000_000, 1_000_000,
@@ -166,7 +167,7 @@ class TestCalculateCostUnknownModel:
                                     cache_creation_1h=400_000)
         assert _approx(result["input"], 2.0)
         assert _approx(result["output"], 10.0)
-        assert _approx(result["cache_read"], 0.20)
+        assert _approx(result["cache_read"], 0.10)
         # 600k 5m writes x $2.50 + 400k 1h writes x $4.
         assert _approx(result["cache_creation"], 1.5 + 1.6)
         assert not caught

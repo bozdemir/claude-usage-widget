@@ -7,8 +7,8 @@ callers request an unknown model (in which case we silently fall back to
 Sonnet pricing so billing never crashes a running collector).
 
 Cache rates follow the standard Anthropic formula:
-    cache_read        = input_rate × 0.1   (0.025 on Fable 5.1, 0.05 on Opus 5.5;
-                                            tabled per model)
+    cache_read        = input_rate × 0.1   (0.025 on Fable 5.1, 0.05 on Opus 5.5
+                                            and Sonnet 5.5; tabled per model)
     cache_creation    = input_rate × 1.25  (5-minute TTL writes)
     cache_creation_1h = input_rate × 2     (1-hour TTL writes)
 """
@@ -70,13 +70,13 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
         "cache_read": 0.50,
         "cache_creation": 6.25,
     },
-    # Sonnet 5.5: successor to Sonnet 5 at the same $2/$10 tier and $0.20
-    # cache reads. The "sonnet" family fallback already priced it correctly;
-    # tabling it stops the unknown-model warning on every refresh.
+    # Sonnet 5.5: successor to Sonnet 5 at the same $2/$10 tier, but like
+    # Opus 5.5 its cache hits bill at 0.05x input: $0.10, not Sonnet 5's
+    # $0.20. Untabled, the "sonnet" family fallback doubled every cache read.
     "claude-sonnet-5-5": {
         "input": 2.0,
         "output": 10.0,
-        "cache_read": 0.20,
+        "cache_read": 0.10,
         "cache_creation": 2.50,
     },
     # Sonnet 5 (launched 2026-06-30): $2 input / $10 output. Announced as
