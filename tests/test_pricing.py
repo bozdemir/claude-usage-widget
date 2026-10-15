@@ -154,6 +154,23 @@ class TestCalculateCostUnknownModel:
         assert _approx(result["cache_creation"], 3.0 + 3.2)
         assert not caught
 
+    def test_sonnet_5_5_is_tabled_without_warning(self):
+        """claude-sonnet-5-5 is $2/$10 with $0.20 cache reads, the same tier
+        as Sonnet 5. It must be tabled so refreshes stop warning about an
+        unknown model."""
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = calculate_cost("claude-sonnet-5-5", 1_000_000, 1_000_000,
+                                    cache_read=1_000_000,
+                                    cache_creation=1_000_000,
+                                    cache_creation_1h=400_000)
+        assert _approx(result["input"], 2.0)
+        assert _approx(result["output"], 10.0)
+        assert _approx(result["cache_read"], 0.20)
+        # 600k 5m writes x $2.50 + 400k 1h writes x $4.
+        assert _approx(result["cache_creation"], 1.5 + 1.6)
+        assert not caught
+
     def test_fable_5_is_priced_above_sonnet(self):
         """Fable 5 is a premium tier ($10/$50) — it must NOT be billed at the
         Sonnet fallback ($3/$15), which under-reported it ~3.3x."""

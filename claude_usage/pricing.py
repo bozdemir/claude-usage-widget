@@ -70,6 +70,15 @@ MODEL_PRICING: Dict[str, Dict[str, float]] = {
         "cache_read": 0.50,
         "cache_creation": 6.25,
     },
+    # Sonnet 5.5: successor to Sonnet 5 at the same $2/$10 tier and $0.20
+    # cache reads. The "sonnet" family fallback already priced it correctly;
+    # tabling it stops the unknown-model warning on every refresh.
+    "claude-sonnet-5-5": {
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.20,
+        "cache_creation": 2.50,
+    },
     # Sonnet 5 (launched 2026-06-30): $2 input / $10 output. Announced as
     # introductory pricing through 2026-08-31, but Anthropic has since made
     # $2/$10 the standard price — the scheduled rise to $3/$15 did not happen.
