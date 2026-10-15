@@ -3,6 +3,37 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## 0.13.2
+
+### Fixed
+
+- **The widget crashed on Python 3.10 and 3.11 with PySide6 6.12.0.**
+  PySide6-Essentials 6.12.0 (released 2026-10-08) drops a reference to `None`
+  on every void Qt call such as `setPen` or `fillRect`. Python 3.12+ is
+  unaffected because `None` is immortal there, but on 3.10/3.11 the count
+  reaches zero after a few hundred skin paints and the process aborts with
+  `Fatal Python error: none_dealloc`. The dependency now excludes 6.12.0.
+  If you installed on 3.10/3.11 since 8 October, upgrading the widget
+  downgrades PySide6 to a working release automatically, or run
+  `pip install 'PySide6-Essentials!=6.12.0'`.
+- **Sonnet 5.5 is tabled, and its cache reads cost half what the widget
+  showed.** Untabled, every refresh logged an "unknown model" warning and the
+  Sonnet fallback billed it as Sonnet 5. Sonnet 5.5 is $2/$10 like Sonnet 5,
+  but like Opus 5.5 its cache hits are 0.05x input: $0.10, not $0.20.
+  Thanks @Vincentcchu (#31).
+- **Haiku 5.5 was shown at about 10x its real cost.** It was untabled, so it
+  was billed as Haiku 4.5 ($1/$5). It is now priced at its own rates,
+  including its prompt-length tier: up to 100,000 prompt tokens a request is
+  $0.10/$0.50, over that the whole request is $0.50/$2.50. The tier is
+  decided for each request on its own, cache reads and writes included, as
+  Anthropic bills it.
+- **Mythos 5.1 and Mythos 5 were under-reported 3.3x.** They matched no model
+  family and fell all the way to the generic Sonnet fallback. They are now
+  tabled at their $10/$50 tier.
+
+Every row of Anthropic's model pricing table now matches the widget's
+exactly.
+
 ## 0.13.1
 
 ### Fixed
