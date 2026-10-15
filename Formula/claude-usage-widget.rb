@@ -17,7 +17,7 @@ class ClaudeUsageWidget < Formula
     system python, "-m", "venv", libexec
     pip = libexec/"bin/pip"
     system pip, "install", "--upgrade", "pip", "wheel"
-    system pip, "install", "PySide6-Essentials>=6.5,<7"
+    system pip, "install", "PySide6-Essentials>=6.5,<7,!=6.12.0"
     system pip, "install", buildpath
     bin.install_symlink libexec/"bin/claude-usage"
   end

@@ -34,7 +34,12 @@ classifiers = [
 # builds (which don't trust the system keychain). Notifications use the
 # platform's built-in CLI (notify-send on Linux, osascript on macOS).
 dependencies = [
-    "PySide6-Essentials>=6.5,<7",
+    # 6.12.0's generated bindings drop a reference to None on every void
+    # method call (setPen, setBrush, fillRect...). Harmless on Python 3.12+,
+    # where None is immortal, but on 3.10/3.11 the count reaches zero within
+    # a few hundred skin paints and the process aborts with
+    # "Fatal Python error: none_dealloc".
+    "PySide6-Essentials>=6.5,<7,!=6.12.0",
     "certifi>=2023.7.22",
 ]
 
