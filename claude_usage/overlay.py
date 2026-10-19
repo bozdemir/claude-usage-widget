@@ -861,18 +861,24 @@ class UsageOverlay(QWidget):
         col_w = w / 2
         ring_d = max(50.0, min(col_w * 0.58, 80 * s))
         ring_stroke = max(4.0, 7 * s)
-        ring_rows: list[tuple[tuple[str, float, int], ...]] = [(
-            ("Session", self._session_pct, self._session_reset),
-            ("Weekly",  self._weekly_pct,  self._weekly_reset),
+        ring_rows: list[tuple[tuple[int, str, float, int], ...]] = [(
+            (0, "Session", self._session_pct, self._session_reset),
+            (1, "Weekly",  self._weekly_pct,  self._weekly_reset),
         )]
+        # Each Codex ring sits under the Claude ring it mirrors (5h under
+        # Session, 7d under Weekly), so a lone weekly window keeps its column.
+        codex_cols = {"Codex 5h": 0, "Codex 7d": 1}
         codex_rows = self._codex_rows()
         if codex_rows:
-            ring_rows.append(tuple(codex_rows))
+            ring_rows.append(tuple(
+                (codex_cols[label], label, pct, reset_ts)
+                for label, pct, reset_ts in codex_rows
+            ))
         # Centre each ring inside its column, with room below for labels.
         for row_idx, row in enumerate(ring_rows):
             row_top = (12 + row_idx * CODEX_GAUGE_ROW_HEIGHT) * s
-            for idx, (label, pct, reset_ts) in enumerate(row):
-                cx = col_w * idx + col_w / 2
+            for col, label, pct, reset_ts in row:
+                cx = col_w * col + col_w / 2
                 cy = row_top + ring_d / 2
                 fill_color = _bar_color(pct, self._theme)
                 self._draw_ring(p, cx, cy, ring_d, ring_stroke, pct, fill_color)
