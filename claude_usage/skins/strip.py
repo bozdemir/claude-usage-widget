@@ -184,21 +184,22 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
         codex_top = base_bottom
         if scoped_pct is not None and getattr(data, "scoped_label", ""):
             codex_top = base_bottom + base_h
-        # Codex 5h — mirrors SESSION (accent, "{min}m" reset)
-        p.setPen(hex_to_qcolor(t["border"]))
-        p.drawLine(QPointF(rect.x() + 4 * s, codex_top),
-                   QPointF(rect.right() - 4 * s, codex_top))
-        seg(xs, mid_w * 2, "CODEX 5H", data.codex_session_pct,
-            f"{data.codex_session_reset_min}m", t["accent"],
-            top=codex_top, bh=base_h)
-        # Codex 7d — mirrors WEEKLY (accent2, "{hrs}h" reset)
-        codex_top += base_h
-        p.setPen(hex_to_qcolor(t["border"]))
-        p.drawLine(QPointF(rect.x() + 4 * s, codex_top),
-                   QPointF(rect.right() - 4 * s, codex_top))
-        seg(xs, mid_w * 2, "CODEX 7D", data.codex_weekly_pct,
-            f"{data.codex_weekly_reset_hrs}h", t["accent2"],
-            top=codex_top, bh=base_h)
+        # Codex 5h mirrors SESSION (accent, "{min}m" reset), Codex 7d mirrors
+        # WEEKLY (accent2, "{hrs}h" reset).
+        codex_rows = []
+        if data.codex_has_session:
+            codex_rows.append(("CODEX 5H", data.codex_session_pct,
+                               f"{data.codex_session_reset_min}m", t["accent"]))
+        if data.codex_has_weekly:
+            codex_rows.append(("CODEX 7D", data.codex_weekly_pct,
+                               f"{data.codex_weekly_reset_hrs}h", t["accent2"]))
+        for label, pct, reset, color_hex in codex_rows:
+            p.setPen(hex_to_qcolor(t["border"]))
+            p.drawLine(QPointF(rect.x() + 4 * s, codex_top),
+                       QPointF(rect.right() - 4 * s, codex_top))
+            seg(xs, mid_w * 2, label, pct, reset, color_hex,
+                top=codex_top, bh=base_h)
+            codex_top += base_h
 
 
 # ---- POPUP ---------------------------------------------------------

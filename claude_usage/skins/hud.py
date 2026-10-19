@@ -196,17 +196,19 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
         paint_gauge(p, cx, y_scoped, data.scoped_pct, scoped_label,
                     f"{data.scoped_reset_hrs}h {data.scoped_reset_min}m", s)
 
-    # Codex (optional second provider) — two more centred gauges below the
-    # pair (and below the scoped gauge if present), same renderer/fonts/spacing
-    # as SESSION/WEEKLY. The scoped gauge, when shown, occupies the first slot.
+    # Codex (optional second provider) — one centred gauge per window below
+    # the pair (and below the scoped gauge if present), same renderer/fonts/
+    # spacing as SESSION/WEEKLY. The scoped gauge, when shown, takes slot 1.
     if codex_present:
-        base = 1 if scoped_present else 0
-        y_codex_5h = y_mid + (base + 1) * single_row
-        paint_gauge(p, cx, y_codex_5h, data.codex_session_pct, "CODEX 5H",
-                    f"{data.codex_session_reset_min}m", s)
-        y_codex_7d = y_mid + (base + 2) * single_row
-        paint_gauge(p, cx, y_codex_7d, data.codex_weekly_pct, "CODEX 7D",
-                    f"{data.codex_weekly_reset_hrs}h {data.codex_weekly_reset_min}m", s)
+        slot = 2 if scoped_present else 1
+        if data.codex_has_session:
+            paint_gauge(p, cx, y_mid + slot * single_row, data.codex_session_pct,
+                        "CODEX 5H", f"{data.codex_session_reset_min}m", s)
+            slot += 1
+        if data.codex_has_weekly:
+            paint_gauge(p, cx, y_mid + slot * single_row, data.codex_weekly_pct,
+                        "CODEX 7D",
+                        f"{data.codex_weekly_reset_hrs}h {data.codex_weekly_reset_min}m", s)
 
     # Ticker strip along the bottom — bordered separator + amber-tiered
     # quartile colours matching the cockpit palette.

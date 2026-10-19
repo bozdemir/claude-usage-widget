@@ -25,8 +25,10 @@ def test_parse_both_windows():
         secondary={"usedPercent": 12.0, "resetsAt": FUTURE + 86400},
     ))
     assert parsed == {
+        "has_session": True,
         "session_pct": 0.542,
         "session_reset": FUTURE,
+        "has_weekly": True,
         "weekly_pct": 0.12,
         "weekly_reset": FUTURE + 86400,
     }

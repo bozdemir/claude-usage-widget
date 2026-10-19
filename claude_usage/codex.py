@@ -2,10 +2,12 @@
 
 Talks to the local ``codex`` CLI's ``app-server`` over stdio JSON-RPC:
 ``initialize`` -> ``initialized`` -> ``account/rateLimits/read``. The
-response carries a ``rateLimits`` object with a ``primary`` (~5h) and
-``secondary`` (weekly) window, each with ``usedPercent`` and ``resetsAt``
-— the same shape as Claude's session/weekly pair, so the overlay can
-render them with the exact same ring/bar primitives.
+response carries a ``rateLimits`` object with up to two windows,
+``primary`` and ``secondary``, each with ``usedPercent``, ``resetsAt`` and
+``windowDurationMins`` — the same shape as Claude's session/weekly pair, so
+the overlay can render them with the exact same ring/bar primitives. The
+slot does not identify the window: plans without a 5h limit send their
+weekly window as ``primary``, so windows are classified by duration.
 
 Spawning the app-server takes a couple of seconds, so results are cached
 on disk (`~/.cache/claude-usage/codex_limits.json`) and only refreshed
@@ -32,6 +34,8 @@ from typing import Any
 RPC_TIMEOUT_SECONDS = 12
 DEFAULT_POLL_SECONDS = 300
 CACHE_PATH = Path.home() / ".cache" / "claude-usage" / "codex_limits.json"
+# Codex windows are 5h (300 min) and weekly (10080 min); a day splits them.
+SESSION_WINDOW_MAX_MINS = 24 * 60
 _BIN_CANDIDATES = ("/opt/homebrew/bin/codex", "/usr/local/bin/codex")
 
 
@@ -135,9 +139,9 @@ def _rate_limits_rpc(codex_bin: str, timeout: float = RPC_TIMEOUT_SECONDS) -> di
 def parse_rate_limits(payload: Any) -> dict[str, Any] | None:
     """Extract the two utilization windows from a rateLimits/read result.
 
-    Returns ``{"session_pct", "session_reset", "weekly_pct", "weekly_reset"}``
-    (pct 0..1, reset as unix seconds, 0 when absent), or None when the
-    payload has no usable window data.
+    Returns ``{"has_session", "session_pct", "session_reset", "has_weekly",
+    "weekly_pct", "weekly_reset"}`` (pct 0..1, reset as unix seconds, 0 when
+    absent), or None when the payload has no usable window data.
     """
     if not isinstance(payload, dict):
         return None
@@ -161,15 +165,31 @@ def parse_rate_limits(payload: Any) -> dict[str, Any] | None:
             reset_ts //= 1000
         return pct, reset_ts
 
-    primary = window(limits.get("primary"))
-    secondary = window(limits.get("secondary"))
-    if primary is None and secondary is None:
+    session = weekly = None
+    for slot in ("primary", "secondary"):
+        block = limits.get(slot)
+        parsed = window(block)
+        if parsed is None:
+            continue
+        duration = block.get("windowDurationMins")
+        if isinstance(duration, (int, float)):
+            is_session = duration <= SESSION_WINDOW_MAX_MINS
+        else:
+            # Older app-servers omit the duration; their slots were fixed.
+            is_session = slot == "primary"
+        if is_session:
+            session = parsed
+        else:
+            weekly = parsed
+    if session is None and weekly is None:
         return None
     return {
-        "session_pct": primary[0] if primary else 0.0,
-        "session_reset": primary[1] if primary else 0,
-        "weekly_pct": secondary[0] if secondary else 0.0,
-        "weekly_reset": secondary[1] if secondary else 0,
+        "has_session": session is not None,
+        "session_pct": session[0] if session else 0.0,
+        "session_reset": session[1] if session else 0,
+        "has_weekly": weekly is not None,
+        "weekly_pct": weekly[0] if weekly else 0.0,
+        "weekly_reset": weekly[1] if weekly else 0,
     }
 
 
@@ -206,13 +226,15 @@ def _clamp_expired(parsed: dict[str, Any], now_ts: float) -> dict[str, Any]:
 def collect_codex(poll_seconds: int = DEFAULT_POLL_SECONDS) -> dict[str, Any]:
     """Return Codex utilization for the overlay; never raises.
 
-    ``{"available": bool, "session_pct", "session_reset", "weekly_pct",
-    "weekly_reset", "error": str}`` — available=False hides the Codex UI.
+    ``{"available": bool, "has_session", "session_pct", "session_reset",
+    "has_weekly", "weekly_pct", "weekly_reset", "error": str}`` —
+    available=False hides the Codex UI; has_session/has_weekly=False hides
+    just that window's row (e.g. plans with no 5h limit).
     """
     unavailable = {
         "available": False, "error": "",
-        "session_pct": 0.0, "session_reset": 0,
-        "weekly_pct": 0.0, "weekly_reset": 0,
+        "has_session": False, "session_pct": 0.0, "session_reset": 0,
+        "has_weekly": False, "weekly_pct": 0.0, "weekly_reset": 0,
     }
     if os.name != "posix":
         return {**unavailable, "error": "codex provider is POSIX-only for now"}
