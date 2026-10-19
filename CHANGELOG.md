@@ -3,6 +3,20 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## 0.13.3
+
+### Fixed
+
+- **Codex plans without a 5-hour limit showed their weekly usage as "Codex
+  5h".** The widget took the first window Codex reports to be the 5-hour one
+  and the second to be the weekly one. Plans with only a weekly limit (such as
+  business prolite) send their weekly window first, so it appeared as
+  "Codex 5h", above an empty "Codex 7d 0%" row. Windows are now told apart by
+  their length, and a window the plan doesn't have gets no row at all, in
+  every theme and in both bars and gauge view. In gauge view a lone weekly
+  ring sits under Claude's Weekly ring. Only matters if you've added `"codex"`
+  to `providers`. Thanks @atl3tico (#33).
+
 ## 0.13.2
 
 ### Fixed

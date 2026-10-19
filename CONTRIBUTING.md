@@ -38,7 +38,7 @@ QT_QPA_PLATFORM=offscreen python -m pytest -q
 ```
 
 The suite is fast and headless (Qt painting is exercised via the `offscreen`
-platform plugin — CI runs it the same way on Python 3.10–3.12). New behavior
+platform plugin — CI runs it the same way on Python 3.10–3.14). New behavior
 should come with a test; bug fixes should come with a regression test that
 fails before the fix.
 
