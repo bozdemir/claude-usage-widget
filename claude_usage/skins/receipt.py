@@ -178,31 +178,26 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     # way the scoped block does, so the ticker/footer flow down. When absent,
     # nothing runs and the layout is byte-for-byte the pre-Codex one.
     if getattr(data, "codex_available", False):
-        yy += 8 * s + 6 * s
-        draw_text(p, x, yy + fm.ascent(), "CODEX 5H",
-                  hex_to_qcolor(t["ink"]), body_f)
-        right = f"{int(data.codex_session_pct * 100)}% · {data.codex_session_reset_min}m"
-        rw = fm.horizontalAdvance(right)
-        draw_text(p, x + w - rw, yy + fm.ascent(), right,
-                  hex_to_qcolor(t["ink"]), body_f)
-        yy += fm.height() + 2 * s
-        p.setPen(hex_to_qcolor(t["rule"])); p.setBrush(hex_to_qcolor(t["bar_track"]))
-        p.drawRect(QRectF(x, yy, w, 8 * s))
-        p.setPen(Qt.NoPen); p.setBrush(hex_to_qcolor(t["ink"]))
-        p.drawRect(QRectF(x, yy, w * data.codex_session_pct, 8 * s))
-
-        yy += 8 * s + 6 * s
-        draw_text(p, x, yy + fm.ascent(), "CODEX 7D",
-                  hex_to_qcolor(t["ink"]), body_f)
-        right = f"{int(data.codex_weekly_pct * 100)}% · {data.codex_weekly_reset_hrs}h{data.codex_weekly_reset_min}m"
-        rw = fm.horizontalAdvance(right)
-        draw_text(p, x + w - rw, yy + fm.ascent(), right,
-                  hex_to_qcolor(t["ink"]), body_f)
-        yy += fm.height() + 2 * s
-        p.setPen(hex_to_qcolor(t["rule"])); p.setBrush(hex_to_qcolor(t["bar_track"]))
-        p.drawRect(QRectF(x, yy, w, 8 * s))
-        p.setPen(Qt.NoPen); p.setBrush(hex_to_qcolor(t["ink"]))
-        p.drawRect(QRectF(x, yy, w * data.codex_weekly_pct, 8 * s))
+        codex_rows = []
+        if data.codex_has_session:
+            codex_rows.append(("CODEX 5H", data.codex_session_pct,
+                               f"{data.codex_session_reset_min}m"))
+        if data.codex_has_weekly:
+            codex_rows.append(("CODEX 7D", data.codex_weekly_pct,
+                               f"{data.codex_weekly_reset_hrs}h{data.codex_weekly_reset_min}m"))
+        for label, pct, reset in codex_rows:
+            yy += 8 * s + 6 * s
+            draw_text(p, x, yy + fm.ascent(), label,
+                      hex_to_qcolor(t["ink"]), body_f)
+            right = f"{int(pct * 100)}% · {reset}"
+            rw = fm.horizontalAdvance(right)
+            draw_text(p, x + w - rw, yy + fm.ascent(), right,
+                      hex_to_qcolor(t["ink"]), body_f)
+            yy += fm.height() + 2 * s
+            p.setPen(hex_to_qcolor(t["rule"])); p.setBrush(hex_to_qcolor(t["bar_track"]))
+            p.drawRect(QRectF(x, yy, w, 8 * s))
+            p.setPen(Qt.NoPen); p.setBrush(hex_to_qcolor(t["ink"]))
+            p.drawRect(QRectF(x, yy, w * pct, 8 * s))
 
     # Ticker marquee (between the weekly bar and the thank-you footer).
     yy += 8 * s + 6 * s

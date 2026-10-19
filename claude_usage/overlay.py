@@ -223,8 +223,10 @@ class UsageOverlay(QWidget):
         # Optional Codex provider (opt-in via `providers` config). When
         # unavailable the OSD paints exactly as before.
         self._codex_available: bool = False
+        self._codex_has_session: bool = True
         self._codex_session_pct: float = 0.0
         self._codex_session_reset: int = 0
+        self._codex_has_weekly: bool = True
         self._codex_weekly_pct: float = 0.0
         self._codex_weekly_reset: int = 0
         self._live_tpm: float = 0.0      # tokens/min over the last few minutes
@@ -325,15 +327,17 @@ class UsageOverlay(QWidget):
         self._scoped_label = str(getattr(stats, "scoped_label", "") or "")
         # Optional Codex provider rows — like scoped, their appearance or
         # disappearance changes the OSD footprint.
-        had_codex = self._codex_available
+        had_codex_rows = len(self._codex_rows())
         self._codex_available = bool(getattr(stats, "codex_available", False))
+        self._codex_has_session = bool(getattr(stats, "codex_has_session", True))
+        self._codex_has_weekly = bool(getattr(stats, "codex_has_weekly", True))
         self._codex_session_pct = max(0.0, min(1.0, float(
             getattr(stats, "codex_session_utilization", 0.0) or 0.0)))
         self._codex_session_reset = int(getattr(stats, "codex_session_reset", 0) or 0)
         self._codex_weekly_pct = max(0.0, min(1.0, float(
             getattr(stats, "codex_weekly_utilization", 0.0) or 0.0)))
         self._codex_weekly_reset = int(getattr(stats, "codex_weekly_reset", 0) or 0)
-        if bool(self._scoped_label) != had_scoped or self._codex_available != had_codex:
+        if bool(self._scoped_label) != had_scoped or len(self._codex_rows()) != had_codex_rows:
             self._apply_size()
         live = getattr(stats, "live_activity", None)
         if live is not None:
@@ -480,6 +484,17 @@ class UsageOverlay(QWidget):
             data = _replace(data, ticker_items=[])
         return data
 
+    def _codex_rows(self) -> list[tuple[str, float, int]]:
+        """``(label, pct, reset_ts)`` for each Codex window the account has."""
+        if not self._codex_available:
+            return []
+        rows = []
+        if self._codex_has_session:
+            rows.append(("Codex 5h", self._codex_session_pct, self._codex_session_reset))
+        if self._codex_has_weekly:
+            rows.append(("Codex 7d", self._codex_weekly_pct, self._codex_weekly_reset))
+        return rows
+
     def _skin_base_height(self) -> float:
         """Unscaled OSD height for the active skin, folding in the optional
         scoped-cap row and the optional Codex provider rows (5h + 7d).
@@ -489,7 +504,7 @@ class UsageOverlay(QWidget):
         — a mismatch would let an extra row spill outside the painted panel.
         Scoped and Codex compose additively: a skin's ``osd_height_scoped``
         gives its one-row footprint, and ``codex_rows_height`` (2× that) covers
-        the Codex 5h + 7d pair.
+        the Codex 5h + 7d pair; half of it is reserved per window present.
 
         (Single-source consolidation adapted from faithpricejp-source's PR #21.)
         """
@@ -497,9 +512,8 @@ class UsageOverlay(QWidget):
         base = m["osd_height"]
         if self._scoped_label:
             base = m.get("osd_height_scoped", base + SCOPED_ROW_HEIGHT)
-        if self._codex_available:
-            base += m.get("codex_rows_height", 2 * SCOPED_ROW_HEIGHT)
-        return base
+        codex_row_height = m.get("codex_rows_height", 2 * SCOPED_ROW_HEIGHT) / 2
+        return base + len(self._codex_rows()) * codex_row_height
 
     def _apply_size(self) -> None:
         """Resize the window to match ``_scale``, view mode, and chrome state."""
@@ -522,7 +536,7 @@ class UsageOverlay(QWidget):
         width = int(BASE_WIDTH * self._scale)
         if self._view_mode == VIEW_MODE_GAUGE:
             base = GAUGE_HEIGHT + (SCOPED_ROW_HEIGHT if self._scoped_label else 0)
-            if self._codex_available:
+            if self._codex_rows():
                 base += CODEX_GAUGE_ROW_HEIGHT
         else:
             # Receipt skin always reserves the footer strip for its barcode,
@@ -531,8 +545,7 @@ class UsageOverlay(QWidget):
             base = BASE_HEIGHT + (TICKER_STRIP_HEIGHT if wants_footer else 0)
             if self._scoped_label:
                 base += SCOPED_ROW_HEIGHT
-            if self._codex_available:
-                base += 2 * SCOPED_ROW_HEIGHT  # Codex 5h + 7d rows
+            base += len(self._codex_rows()) * SCOPED_ROW_HEIGHT
         height = MINIMIZED_HEIGHT if self._minimized else int(base * self._scale)
         # Preserve the top-right corner when resizing so the overlay doesn't
         # visually drift as the user scrolls to scale.
@@ -852,11 +865,9 @@ class UsageOverlay(QWidget):
             ("Session", self._session_pct, self._session_reset),
             ("Weekly",  self._weekly_pct,  self._weekly_reset),
         )]
-        if self._codex_available:
-            ring_rows.append((
-                ("Codex 5h", self._codex_session_pct, self._codex_session_reset),
-                ("Codex 7d", self._codex_weekly_pct, self._codex_weekly_reset),
-            ))
+        codex_rows = self._codex_rows()
+        if codex_rows:
+            ring_rows.append(tuple(codex_rows))
         # Centre each ring inside its column, with room below for labels.
         for row_idx, row in enumerate(ring_rows):
             row_top = (12 + row_idx * CODEX_GAUGE_ROW_HEIGHT) * s
@@ -1086,18 +1097,14 @@ class UsageOverlay(QWidget):
             y2 = y3  # push the footer below the extra row
 
         # --- Codex provider rows — only when the codex provider is active ---
-        if self._codex_available:
-            for label, pct, reset_ts in (
-                ("Codex 5h", self._codex_session_pct, self._codex_session_reset),
-                ("Codex 7d", self._codex_weekly_pct, self._codex_weekly_reset),
-            ):
-                y2 = y2 + 15 * s + bar_h + 10 * s
-                self._draw_row(
-                    p, y2, w, pad_x, bar_w, bar_h, bar_r, font_label, font_small,
-                    label=label,
-                    pct=pct,
-                    reset_label=_format_reset_short(reset_ts),
-                )
+        for label, pct, reset_ts in self._codex_rows():
+            y2 = y2 + 15 * s + bar_h + 10 * s
+            self._draw_row(
+                p, y2, w, pad_x, bar_w, bar_h, bar_r, font_label, font_small,
+                label=label,
+                pct=pct,
+                reset_label=_format_reset_short(reset_ts),
+            )
 
         # --- Ticker strip / receipt footer (below the weekly row) ---
         # Receipt skin replaces the scrolling ticker with a dotted

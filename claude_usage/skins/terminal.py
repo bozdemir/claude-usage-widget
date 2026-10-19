@@ -168,34 +168,28 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
 
     # codex rows — optional second-provider (OpenAI Codex) 5h + 7d windows.
     # Mirrors the session/weekly rows exactly and pushes the ticker below
-    # down by two rows via the updated y_bar. Drawn only when active.
+    # down one row per window via the updated y_bar. Drawn only when active.
     if getattr(data, "codex_available", False):
-        # codex 5h — mirrors the session row
-        y_row = y_bar + line_h + m["osd_row_gap"] * s
-        draw_text(p, x, y_row + fm.ascent(), "codex 5h",
-                  hex_to_qcolor(t["text_secondary"]), body_f)
-        right = f"{data.codex_session_reset_min}m · {int(data.codex_session_pct*100)}%"
-        rw = fm.horizontalAdvance(right)
-        draw_text(p, x + w - rw, y_row + fm.ascent(), right,
-                  hex_to_qcolor(t["text_secondary"]), body_f)
-        y_bar = y_row + line_h + 2 * s
-        draw_ascii_bar(p, x, y_bar + fm.ascent(), data.codex_session_pct,
-                       m["osd_bar_cols"],
-                       hex_to_qcolor(t["accent"]), hex_to_qcolor(t["very_dim"]),
-                       body_f)
-        # codex 7d — mirrors the weekly row
-        y_row = y_bar + line_h + m["osd_row_gap"] * s
-        draw_text(p, x, y_row + fm.ascent(), "codex 7d",
-                  hex_to_qcolor(t["text_secondary"]), body_f)
-        right = f"{data.codex_weekly_reset_hrs}h {data.codex_weekly_reset_min}m · {int(data.codex_weekly_pct*100)}%"
-        rw = fm.horizontalAdvance(right)
-        draw_text(p, x + w - rw, y_row + fm.ascent(), right,
-                  hex_to_qcolor(t["text_secondary"]), body_f)
-        y_bar = y_row + line_h + 2 * s
-        draw_ascii_bar(p, x, y_bar + fm.ascent(), data.codex_weekly_pct,
-                       m["osd_bar_cols"],
-                       hex_to_qcolor(t["accent"]), hex_to_qcolor(t["very_dim"]),
-                       body_f)
+        codex_rows = []
+        if data.codex_has_session:
+            codex_rows.append(("codex 5h", data.codex_session_pct,
+                               f"{data.codex_session_reset_min}m"))
+        if data.codex_has_weekly:
+            codex_rows.append(("codex 7d", data.codex_weekly_pct,
+                               f"{data.codex_weekly_reset_hrs}h {data.codex_weekly_reset_min}m"))
+        for label, pct, reset in codex_rows:
+            y_row = y_bar + line_h + m["osd_row_gap"] * s
+            draw_text(p, x, y_row + fm.ascent(), label,
+                      hex_to_qcolor(t["text_secondary"]), body_f)
+            right = f"{reset} · {int(pct*100)}%"
+            rw = fm.horizontalAdvance(right)
+            draw_text(p, x + w - rw, y_row + fm.ascent(), right,
+                      hex_to_qcolor(t["text_secondary"]), body_f)
+            y_bar = y_row + line_h + 2 * s
+            draw_ascii_bar(p, x, y_bar + fm.ascent(), pct,
+                           m["osd_bar_cols"],
+                           hex_to_qcolor(t["accent"]), hex_to_qcolor(t["very_dim"]),
+                           body_f)
 
     # ticker strip — dashed separator + colour-quartile cost tags
     y_tick = y_bar + line_h + 6 * s

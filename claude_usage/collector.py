@@ -82,10 +82,13 @@ class UsageStats:
     scoped_label: str = ""
     # Optional second provider: OpenAI Codex rate limits, populated only when
     # "codex" is listed in the `providers` config key. codex_available=False
-    # means the overlay draws no Codex rows at all.
+    # means the overlay draws no Codex rows at all; codex_has_session /
+    # codex_has_weekly=False hides just that window (plans without a 5h limit).
     codex_available: bool = False
+    codex_has_session: bool = True
     codex_session_utilization: float = 0.0
     codex_session_reset: int = 0
+    codex_has_weekly: bool = True
     codex_weekly_utilization: float = 0.0
     codex_weekly_reset: int = 0
     overage_status: str = ""  # "rejected" or "allowed"
@@ -1410,6 +1413,8 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
             cx = _codex.collect_codex(
                 poll_seconds=int(config.get("codex_poll_seconds", 300) or 300))
             stats.codex_available = bool(cx["available"])
+            stats.codex_has_session = bool(cx["has_session"])
+            stats.codex_has_weekly = bool(cx["has_weekly"])
             stats.codex_session_utilization = float(cx["session_pct"])
             stats.codex_session_reset = int(cx["session_reset"])
             stats.codex_weekly_utilization = float(cx["weekly_pct"])

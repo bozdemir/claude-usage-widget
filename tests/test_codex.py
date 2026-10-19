@@ -25,10 +25,27 @@ def test_parse_both_windows():
         secondary={"usedPercent": 12.0, "resetsAt": FUTURE + 86400},
     ))
     assert parsed == {
+        "has_session": True,
         "session_pct": 0.542,
         "session_reset": FUTURE,
+        "has_weekly": True,
         "weekly_pct": 0.12,
         "weekly_reset": FUTURE + 86400,
+    }
+
+
+def test_parse_weekly_only_plan_sent_as_primary():
+    # Plans with no 5h limit send the weekly window in the primary slot.
+    parsed = parse_rate_limits(_payload(
+        primary={"usedPercent": 1, "resetsAt": FUTURE, "windowDurationMins": 10080},
+    ))
+    assert parsed == {
+        "has_session": False,
+        "session_pct": 0.0,
+        "session_reset": 0,
+        "has_weekly": True,
+        "weekly_pct": 0.01,
+        "weekly_reset": FUTURE,
     }
 
 

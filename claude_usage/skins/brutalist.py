@@ -162,11 +162,13 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     # byte-for-byte identical. The ticker below is anchored to rect.bottom(),
     # which the taller codex_rows_height-grown panel pushes down for us.
     if getattr(data, "codex_available", False):
-        yy = row(yy, "CODEX 5H", data.codex_session_pct,
-                 f"RESETS {data.codex_session_reset_min}M", t["accent"])
-        yy = row(yy, "CODEX 7D", data.codex_weekly_pct,
-                 f"RESETS {data.codex_weekly_reset_hrs}H {data.codex_weekly_reset_min}M",
-                 t["ink"])
+        if data.codex_has_session:
+            yy = row(yy, "CODEX 5H", data.codex_session_pct,
+                     f"RESETS {data.codex_session_reset_min}M", t["accent"])
+        if data.codex_has_weekly:
+            yy = row(yy, "CODEX 7D", data.codex_weekly_pct,
+                     f"RESETS {data.codex_weekly_reset_hrs}H {data.codex_weekly_reset_min}M",
+                     t["ink"])
 
     # 2px rule above the ticker strip — matches the Swiss-grid section
     # break at the top of the panel.

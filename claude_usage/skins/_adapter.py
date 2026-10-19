@@ -43,10 +43,13 @@ class SkinData:
     # Optional second provider (OpenAI Codex). codex_available=False → skins
     # draw no Codex rows. The 5h window mirrors Session (minutes), the 7d
     # window mirrors Weekly (hrs + min), so each skin renders them with its
-    # own Session/Weekly row style.
+    # own Session/Weekly row style. A False has_session/has_weekly skips
+    # that row; the overlay sizes the panel to match.
     codex_available: bool = False
+    codex_has_session: bool = True
     codex_session_pct: float = 0.0
     codex_session_reset_min: int = 0
+    codex_has_weekly: bool = True
     codex_weekly_pct: float = 0.0
     codex_weekly_reset_hrs: int = 0
     codex_weekly_reset_min: int = 0
@@ -283,6 +286,8 @@ def from_usage_stats(
 
     # Optional Codex provider — 5h mirrors Session, 7d mirrors Weekly.
     codex_available = bool(getattr(stats, "codex_available", False))
+    codex_has_session = bool(getattr(stats, "codex_has_session", True))
+    codex_has_weekly = bool(getattr(stats, "codex_has_weekly", True))
     codex_session_pct = codex_weekly_pct = 0.0
     codex_session_reset_min = codex_weekly_reset_hrs = codex_weekly_reset_min = 0
     if codex_available:
@@ -324,6 +329,8 @@ def from_usage_stats(
         scoped_reset_min=scoped_reset_min,
         scoped_label=scoped_label,
         codex_available=codex_available,
+        codex_has_session=codex_has_session,
+        codex_has_weekly=codex_has_weekly,
         codex_session_pct=codex_session_pct,
         codex_session_reset_min=codex_session_reset_min,
         codex_weekly_pct=codex_weekly_pct,

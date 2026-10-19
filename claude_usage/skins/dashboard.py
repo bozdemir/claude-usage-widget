@@ -141,14 +141,16 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     # rows loop, so the bottom-anchored ticker rides down on the overlay's
     # reserved codex_rows_height. Invisible unless the provider is active.
     if getattr(data, "codex_available", False):
-        rows.append((
-            "CODEX 5H", data.codex_session_pct,
-            f"{data.codex_session_reset_min}m", t["accent"],
-        ))
-        rows.append((
-            "CODEX 7D", data.codex_weekly_pct,
-            f"{data.codex_weekly_reset_hrs}h {data.codex_weekly_reset_min}m", t["accent2"],
-        ))
+        if data.codex_has_session:
+            rows.append((
+                "CODEX 5H", data.codex_session_pct,
+                f"{data.codex_session_reset_min}m", t["accent"],
+            ))
+        if data.codex_has_weekly:
+            rows.append((
+                "CODEX 7D", data.codex_weekly_pct,
+                f"{data.codex_weekly_reset_hrs}h {data.codex_weekly_reset_min}m", t["accent2"],
+            ))
     y_cursor = y + fm.height() + 8 * s
     fm_metric = QFontMetrics(metric_f)
     for label, pct, reset, color_hex in rows:
