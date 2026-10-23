@@ -207,7 +207,7 @@ python3 main.py
 - **OSD View ▸** -- switch between **Bars** (default — progress bars + cost ticker) and **Gauge** (two circular rings); auto-persisted
 - **OSD Position ▸** -- snap the overlay to **Top Left / Top Right / Bottom Left / Bottom Right**, or drag it anywhere for a remembered **Custom** position; auto-persisted
 - **Theme ▸** -- pick one of the 11 themes (5 classic palettes plus 6 skins: terminal, dashboard, hud, receipt, strip, brutalist); the choice persists to `~/.config/claude-usage/config.json` so a restart keeps it
-- **Minimize / Restore** -- collapse the OSD to a thin progress strip
+- **Minimize / Restore** -- collapse the OSD to a thin progress strip showing the session %; hover it for every row's % and reset time
 - **Show cost ticker** -- toggle the scrolling per-turn cost strip on the OSD
 - **Show news ticker** -- toggle the Anthropic/Claude news headline strip on the OSD
 - **Always on top** -- keep the OSD pinned above other windows (default), or turn it off to let it sit as a normal background desktop widget the window manager stacks behind your focused windows; persisted

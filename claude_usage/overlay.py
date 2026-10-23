@@ -295,6 +295,9 @@ class UsageOverlay(QWidget):
         # focus loss even though the process keeps running. This attribute
         # opts out of that Cocoa behaviour; it's a no-op on other platforms.
         self.setAttribute(Qt.WA_MacAlwaysShowToolWindow, True)
+        # The OSD never takes focus, and Qt shows tooltips (the minimized
+        # capsule's hover text) only for active windows without this.
+        self.setAttribute(Qt.WA_AlwaysShowToolTips, True)
 
         # Initial size + position (top-right of primary screen).
         self._apply_size()
@@ -388,6 +391,7 @@ class UsageOverlay(QWidget):
         else:
             self._ticker_timer.stop()
             self._ticker_offset = 0.0
+        self._refresh_tooltip()
         self.update()  # schedule a paintEvent
 
     def set_view_mode(self, mode: str) -> None:
@@ -459,6 +463,7 @@ class UsageOverlay(QWidget):
         """Collapse to a thin progress bar or restore the full panel."""
         self._minimized = not self._minimized
         self._apply_size()
+        self._refresh_tooltip()
         # Minimized view has no ticker — stop the animation to save CPU.
         # Restarting requires the bars view mode too (gauge view has no ticker).
         if self._minimized:
@@ -498,6 +503,26 @@ class UsageOverlay(QWidget):
         if self._codex_has_weekly:
             rows.append(("Codex 7d", self._codex_weekly_pct, self._codex_weekly_reset))
         return rows
+
+    def _refresh_tooltip(self) -> None:
+        """Hover text for the minimized capsule, which draws only the session
+        %, listing every row the full view shows (issue #35). The full view
+        already shows the numbers, so it gets no tooltip."""
+        if not self._minimized:
+            self.setToolTip("")
+            return
+        rows = [
+            ("Session", self._session_pct, self._session_reset),
+            ("Weekly", self._weekly_pct, self._weekly_reset),
+        ]
+        if self._scoped_label:
+            rows.append((self._scoped_label, self._scoped_pct, self._scoped_reset))
+        rows += self._codex_rows()
+        lines = []
+        for label, pct, reset_ts in rows:
+            reset = _format_reset_short(reset_ts)
+            lines.append(f"{label}: {int(pct * 100)}%" + (f" · {reset}" if reset else ""))
+        self.setToolTip("\n".join(lines))
 
     def _skin_base_height(self) -> float:
         """Unscaled OSD height for the active skin, folding in the optional
@@ -664,6 +689,7 @@ class UsageOverlay(QWidget):
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self._apply_window_type_attr()
         self.setAttribute(Qt.WA_MacAlwaysShowToolWindow, True)
+        self.setAttribute(Qt.WA_AlwaysShowToolTips, True)
         if was_visible:
             self.show()
         self._move_to_default_position()
