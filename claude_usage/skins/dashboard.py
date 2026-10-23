@@ -18,7 +18,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 
 from ._paint import (
-    EXPIRED_NOTICE, STALE_OPACITY, draw_block_bar, draw_text, draw_ticker_marquee,
+    STALE_OPACITY, draw_block_bar, draw_text, draw_ticker_marquee, fit_expired_notice,
     hex_to_qcolor, mono_font, ui_font,
 )
 
@@ -110,16 +110,22 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     sep_x = x + fm.horizontalAdvance("CLAUDE") + 10 * s
     p.setPen(hex_to_qcolor(t["border"]))
     p.drawLine(QPointF(sep_x, y + 2 * s), QPointF(sep_x, y + fm.height()))
+    header_end = sep_x
     if getattr(data, "subagent_count", 0):
-        draw_text(p, sep_x + 10 * s, bl,
-                  f"⚙ {data.subagent_count} SUBAGENTS",
-                  hex_to_qcolor(t["text_secondary"]), small_f,
-                  letter_spacing_px=1.5 * s)
+        header_end += 10 * s + draw_text(
+            p, sep_x + 10 * s, bl,
+            f"⚙ {data.subagent_count} SUBAGENTS",
+            hex_to_qcolor(t["text_secondary"]), small_f,
+            letter_spacing_px=1.5 * s)
 
-    # The expired-token hint takes the LIVE badge's slot.
+    # The expired-token hint takes the LIVE badge's slot, cut to its
+    # headline when the full hint would run into the subagent count.
     if data.credentials_expired:
-        notice = EXPIRED_NOTICE.upper()
-        nw = QFontMetrics(small_f).horizontalAdvance(notice) + len(notice) * 1.0 * s
+        notice_f = QFont(small_f)
+        notice_f.setLetterSpacing(QFont.AbsoluteSpacing, 1.0 * s)
+        fm_notice = QFontMetrics(notice_f)
+        notice = fit_expired_notice(fm_notice, x + w - header_end - 10 * s)
+        nw = fm_notice.horizontalAdvance(notice)
         draw_text(p, x + w - nw, bl, notice, hex_to_qcolor(t["warn"]), small_f,
                   letter_spacing_px=1.0 * s)
     elif getattr(data, "is_live", False):

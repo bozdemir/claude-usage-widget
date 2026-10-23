@@ -30,7 +30,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from claude_usage.collector import UsageStats
 from claude_usage.skins import SKIN_MODULES, from_usage_stats as _skin_data_from_stats
-from claude_usage.skins._paint import EXPIRED_NOTICE, STALE_OPACITY
+from claude_usage.skins._paint import EXPIRED_NOTICE, STALE_OPACITY, fit_expired_notice
 from claude_usage.themes import (
     BAR_STYLE_ASCII,
     BAR_STYLE_BLOCK,
@@ -1090,15 +1090,17 @@ class UsageOverlay(QWidget):
         title_y = pad_y + 7 * s
         title_text = self._style.title_prefix + "CLAUDE"
         p.drawText(QPointF(pad_x, title_y), title_text)
+        # Right edge of the title row's left side, which badges must clear.
+        title_end = pad_x + p.fontMetrics().horizontalAdvance(title_text)
 
         # Subagent rozet — only shown when > 0 so single-session users aren't
         # bothered by a permanent "0 agents" noise. Rendered just right of
         # CLAUDE in the theme's link colour to signal "active thing".
         if self._active_subagents > 0:
-            title_w = p.fontMetrics().horizontalAdvance(title_text)
             rozet = f"⚙ {self._active_subagents}"
             p.setPen(_hex_to_qcolor(self._theme["text_link"]))
-            p.drawText(QPointF(pad_x + title_w + 6 * s, title_y), rozet)
+            p.drawText(QPointF(title_end + 6 * s, title_y), rozet)
+            title_end += 6 * s + p.fontMetrics().horizontalAdvance(rozet)
 
         # Right-aligned title-row badges: LIVE first (at the right edge), then
         # the burn/spike badge just to its left. Both use the title font that's
@@ -1107,10 +1109,15 @@ class UsageOverlay(QWidget):
 
         # Expired-token hint takes LIVE's slot: it explains why the Claude
         # rows below are dimmed, which matters more than the token rate.
+        # Fonts stop shrinking at their minimum size while the panel keeps
+        # narrowing, so at small scales (or beside the rozet) only the
+        # headline fits.
         if self._credentials_expired:
-            notice_width = p.fontMetrics().horizontalAdvance(EXPIRED_NOTICE)
+            notice = fit_expired_notice(
+                p.fontMetrics(), badge_right - title_end - 8 * s, upper=False)
+            notice_width = p.fontMetrics().horizontalAdvance(notice)
             p.setPen(_hex_to_qcolor(self._theme.get("warn") or "#f59e0b"))
-            p.drawText(QPointF(badge_right - notice_width, title_y), EXPIRED_NOTICE)
+            p.drawText(QPointF(badge_right - notice_width, title_y), notice)
             badge_right -= notice_width + 8 * s
         # Live indicator — only drawn when there's recent assistant activity.
         # Renders as `● LIVE 1.2k tok/min` right-aligned against the title.

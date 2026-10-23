@@ -15,10 +15,10 @@ EXPIRED_NOTICE = "token expired · run claude"
 STALE_OPACITY = 0.4
 
 
-def fit_expired_notice(fm: QFontMetrics, max_width: float) -> str:
-    """Upper-case EXPIRED_NOTICE, cut to its headline when the full hint
-    doesn't fit beside a wide skin title."""
-    notice = EXPIRED_NOTICE.upper()
+def fit_expired_notice(fm: QFontMetrics, max_width: float, upper: bool = True) -> str:
+    """EXPIRED_NOTICE (upper-cased unless ``upper=False``), cut to its
+    headline when the full hint doesn't fit beside the title row's left side."""
+    notice = EXPIRED_NOTICE.upper() if upper else EXPIRED_NOTICE
     if fm.horizontalAdvance(notice) <= max_width:
         return notice
     return notice.partition(" · ")[0]
