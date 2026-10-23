@@ -21,6 +21,7 @@ from urllib.request import Request, urlopen
 from claude_usage import forecast, pricing
 from claude_usage import budget as _budget
 from claude_usage import codex as _codex
+from claude_usage import oauth as _oauth
 from claude_usage import peak as _peak
 from claude_usage.analytics import AnomalyReport, detect_anomaly, generate_tips
 from claude_usage.burn import (
@@ -672,8 +673,9 @@ def _load_credentials(claude_dir: str) -> str | None:
     """Load the OAuth access token, mirroring Claude Code's own lookup order.
 
     Order: ``CLAUDE_CODE_OAUTH_TOKEN`` env var → ``~/.claude/.credentials.json``
-    flat file (Linux + macOS) → macOS Keychain. The Keychain path is the only
-    source on macOS installs where Claude Code stores credentials there and
+    flat file (Linux + macOS; on Linux it is refreshed first when expired, see
+    ``oauth.py``) → macOS Keychain. The Keychain path is the only source on
+    macOS installs where Claude Code stores credentials there and
     never writes the flat file, which is exactly when the widget would
     otherwise show blank session/weekly numbers with no explanation.
 
@@ -687,6 +689,7 @@ def _load_credentials(claude_dir: str) -> str | None:
     # 1. Flat credentials file (Linux + macOS).
     creds_path = os.path.join(claude_dir, ".credentials.json")
     if os.path.isfile(creds_path):
+        _oauth.refresh_if_expired(creds_path, ssl_context=_ssl_context())
         try:
             with open(creds_path, encoding="utf-8", errors="replace") as f:
                 blob = f.read()
