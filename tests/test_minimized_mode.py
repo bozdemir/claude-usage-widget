@@ -112,6 +112,13 @@ def test_tooltip_follows_new_stats_while_minimized():
     assert ov.toolTip().startswith("Session: 41% · ")
 
 
+def test_tooltip_leads_with_the_expired_token_hint():
+    ov = _minimized("default", **_stats(credentials_expired=True))
+    lines = ov.toolTip().splitlines()
+    assert lines[0] == "token expired · run claude"
+    assert lines[1].startswith("Session: 5% · ")
+
+
 def test_tooltip_lists_scoped_and_codex_rows():
     ov = _minimized("default", **_stats(
         scoped_utilization=0.4, scoped_label="Fable",
