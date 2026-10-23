@@ -18,7 +18,9 @@ from __future__ import annotations
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen
 
-from ._paint import draw_text, draw_ticker_marquee, hex_to_qcolor, mono_font
+from ._paint import (
+    STALE_OPACITY, draw_text, draw_ticker_marquee, fit_expired_notice, hex_to_qcolor, mono_font,
+)
 
 
 WANTS_TICKER = True
@@ -94,11 +96,17 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     fm = QFontMetrics(title_f); fm_b = QFontMetrics(big_f); fm_s = QFontMetrics(small_f)
 
     # top bar
-    draw_text(p, x, y + fm.ascent(),
-              "CLAUDE / USAGE",
-              hex_to_qcolor(t["ink"]), title_f, letter_spacing_px=3 * s)
+    title_w = draw_text(p, x, y + fm.ascent(),
+                        "CLAUDE / USAGE",
+                        hex_to_qcolor(t["ink"]), title_f, letter_spacing_px=3 * s)
 
-    if getattr(data, "is_live", False):
+    # The expired-token hint takes the LIVE badge's slot.
+    if data.credentials_expired:
+        notice = fit_expired_notice(fm_s, w - title_w - 12 * s)
+        nw = fm_s.horizontalAdvance(notice)
+        draw_text(p, rect.right() - pad - nw, y + 4 * s + fm_s.ascent(),
+                  notice, hex_to_qcolor(t["warn"]), small_f)
+    elif getattr(data, "is_live", False):
         label = "LIVE"
         lw = fm_s.horizontalAdvance(label)
         # red badge
@@ -141,6 +149,8 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
         return ybar + 14 * s + fm_s.height() + 6 * s
 
     yy = y_rule + 10 * s
+    # Claude rows are last-known while the token is expired; Codex is not.
+    p.setOpacity(STALE_OPACITY if data.credentials_expired else 1.0)
     yy = row(yy, "SESSION", data.session_pct,
              f"RESETS {data.session_reset_min}M", t["accent"])
     yy = row(yy, "WEEKLY", data.weekly_pct,
@@ -155,6 +165,7 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
         yy = row(yy, data.scoped_label.upper(), data.scoped_pct,
                  f"RESETS {data.scoped_reset_hrs}H {data.scoped_reset_min}M",
                  t["ink"])
+    p.setOpacity(1.0)
 
     # Optional Codex second provider — two more rows in the same black/red
     # bar rhythm (5h session mirrors SESSION's red bar, 7d mirrors WEEKLY's

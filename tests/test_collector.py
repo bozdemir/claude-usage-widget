@@ -1162,6 +1162,7 @@ class TestOAuthUsage429(unittest.TestCase):
         with patch.object(c, "urlopen", always_401):
             result = _fetch_oauth_usage("bad-token")
         self.assertIn("expired", result["error"].lower())
+        self.assertTrue(result["credentials_expired"])
 
     def test_fetch_rate_limits_skips_xapikey_on_429(self) -> None:
         """When the OAuth path is rate-limited, fetch_rate_limits must NOT try
@@ -1441,6 +1442,31 @@ class TestCollectAllStaleFallback(unittest.TestCase):
             # Both windows still current -> last-known values survive (issue #11).
             self.assertAlmostEqual(stats.session_utilization, 0.55)
             self.assertEqual(stats.session_reset, int(now + 1800))
+            self.assertAlmostEqual(stats.weekly_utilization, 0.25)
+            # A throttle is not an expired token: no "run claude" hint.
+            self.assertFalse(stats.credentials_expired)
+
+    @patch("claude_usage.collector.fetch_rate_limits")
+    def test_expired_token_flags_last_known_numbers(self, mock_fetch: Any) -> None:
+        """An expired token keeps the last-known numbers on screen and flags
+        them, so the OSD can dim them and tell the user to run `claude`."""
+        from claude_usage.history import append_sample
+
+        mock_fetch.return_value = {
+            "error": "Credentials expired -- re-authenticate with 'claude'",
+            "credentials_expired": True,
+        }
+        now = datetime.now().timestamp()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            append_sample(
+                os.path.join(tmpdir, "usage-history.jsonl"), now - 60, 0.55, 0.25,
+                session_reset=int(now + 1800), weekly_reset=int(now + 3 * 86400),
+            )
+
+            stats = collect_all({"claude_dir": tmpdir})
+
+            self.assertTrue(stats.credentials_expired)
+            self.assertAlmostEqual(stats.session_utilization, 0.55)
             self.assertAlmostEqual(stats.weekly_utilization, 0.25)
 
 

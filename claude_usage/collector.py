@@ -94,6 +94,10 @@ class UsageStats:
     overage_status: str = ""  # "rejected" or "allowed"
     fallback_status: str = ""  # "available" or ""
     rate_limit_error: str = ""  # error message if API call fails
+    # The OAuth token Claude Code left behind has expired (401). The widget
+    # never refreshes it itself (only Claude Code may), so the Claude numbers
+    # are the last known ones and the UI shows them dimmed with a hint.
+    credentials_expired: bool = False
     session_history: list = field(default_factory=list)  # bucketed sparkline (oldest first)
     weekly_history: list = field(default_factory=list)
     # Subscription type from OAuth credentials ("max", "pro", "free", or "" if unknown).
@@ -798,7 +802,8 @@ def fetch_rate_limits(claude_dir: str) -> dict[str, Any]:
             headers = {k.lower(): v for k, v in resp.getheaders()}
     except HTTPError as e:
         if e.code == 401:
-            return {"error": "Credentials expired -- re-authenticate with 'claude'"}
+            return {"error": "Credentials expired -- re-authenticate with 'claude'",
+                    "credentials_expired": True}
         if e.code == 429:
             headers = {k.lower(): v for k, v in e.headers.items()}
             prefix = "anthropic-ratelimit-unified-"
@@ -860,7 +865,8 @@ def _fetch_oauth_usage(token: str) -> dict[str, Any]:
             break
         except HTTPError as e:
             if e.code == 401:
-                return {"error": "Credentials expired -- re-authenticate with 'claude'"}
+                return {"error": "Credentials expired -- re-authenticate with 'claude'",
+                        "credentials_expired": True}
             if e.code == 429:
                 # A 429 here is budget-based, not a momentary blip: this
                 # endpoint replies "Retry-After: 0" (or sends no Retry-After
@@ -1155,6 +1161,7 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
         pass
     elif "error" in rate_limits:
         stats.rate_limit_error = rate_limits["error"]
+        stats.credentials_expired = bool(rate_limits.get("credentials_expired"))
         # API call failed (transient network glitch, OAuth hiccup, etc.).
         # Without this, both utilization fields stay at the dataclass
         # default 0.0 and the widget paints "0% / 0%" until the next

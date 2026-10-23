@@ -15,7 +15,9 @@ from __future__ import annotations
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QFontMetrics, QPainter
 
-from ._paint import draw_block_bar, draw_text, hex_to_qcolor, mono_font, ui_font
+from ._paint import (
+    EXPIRED_NOTICE, STALE_OPACITY, draw_block_bar, draw_text, hex_to_qcolor, mono_font, ui_font,
+)
 
 
 THEME = {
@@ -129,7 +131,9 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
                        pct, hex_to_qcolor(t["very_dim"]),
                        hex_to_qcolor(fill_hex), radius=1.5 * s)
 
-    # session seg
+    # session seg — Claude segments are last-known while the token is expired
+    claude_opacity = STALE_OPACITY if data.credentials_expired else 1.0
+    p.setOpacity(claude_opacity)
     xs = x0 + title_w
     seg(xs, mid_w, "SESSION", data.session_pct,
         f"{data.session_reset_min}m", t["accent"])
@@ -145,9 +149,20 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     p.drawLine(QPointF(xw + mid_w, rect.y() + 4 * s),
                QPointF(xw + mid_w, base_bottom - 4 * s))
 
-    # live seg
+    p.setOpacity(1.0)
+
+    # live seg — the expired-token hint takes its place, split over its two lines
     xl = xw + mid_w
-    if getattr(data, "is_live", False):
+    if data.credentials_expired:
+        # One point smaller and a tighter inset than LIVE: the headline is
+        # wider than "● LIVE" and the segment is only seg_live_w wide.
+        notice_f = mono_font(8 * s, family=FONTS["family_mono"])
+        headline, _, hint = EXPIRED_NOTICE.partition(" · ")
+        draw_text(p, xl + 8 * s, rect.y() + 18 * s, headline.upper(),
+                  hex_to_qcolor(t["warn"]), notice_f)
+        draw_text(p, xl + 8 * s, rect.y() + 36 * s, hint,
+                  hex_to_qcolor(t["text_primary"]), notice_f)
+    elif getattr(data, "is_live", False):
         draw_text(p, xl + 12 * s,
                   rect.y() + 18 * s,
                   f"● LIVE", hex_to_qcolor(t["accent"]), label_f,
@@ -170,9 +185,11 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
         # Spans the session+weekly columns so the bar sits directly beneath
         # the weekly bar, rendered with the same seg() painter, fonts and
         # weekly accent (accent2). Reset mirrors weekly's "{hrs}h" format.
+        p.setOpacity(claude_opacity)
         seg(xs, mid_w * 2, data.scoped_label.upper(), scoped_pct,
             f"{data.scoped_reset_hrs}h", t["accent2"],
             top=base_bottom, bh=base_h)
+        p.setOpacity(1.0)
 
     # optional Codex second-provider rows — two stacked bands mirroring the
     # SESSION (5h) and WEEKLY (7d) rows in this skin's style. Drawn AFTER the

@@ -30,6 +30,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from claude_usage.collector import UsageStats
 from claude_usage.skins import SKIN_MODULES, from_usage_stats as _skin_data_from_stats
+from claude_usage.skins._paint import EXPIRED_NOTICE, STALE_OPACITY
 from claude_usage.themes import (
     BAR_STYLE_ASCII,
     BAR_STYLE_BLOCK,
@@ -235,6 +236,7 @@ class UsageOverlay(QWidget):
         self._codex_weekly_reset: int = 0
         self._live_tpm: float = 0.0      # tokens/min over the last few minutes
         self._is_live: bool = False       # show the "● LIVE" dot
+        self._credentials_expired: bool = False  # Claude rows are last-known
         self._burn_alert = None           # active burn/spike/storm badge (or None)
         self._active_subagents: int = 0  # count of running Task-tool subagents
         # Ticker tape: newest-first. The paint loop walks them oldest→newest
@@ -346,6 +348,7 @@ class UsageOverlay(QWidget):
         self._codex_weekly_reset = int(getattr(stats, "codex_weekly_reset", 0) or 0)
         if bool(self._scoped_label) != had_scoped or len(self._codex_rows()) != had_codex_rows:
             self._apply_size()
+        self._credentials_expired = bool(getattr(stats, "credentials_expired", False))
         live = getattr(stats, "live_activity", None)
         if live is not None:
             self._is_live = bool(getattr(live, "is_live", False))
@@ -518,7 +521,7 @@ class UsageOverlay(QWidget):
         if self._scoped_label:
             rows.append((self._scoped_label, self._scoped_pct, self._scoped_reset))
         rows += self._codex_rows()
-        lines = []
+        lines = [EXPIRED_NOTICE] if self._credentials_expired else []
         for label, pct, reset_ts in rows:
             reset = _format_reset_short(reset_ts)
             lines.append(f"{label}: {int(pct * 100)}%" + (f" · {reset}" if reset else ""))
@@ -920,6 +923,8 @@ class UsageOverlay(QWidget):
         # Centre each ring inside its column, with room below for labels.
         for row_idx, row in enumerate(ring_rows):
             row_top = (12 + row_idx * CODEX_GAUGE_ROW_HEIGHT) * s
+            # Row 0 is Claude's pair; Codex rows are never stale.
+            p.setOpacity(STALE_OPACITY if row_idx == 0 and self._credentials_expired else 1.0)
             for col, label, pct, reset_ts in row:
                 cx = col_w * col + col_w / 2
                 cy = row_top + ring_d / 2
@@ -953,11 +958,19 @@ class UsageOverlay(QWidget):
                     rw = fm.horizontalAdvance(reset_label)
                     p.drawText(QPointF(cx - rw / 2, label_y + 12 * s), reset_label)
 
-        # Burn / spike badge — centred along the top strip, which sits clear
-        # above both ring tops (rings begin at y = 12·s; the gauge draws no
-        # title/LIVE badge up here). Same warn/crit colour as bars mode.
+        p.setOpacity(1.0)
+
+        # Expired-token hint or burn / spike badge — centred along the top
+        # strip, which sits clear above both ring tops (rings begin at
+        # y = 12·s; the gauge draws no title/LIVE badge up here). The hint
+        # wins: while the token is expired the burn rate is last-known too.
         burn = self._burn_alert
-        if burn is not None and getattr(burn, "active", False):
+        if self._credentials_expired:
+            p.setFont(_mono_font(max(7, int(8 * s)), bold=True))
+            nwid = p.fontMetrics().horizontalAdvance(EXPIRED_NOTICE)
+            p.setPen(_hex_to_qcolor(self._theme.get("warn") or "#f59e0b"))
+            p.drawText(QPointF(w / 2 - nwid / 2, 10 * s), EXPIRED_NOTICE)
+        elif burn is not None and getattr(burn, "active", False):
             btext = _burn_badge_text(burn)
             if btext:
                 p.setFont(_mono_font(max(7, int(8 * s)), bold=True))
@@ -972,6 +985,7 @@ class UsageOverlay(QWidget):
         # Scoped weekly cap — a slim full-width bar spanning both columns
         # beneath the rings (a third ring would unbalance the pair).
         if self._scoped_label:
+            p.setOpacity(STALE_OPACITY if self._credentials_expired else 1.0)
             pad_x = 14 * s
             bar_h = OSD_BAR_HEIGHT * s
             bar_w = w - 2 * pad_x
@@ -996,6 +1010,7 @@ class UsageOverlay(QWidget):
                 p.drawRoundedRect(
                     QRectF(pad_x, bar_y, max(bar_w * self._scoped_pct, bar_h), bar_h),
                     OSD_BAR_RADIUS * s, OSD_BAR_RADIUS * s)
+            p.setOpacity(1.0)
 
     def _draw_ring(
         self,
@@ -1090,9 +1105,16 @@ class UsageOverlay(QWidget):
         # still active, and neither changes the OSD height.
         badge_right = w - pad_x
 
+        # Expired-token hint takes LIVE's slot: it explains why the Claude
+        # rows below are dimmed, which matters more than the token rate.
+        if self._credentials_expired:
+            notice_width = p.fontMetrics().horizontalAdvance(EXPIRED_NOTICE)
+            p.setPen(_hex_to_qcolor(self._theme.get("warn") or "#f59e0b"))
+            p.drawText(QPointF(badge_right - notice_width, title_y), EXPIRED_NOTICE)
+            badge_right -= notice_width + 8 * s
         # Live indicator — only drawn when there's recent assistant activity.
         # Renders as `● LIVE 1.2k tok/min` right-aligned against the title.
-        if self._is_live and self._live_tpm > 0:
+        elif self._is_live and self._live_tpm > 0:
             tpm = self._live_tpm
             tpm_text = f"{tpm / 1000:.1f}k" if tpm >= 1000 else f"{int(tpm)}"
             live_text = f"● LIVE {tpm_text} tok/min"
@@ -1117,6 +1139,9 @@ class UsageOverlay(QWidget):
                 p.drawText(QPointF(badge_right - bwid, title_y), btext)
 
         # --- Session row ---
+        # Claude rows (Session, Weekly, scoped) are last-known while the
+        # token is expired; Codex rows below stay at full opacity.
+        p.setOpacity(STALE_OPACITY if self._credentials_expired else 1.0)
         y = pad_y + 16 * s
         self._draw_row(
             p, y, w, pad_x, bar_w, bar_h, bar_r, font_label, font_small,
@@ -1144,6 +1169,7 @@ class UsageOverlay(QWidget):
                 reset_label=_format_reset_short(self._scoped_reset),
             )
             y2 = y3  # push the footer below the extra row
+        p.setOpacity(1.0)
 
         # --- Codex provider rows — only when the codex provider is active ---
         for label, pct, reset_ts in self._codex_rows():
