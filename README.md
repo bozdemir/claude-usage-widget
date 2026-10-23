@@ -138,7 +138,7 @@ Gauge variants for every theme are available at `screenshots/osd-gauge-<theme>.p
 pip install --user --upgrade claude-usage-widget
 claude-usage              # launches the OSD overlay (foreground)
 claude-usage --detach     # …or run it in the background and free the shell (Linux/macOS; on Windows use Start-Process or pythonw)
-claude-usage --version    # 0.13.4
+claude-usage --version    # 0.13.5
 ```
 
 That's it — no `apt`, no `brew`, no PyGObject, no rumps. `pip` pulls in just two pure-Python wheels (PySide6-Essentials, which ships Qt, and certifi for HTTPS), so the widget is self-contained with zero system libraries.
@@ -420,6 +420,7 @@ sudo pacman -S libnotify          # Arch
 ### API authentication fails
 - Make sure the Claude Code CLI is installed and you are logged in (the `claude` command should work in a terminal).
 - The OAuth token is loaded in this order: the `CLAUDE_CODE_OAUTH_TOKEN` environment variable, then `~/.claude/.credentials.json`, then (macOS only) the login Keychain.
+- **Dimmed Claude rows with "token expired · run claude":** Claude Code's access token lasts a few hours and only Claude Code refreshes it, the next time it runs. Until then the widget shows the last known numbers, dimmed. Run `claude` once and the next poll is live again. The widget never refreshes or writes the token itself.
 - **macOS — blank session/weekly with "No credentials":** Claude Code often stores the token only in the Keychain, and a GUI launch (Finder / Homebrew / a login item) may not have access to it. Launch `claude-usage` once from a Terminal and click **Always Allow** on the Keychain prompt, or export `CLAUDE_CODE_OAUTH_TOKEN`.
 
 ### Codex rows disappeared

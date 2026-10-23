@@ -3,6 +3,21 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## 0.13.5
+
+### Changed
+
+- **An expired Claude Code token no longer looks like live data.** Claude
+  Code's access token lasts a few hours and only Claude Code refreshes it, so
+  after a night without running `claude` the widget fell back to its last
+  known numbers and painted them as if they were current. By then the 5-hour
+  window has usually rolled over, so the bars read 0% with no explanation.
+  The Claude rows are now dimmed next to a "token expired · run claude" hint,
+  in every view and theme and at the top of the minimized tooltip. Run
+  `claude` once and the next poll is live again. The widget stays read-only:
+  it never refreshes or writes the token itself. Codex rows are unaffected.
+  Thanks @atl3tico (#37).
+
 ## 0.13.4
 
 ### Fixed
