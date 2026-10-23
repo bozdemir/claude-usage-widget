@@ -20,7 +20,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 
 from ._paint import (
     draw_ascii_bar, draw_block_bar, draw_heatmap_52w, draw_sparkline_bars,
-    draw_text, draw_ticker_marquee, hex_to_qcolor, mono_font,
+    EXPIRED_NOTICE, STALE_OPACITY, draw_text, draw_ticker_marquee, hex_to_qcolor, mono_font,
 )
 from ._popup import (
     ROW_GAP, SECTION_GAP,
@@ -116,12 +116,17 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
         draw_text(p, x + adv + 8 * s, baseline, f"⚙ {data.subagent_count}",
                   hex_to_qcolor(t["text_secondary"]), body_f)
 
-    live_text = f"● LIVE {data.live_tok_per_min:.1f}k t/m" if getattr(data, "is_live", False) else ""
-    if live_text:
+    # The expired-token hint takes the LIVE badge's slot.
+    if data.credentials_expired:
+        lw = QFontMetrics(body_f).horizontalAdvance(EXPIRED_NOTICE)
+        draw_text(p, x + w - lw, baseline, EXPIRED_NOTICE, hex_to_qcolor(t["warn"]), body_f)
+    elif getattr(data, "is_live", False):
+        live_text = f"● LIVE {data.live_tok_per_min:.1f}k t/m"
         lw = QFontMetrics(body_f).horizontalAdvance(live_text)
         draw_text(p, x + w - lw, baseline, live_text, hex_to_qcolor(t["accent"]), body_f)
 
-    # session row
+    # session row — Claude rows are last-known while the token is expired
+    p.setOpacity(STALE_OPACITY if data.credentials_expired else 1.0)
     y_row = y + line_h + m["osd_row_gap"] * s
     draw_text(p, x, y_row + fm.ascent(), "session",
               hex_to_qcolor(t["text_secondary"]), body_f)
@@ -165,6 +170,7 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
                        m["osd_bar_cols"],
                        hex_to_qcolor(t["accent"]), hex_to_qcolor(t["very_dim"]),
                        body_f)
+    p.setOpacity(1.0)
 
     # codex rows — optional second-provider (OpenAI Codex) 5h + 7d windows.
     # Mirrors the session/weekly rows exactly and pushes the ticker below

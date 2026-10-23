@@ -20,7 +20,8 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen
 
 from ._paint import (
-    draw_block_bar, draw_text, draw_ticker_marquee, hex_to_qcolor, mono_font,
+    EXPIRED_NOTICE, STALE_OPACITY, draw_block_bar, draw_text, draw_ticker_marquee,
+    hex_to_qcolor, mono_font,
 )
 
 
@@ -114,16 +115,22 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     draw_text(p, rect.x() + (rect.width() - tw) / 2,
               y + fm_t.ascent(), title,
               hex_to_qcolor(t["ink"]), title_f, letter_spacing_px=3 * s)
-    sub = "RCPT #00231 · JUST NOW"
+    # The expired-token hint replaces the "JUST NOW" stamp: the lines below
+    # are not current.
+    if data.credentials_expired:
+        sub, sub_color = EXPIRED_NOTICE.upper(), t["warn"]
+    else:
+        sub, sub_color = "RCPT #00231 · JUST NOW", t["text_dim"]
     sw = QFontMetrics(small_f).horizontalAdvance(sub)
     draw_text(p, rect.x() + (rect.width() - sw) / 2,
               y + fm_t.height() + QFontMetrics(small_f).ascent(),
-              sub, hex_to_qcolor(t["text_dim"]), small_f)
+              sub, hex_to_qcolor(sub_color), small_f)
 
     y_rule = y + fm_t.height() + fm.height() + 2 * s
     _draw_dashed_rule(p, x, y_rule, x + w, hex_to_qcolor(t["rule"]))
 
-    # SESSION row + bar
+    # SESSION row + bar — Claude rows are last-known while the token is expired
+    p.setOpacity(STALE_OPACITY if data.credentials_expired else 1.0)
     yy = y_rule + 6 * s
     draw_text(p, x, yy + fm.ascent(), "SESSION",
               hex_to_qcolor(t["ink"]), body_f)
@@ -171,6 +178,7 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
         p.drawRect(QRectF(x, yy, w, 8 * s))
         p.setPen(Qt.NoPen); p.setBrush(hex_to_qcolor(t["ink"]))
         p.drawRect(QRectF(x, yy, w * data.scoped_pct, 8 * s))
+    p.setOpacity(1.0)
 
     # CODEX — optional second-provider pair (Codex 5h + 7d). Mirrors the
     # SESSION/WEEKLY rows exactly so they read as two more native receipt lines.

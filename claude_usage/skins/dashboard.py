@@ -18,7 +18,8 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 
 from ._paint import (
-    draw_block_bar, draw_text, draw_ticker_marquee, hex_to_qcolor, mono_font, ui_font,
+    EXPIRED_NOTICE, STALE_OPACITY, draw_block_bar, draw_text, draw_ticker_marquee,
+    hex_to_qcolor, mono_font, ui_font,
 )
 
 
@@ -115,7 +116,13 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
                   hex_to_qcolor(t["text_secondary"]), small_f,
                   letter_spacing_px=1.5 * s)
 
-    if getattr(data, "is_live", False):
+    # The expired-token hint takes the LIVE badge's slot.
+    if data.credentials_expired:
+        notice = EXPIRED_NOTICE.upper()
+        nw = QFontMetrics(small_f).horizontalAdvance(notice) + len(notice) * 1.0 * s
+        draw_text(p, x + w - nw, bl, notice, hex_to_qcolor(t["warn"]), small_f,
+                  letter_spacing_px=1.0 * s)
+    elif getattr(data, "is_live", False):
         live = f"● LIVE {data.live_tok_per_min:.1f}K T/M"
         lw = QFontMetrics(small_f).horizontalAdvance(live) + 2 * s
         draw_text(p, x + w - lw, bl, live,
@@ -136,6 +143,8 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
             (data.scoped_label or "SCOPED").upper(), data.scoped_pct,
             f"{data.scoped_reset_hrs}h {data.scoped_reset_min}m", t["accent2"],
         ))
+    # Rows before this index are Claude's, dimmed while the token is expired.
+    claude_row_count = len(rows)
     # Optional Codex second-provider pair — mirrors the Session/Weekly idiom
     # (accent for the 5h window, accent2 for the 7d window). Drawn via the same
     # rows loop, so the bottom-anchored ticker rides down on the overlay's
@@ -153,7 +162,9 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
             ))
     y_cursor = y + fm.height() + 8 * s
     fm_metric = QFontMetrics(metric_f)
-    for label, pct, reset, color_hex in rows:
+    for row_idx, (label, pct, reset, color_hex) in enumerate(rows):
+        stale = data.credentials_expired and row_idx < claude_row_count
+        p.setOpacity(STALE_OPACITY if stale else 1.0)
         # left: label + big number
         draw_text(p, x, y_cursor + fm.ascent(), label,
                   hex_to_qcolor(t["text_dim"]), small_f,
@@ -179,6 +190,7 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
                        pct, hex_to_qcolor(t["very_dim"]),
                        hex_to_qcolor(color_hex), radius=0)
         y_cursor += fm.height() + fm_metric.height() + 12 * s
+    p.setOpacity(1.0)
 
     # Ticker strip along the bottom — separator line above, 5-bucket
     # quartile colouring, scrolling right-to-left.

@@ -55,6 +55,9 @@ class SkinData:
     codex_weekly_reset_min: int = 0
     live_tok_per_min: float = 0.0  # in thousands (e.g. 10.5 means 10.5k)
     is_live: bool = False
+    # Claude's numbers are last-known (expired token): skins dim the Claude
+    # rows and show EXPIRED_NOTICE. Codex rows are unaffected.
+    credentials_expired: bool = False
     subagent_count: int = 0
     ticker_items: list[SkinTickerItem] = field(default_factory=list)
     # Pixels scrolled so far on the ticker marquee. Skins that animate
@@ -338,6 +341,7 @@ def from_usage_stats(
         codex_weekly_reset_min=codex_weekly_reset_min,
         live_tok_per_min=tpm / 1000.0,
         is_live=is_live,
+        credentials_expired=bool(getattr(stats, "credentials_expired", False)),
         subagent_count=int(getattr(stats, "active_subagent_count", 0) or 0),
         ticker_items=ticker_items,
         ticker_offset=float(ticker_offset),

@@ -19,7 +19,8 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 
 from ._paint import (
-    draw_ring, draw_text, draw_ticker_marquee, hex_to_qcolor, mono_font,
+    STALE_OPACITY, draw_ring, draw_text, draw_ticker_marquee, fit_expired_notice, hex_to_qcolor,
+    mono_font,
 )
 
 
@@ -144,9 +145,16 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     # top bar text
     title_f = mono_font(FONTS["title_pt"] * s, bold=True, family=FONTS["family_mono"])
     fm = QFontMetrics(title_f)
-    draw_text(p, rect.x() + pad, rect.y() + pad + fm.ascent(),
-              "CLAUDE · USAGE", hex_to_qcolor(t["accent"]), title_f,
-              letter_spacing_px=3.0 * s)
+    title_w = draw_text(p, rect.x() + pad, rect.y() + pad + fm.ascent(),
+                        "CLAUDE · USAGE", hex_to_qcolor(t["accent"]), title_f,
+                        letter_spacing_px=3.0 * s)
+    # No LIVE badge in this skin, so the expired-token hint goes top-right.
+    if data.credentials_expired:
+        notice_f = mono_font(FONTS["label_pt"] * s, family=FONTS["family_mono"])
+        fm_notice = QFontMetrics(notice_f)
+        notice = fit_expired_notice(fm_notice, rect.width() - 2 * pad - title_w - 12 * s)
+        draw_text(p, rect.right() - pad - fm_notice.horizontalAdvance(notice),
+                  rect.y() + pad + fm.ascent(), notice, hex_to_qcolor(t["warn"]), notice_f)
 
     # An optional model-scoped weekly cap (e.g. "Fable") is drawn as a third
     # 270° gauge centred below the SESSION/WEEKLY pair. Present only when the
@@ -165,11 +173,15 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     else:
         y_mid = rect.y() + rect.height() / 2 + 10 * s
     third = rect.width() / 3
+    # Claude gauges are last-known while the token is expired; Codex is not.
+    claude_opacity = STALE_OPACITY if data.credentials_expired else 1.0
+    p.setOpacity(claude_opacity)
     paint_gauge(p, rect.x() + third * 0.5, y_mid, data.session_pct,
                 "SESSION", f"{data.session_reset_min}m", s)
     paint_gauge(p, rect.x() + third * 2.5, y_mid, data.weekly_pct,
                 "WEEKLY",
                 f"{data.weekly_reset_hrs}h {data.weekly_reset_min}m", s)
+    p.setOpacity(1.0)
 
     # center column — live + today
     cx = rect.x() + rect.width() / 2
@@ -193,8 +205,10 @@ def paint_osd(p: QPainter, rect: QRectF, data, scale: float = 1.0) -> None:
     if scoped_present:
         scoped_label = (data.scoped_label or "SCOPED").upper()
         y_scoped = y_mid + single_row
+        p.setOpacity(claude_opacity)
         paint_gauge(p, cx, y_scoped, data.scoped_pct, scoped_label,
                     f"{data.scoped_reset_hrs}h {data.scoped_reset_min}m", s)
+        p.setOpacity(1.0)
 
     # Codex (optional second provider) — one centred gauge per window below
     # the pair (and below the scoped gauge if present), same renderer/fonts/

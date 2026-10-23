@@ -9,6 +9,20 @@ from __future__ import annotations
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 
+# Expired-token state, shared by the overlay and every skin: Claude rows are
+# painted at STALE_OPACITY (last-known numbers) next to this hint.
+EXPIRED_NOTICE = "token expired · run claude"
+STALE_OPACITY = 0.4
+
+
+def fit_expired_notice(fm: QFontMetrics, max_width: float) -> str:
+    """Upper-case EXPIRED_NOTICE, cut to its headline when the full hint
+    doesn't fit beside a wide skin title."""
+    notice = EXPIRED_NOTICE.upper()
+    if fm.horizontalAdvance(notice) <= max_width:
+        return notice
+    return notice.partition(" · ")[0]
+
 
 def hex_to_qcolor(hex_str: str, alpha: float = 1.0) -> QColor:
     """'#rrggbb' or '#rgb' -> QColor with alpha in [0, 1]."""
