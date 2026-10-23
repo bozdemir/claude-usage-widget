@@ -79,6 +79,10 @@ OSD_RADIUS = 12
 OSD_BAR_HEIGHT = 6
 OSD_BAR_RADIUS = 3
 MINIMIZED_HEIGHT = 6
+# Minimized capsule: track and outline opacity, sized so the empty capsule
+# reaches 3:1 contrast on dark and light desktop panels in every theme.
+MINIMIZED_TRACK_ALPHA = 0.75
+MINIMIZED_OUTLINE_ALPHA = 0.45
 
 # Ticker animation: seconds-per-full-loop scales inversely with viewport
 # width; we use a pixels-per-second rate instead so scale changes don't
@@ -819,11 +823,24 @@ class UsageOverlay(QWidget):
         self._paint_full(p, w, h)
 
     def _paint_minimized(self, p: QPainter, w: int, h: int) -> None:
-        """Thin capsule showing session utilisation."""
-        track = _hex_to_qcolor(self._theme["bar_track"], 0.6)
+        """Thin capsule showing session utilisation.
+
+        The track is close to the theme's background tone, so on a desktop
+        panel of that tone it vanished and a low session % left the widget
+        all but invisible (issue #34). A 1px outline in the opposite tone
+        (light around a dark track, dark around a light one) keeps the
+        capsule visible on dark and light panels alike; the fill covers it.
+        """
+        track_hex = self._theme["bar_track"]
+        dark_track = QColor(track_hex).lightnessF() < 0.5
+        outline = QColor("#ffffff" if dark_track else "#000000")
+        outline.setAlphaF(MINIMIZED_OUTLINE_ALPHA)
+        pen = QPen(outline)
+        pen.setWidthF(1.0)
+        p.setPen(pen)
+        p.setBrush(_hex_to_qcolor(track_hex, MINIMIZED_TRACK_ALPHA))
+        p.drawRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), 2.5, 2.5)
         p.setPen(Qt.NoPen)
-        p.setBrush(track)
-        p.drawRoundedRect(QRectF(0, 0, w, h), 3, 3)
         if self._session_pct > 0:
             fill_w = max(w * min(self._session_pct, 1.0), 4)
             p.setBrush(_bar_color(self._session_pct, self._theme))
