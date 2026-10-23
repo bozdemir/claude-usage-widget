@@ -3,6 +3,24 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## 0.13.4
+
+### Fixed
+
+- **The minimized widget was nearly invisible on a dark desktop panel.** Its
+  track is close to the theme's background tone, so on a dark panel it
+  disappeared, and at a low session % only a 4-pixel dot was left. The
+  capsule now has a thin outline in the opposite tone of its track, and a
+  slightly more solid track, so an empty capsule stands out on dark and light
+  panels in all 11 themes. Thanks @dmitryuk (#34).
+
+### Added
+
+- **Hover the minimized widget to see every number.** The minimized capsule
+  shows only the session %, so hovering it now shows a tooltip with each
+  row's % and reset time: Session, Weekly, and the Fable and Codex rows when
+  you have them. Thanks @dmitryuk (#35).
+
 ## 0.13.3
 
 ### Fixed
