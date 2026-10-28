@@ -14,13 +14,13 @@ from __future__ import annotations
 
 import glob
 import itertools
-import json
 import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterator
 
+from claude_usage.jsonl_tail import JsonlTail
 from claude_usage.subagents import iter_subagent_transcripts
 from claude_usage.pricing import billing_model, calculate_cost
 
@@ -147,6 +147,10 @@ def _extract_ticker_item(entry: dict) -> TickerItem | None:
     )
 
 
+# Each transcript line is decoded once, when it is appended (issue #39).
+_TICKER_TAIL = JsonlTail(_extract_ticker_item)
+
+
 def scan_ticker_items(claude_dir: str, now: float | None = None) -> list[TickerItem]:
     """Return the most recent ticker items across all active sessions.
 
@@ -162,28 +166,14 @@ def scan_ticker_items(claude_dir: str, now: float | None = None) -> list[TickerI
     items: list[TickerItem] = []
 
     for path in _iter_recent_jsonl(projects_dir, cutoff_mtime):
-        try:
-            f = open(path, encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        with f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                item = _extract_ticker_item(entry)
-                if item is None:
-                    continue
-                if item.ts < cutoff or item.ts > now_ts + 60:
-                    continue
-                if item.msg_id in seen:
-                    continue
-                seen.add(item.msg_id)
-                items.append(item)
+        for item in _TICKER_TAIL.records(path):
+            if item.ts < cutoff or item.ts > now_ts + 60:
+                continue
+            if item.msg_id in seen:
+                continue
+            seen.add(item.msg_id)
+            items.append(item)
+    _TICKER_TAIL.forget_untouched()
 
     items.sort(key=lambda x: x.ts, reverse=True)
     return items[:MAX_TICKER_ITEMS]

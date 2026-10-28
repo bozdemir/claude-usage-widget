@@ -1389,6 +1389,48 @@ class TestCollectAll(unittest.TestCase):
             self.assertEqual(stats.week_tokens, 0)
             self.assertEqual(stats.active_sessions, [])
 
+    _LIVE_LIMITS = {
+        "session_utilization": 0.33, "session_reset": 1700000000,
+        "weekly_utilization": 0.66, "weekly_reset": 1700000001,
+        "overage_status": "allowed", "fallback_status": "available",
+    }
+
+    @patch("claude_usage.collector.fetch_rate_limits")
+    def test_refresh_appends_without_rewriting_the_history(self, mock_fetch: Any) -> None:
+        """Each refresh appends a sample; it used to rewrite the whole 90-day
+        history file every time as well (issue #39)."""
+        from claude_usage.history import append_sample, load_samples
+
+        mock_fetch.return_value = self._LIVE_LIMITS
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "usage-history.jsonl")
+            now = datetime.now().timestamp()
+            for hours in (3, 2, 1):
+                append_sample(path, now - hours * 3600, 0.1, 0.2)
+            inode = os.stat(path).st_ino
+
+            collect_all({"claude_dir": tmpdir})
+            collect_all({"claude_dir": tmpdir})
+
+            self.assertEqual(os.stat(path).st_ino, inode)
+            self.assertEqual(len(load_samples(path)), 5)
+
+    @patch("claude_usage.collector.fetch_rate_limits")
+    def test_refresh_prunes_history_a_day_past_its_window(self, mock_fetch: Any) -> None:
+        from claude_usage.history import append_sample, load_samples
+
+        mock_fetch.return_value = self._LIVE_LIMITS
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "usage-history.jsonl")
+            now = datetime.now().timestamp()
+            append_sample(path, now - 92 * 86400, 0.1, 0.2)   # past 90 days + 1 of slack
+            append_sample(path, now - 3600, 0.1, 0.2)
+
+            collect_all({"claude_dir": tmpdir})
+
+            self.assertEqual(len(load_samples(path)), 2)  # the old one gone, a new one added
+            self.assertGreater(min(s["ts"] for s in load_samples(path)), now - 7200)
+
 
 class TestCollectAllStaleFallback(unittest.TestCase):
     """When a poll is rate-limited/errored, collect_all falls back to the last

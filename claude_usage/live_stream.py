@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import glob
 import itertools
-import json
 import os
 import time
 from dataclasses import dataclass
@@ -28,6 +27,7 @@ ACTIVE_CUTOFF_SECONDS = 90
 FILE_MTIME_CUTOFF_SECONDS = 10 * 60
 
 
+from claude_usage.jsonl_tail import JsonlTail
 from claude_usage.subagents import iter_subagent_transcripts
 
 
@@ -102,6 +102,10 @@ def _extract_assistant_sample(entry: dict) -> tuple[float, int, str] | None:
     return ts, out_tokens, msg_id
 
 
+# Each transcript line is decoded once, when it is appended (issue #39).
+_LIVE_TAIL = JsonlTail(_extract_assistant_sample)
+
+
 def detect_live_activity(claude_dir: str, now: float | None = None) -> LiveActivity:
     """Scan recent conversation files and report the current tokens/min rate.
 
@@ -119,32 +123,17 @@ def detect_live_activity(claude_dir: str, now: float | None = None) -> LiveActiv
     seen_msg_ids: set[str] = set()
 
     for path in _iter_recent_jsonl(projects_dir, cutoff_mtime):
-        try:
-            f = open(path, encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        with f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                sample = _extract_assistant_sample(entry)
-                if sample is None:
-                    continue
-                ts, out_tokens, msg_id = sample
-                if ts < cutoff_window or ts > now_ts + 60:
-                    # Future-dated entries (clock skew) are ignored too.
-                    continue
-                if msg_id in seen_msg_ids:
-                    continue
-                seen_msg_ids.add(msg_id)
-                total_tokens += out_tokens
-                if ts > latest_ts:
-                    latest_ts = ts
+        for ts, out_tokens, msg_id in _LIVE_TAIL.records(path):
+            if ts < cutoff_window or ts > now_ts + 60:
+                # Future-dated entries (clock skew) are ignored too.
+                continue
+            if msg_id in seen_msg_ids:
+                continue
+            seen_msg_ids.add(msg_id)
+            total_tokens += out_tokens
+            if ts > latest_ts:
+                latest_ts = ts
+    _LIVE_TAIL.forget_untouched()
 
     tokens_per_minute = total_tokens / (LIVE_WINDOW_SECONDS / 60.0)
     is_live = latest_ts > 0 and latest_ts >= cutoff_active

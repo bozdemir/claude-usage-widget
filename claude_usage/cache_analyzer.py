@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import glob
 import hashlib
-import json
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
+from claude_usage.jsonl_tail import JsonlTail
 from claude_usage.pricing import MODEL_PRICING
 
 
@@ -82,6 +82,38 @@ def _extract_user_prefix(entry: dict) -> tuple[str, str] | None:
     return text, model
 
 
+def _prefix_record(entry: dict) -> tuple[float | None, str, str, int, str] | None:
+    """What the analyser keeps from a transcript line: a cacheable user
+    prompt's ``(unix timestamp or None, prefix hash, preview, tokens, model)``,
+    or None.
+
+    Only the hash and a short preview of the prefix are kept, not the text:
+    a 1 MB pasted log shouldn't sit in the cache.
+    """
+    extracted = _extract_user_prefix(entry)
+    if extracted is None:
+        return None
+    text, model = extracted
+    tokens = _estimate_tokens(text)
+    if tokens < MIN_CACHEABLE_TOKENS:
+        return None
+    # Window filter by ISO timestamp when present. Converted to a unix float
+    # so the comparison is timezone-safe: earlier versions compared a UTC dt
+    # against a local-tz dt and shifted the cutoff by the host's UTC offset.
+    ts_unix = None
+    ts_str = entry.get("timestamp", "")
+    if ts_str and isinstance(ts_str, str):
+        try:
+            ts_unix = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            pass  # kept: no window filter for it
+    return ts_unix, _prefix_hash(text), text[:100].replace("\n", " ").strip(), tokens, model
+
+
+# Each transcript line is decoded once, when it is appended (issue #39).
+_PREFIX_TAIL = JsonlTail(_prefix_record)
+
+
 def analyze_cache_opportunities(
     claude_dir: str,
     days: int = 7,
@@ -116,54 +148,19 @@ def analyze_cache_opportunities(
             continue
 
         project = os.path.basename(os.path.dirname(jsonl_path))
-        try:
-            f = open(jsonl_path, encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        with f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
-                # Window filter by ISO timestamp when present. Convert to a
-                # unix float so the comparison is timezone-safe — earlier
-                # versions compared a UTC dt against a local-tz dt and
-                # shifted the cutoff by the host's UTC offset.
-                ts_str = entry.get("timestamp", "")
-                if ts_str:
-                    try:
-                        ts_unix = datetime.fromisoformat(
-                            ts_str.replace("Z", "+00:00"),
-                        ).timestamp()
-                        if ts_unix < cutoff:
-                            continue
-                    except ValueError:
-                        pass  # fall through — keep the entry
-
-                extracted = _extract_user_prefix(entry)
-                if extracted is None:
-                    continue
-                text, model = extracted
-                tokens = _estimate_tokens(text)
-                if tokens < MIN_CACHEABLE_TOKENS:
-                    continue
-
-                h = _prefix_hash(text)
-                # Store only a short preview, not the full prefix — a 1 MB
-                # pasted log shouldn't balloon the bucket dict.
-                bucket = buckets.setdefault(h, {
-                    "project": project,
-                    "preview": text[:100].replace("\n", " ").strip(),
-                    "tokens": tokens,
-                    "occurrences": 0,
-                    "model": model,
-                })
-                bucket["occurrences"] += 1
+        for ts_unix, h, preview, tokens, model in _PREFIX_TAIL.records(jsonl_path):
+            # Entries with no readable timestamp are kept, as before.
+            if ts_unix is not None and ts_unix < cutoff:
+                continue
+            bucket = buckets.setdefault(h, {
+                "project": project,
+                "preview": preview,
+                "tokens": tokens,
+                "occurrences": 0,
+                "model": model,
+            })
+            bucket["occurrences"] += 1
+    _PREFIX_TAIL.forget_untouched()
 
     opportunities: list[CacheOpportunity] = []
     for bucket in buckets.values():

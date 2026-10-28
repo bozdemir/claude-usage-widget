@@ -3,7 +3,7 @@ import os
 import tempfile
 import unittest
 
-from claude_usage.history import aggregate, append_sample, load_samples, prune
+from claude_usage.history import aggregate, append_sample, load_samples, prune, prune_due
 
 
 class TestAggregate(unittest.TestCase):
@@ -96,6 +96,44 @@ class TestPersistence(unittest.TestCase):
 
     def test_prune_missing_file_is_noop(self):
         self.assertEqual(prune("/nonexistent/p.jsonl", keep_seconds=100, now=200), 0)
+
+    # Every refresh appends a sample, so a sample is always just past a
+    # 90-day cutoff: pruning whenever one is would rewrite the whole file
+    # every minute (issue #39). prune_due waits until the oldest sample is
+    # a slack period past the cutoff.
+
+    def test_prune_is_not_due_within_the_slack(self):
+        for i in range(5):
+            append_sample(self.path, ts=float(i * 100), session_util=0.1, weekly_util=0.1)
+        # cutoff = 400 - 250 = 150; the oldest sample (0) is 150 past it
+        self.assertFalse(prune_due(self.path, keep_seconds=250.0, now=400.0, slack_seconds=200.0))
+
+    def test_prune_is_due_past_the_slack(self):
+        for i in range(5):
+            append_sample(self.path, ts=float(i * 100), session_util=0.1, weekly_util=0.1)
+        self.assertTrue(prune_due(self.path, keep_seconds=250.0, now=400.0, slack_seconds=100.0))
+
+    def test_prune_is_not_due_for_a_missing_file(self):
+        self.assertFalse(prune_due("/nonexistent/p.jsonl", keep_seconds=100, now=200, slack_seconds=10))
+
+    def test_prune_is_due_when_the_first_line_is_garbled(self):
+        with open(self.path, "w") as f:
+            f.write("not valid json\n")
+            f.write('{"ts": 300, "session": 0.1, "weekly": 0.1}\n')
+        self.assertTrue(prune_due(self.path, keep_seconds=250.0, now=400.0, slack_seconds=100.0))
+
+    def test_load_sees_samples_appended_after_a_read(self):
+        append_sample(self.path, ts=100.0, session_util=0.5, weekly_util=0.1)
+        self.assertEqual(len(load_samples(self.path)), 1)
+        append_sample(self.path, ts=200.0, session_util=0.6, weekly_util=0.2)
+        self.assertEqual([s["ts"] for s in load_samples(self.path)], [100.0, 200.0])
+
+    def test_load_after_prune_sees_the_rewritten_file(self):
+        for i in range(5):
+            append_sample(self.path, ts=float(i * 100), session_util=0.1, weekly_util=0.1)
+        load_samples(self.path)
+        prune(self.path, keep_seconds=250.0, now=400.0)
+        self.assertEqual([s["ts"] for s in load_samples(self.path)], [200.0, 300.0, 400.0])
 
 
 if __name__ == "__main__":

@@ -31,7 +31,8 @@ from claude_usage.burn import (
     merge_alerts,
 )
 from claude_usage.cache_analyzer import CacheOpportunity, analyze_cache_opportunities
-from claude_usage.history import aggregate, append_sample, load_samples, prune
+from claude_usage.history import aggregate, append_sample, load_samples, prune, prune_due
+from claude_usage.jsonl_tail import JsonlTail
 from claude_usage.live_stream import LiveActivity, detect_live_activity
 from claude_usage.subagents import count_active_subagents, iter_subagent_transcripts
 from claude_usage.ticker import TickerItem, scan_ticker_items
@@ -323,17 +324,56 @@ def _is_duplicate_turn(msg: dict[str, Any], seen_msg_ids: set[str] | None) -> bo
     tokens in one file and zeros in another). Claiming only on real usage
     makes the result independent of directory order.
     """
+    return _is_duplicate_record(msg.get("id"), _usage_counts(msg.get("usage", {})), seen_msg_ids)
+
+
+def _is_duplicate_record(
+    msg_id: Any,
+    counts: tuple[int, int, int, int, int],
+    seen_msg_ids: set[str] | None,
+) -> bool:
+    """:func:`_is_duplicate_turn` for an already-extracted message id and
+    usage counts."""
     if seen_msg_ids is None:
         return False
-    msg_id = msg.get("id")
     if not msg_id:
         return False
     if msg_id in seen_msg_ids:
         return True
-    if not any(_usage_counts(msg.get("usage", {}))):
+    if not any(counts):
         return False
     seen_msg_ids.add(msg_id)
     return False
+
+
+def _token_record(entry: dict[str, Any]) -> tuple[str, Any, tuple[int, int, int, int, int], str] | None:
+    """What the token scans keep from a transcript line: an assistant turn's
+    ``(date, message id, usage counts, billing model)``, or None.
+
+    The billing model is resolved here, per request: a prompt-length-tiered
+    model (Haiku 5.5) gets a separate key for its long-prompt requests. Only
+    the timestamp's ``YYYY-MM-DD`` is kept, since the scans match it against
+    day and month prefixes; it and the model are interned, as thousands of
+    cached records share a few of each.
+    """
+    if entry.get("type") != "assistant":
+        return None
+    msg = entry.get("message", {})
+    if not isinstance(msg, dict):
+        return None
+    usage = msg.get("usage", {})
+    counts = _usage_counts(usage if isinstance(usage, dict) else {})
+    timestamp = entry.get("timestamp", "")
+    date = sys.intern((timestamp if isinstance(timestamp, str) else str(timestamp))[:10])
+    model = pricing.billing_model(msg.get("model", "unknown"), _prompt_tokens(counts))
+    if isinstance(model, str):
+        model = sys.intern(model)
+    return date, msg.get("id"), counts, model
+
+
+# Shared by the today/week scan and the monthly-budget scan, which read the
+# same transcripts: each line is decoded once, when it is appended.
+_TOKEN_TAIL = JsonlTail(_token_record)
 
 
 def _new_token_bucket() -> dict[str, int]:
@@ -366,62 +406,34 @@ def _parse_tokens_file(
     ``assistant`` entries because those are the ones that carry the ``usage``
     block with ``output_tokens``.
     """
-    try:
-        f = open(path, encoding="utf-8", errors="replace")
-    except OSError:
-        return
-
     if project_name is None:
         project_name = os.path.basename(os.path.dirname(path))
 
-    with f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+    for date, msg_id, counts, model in _TOKEN_TAIL.records(path):
+        # Check today first; if true, week is automatically true -- avoids iterating week_prefixes
+        is_today = date.startswith(today_prefix)
+        is_week = is_today or any(date.startswith(p) for p in week_prefixes)
+        if not is_week:
+            continue
+        if _is_duplicate_record(msg_id, counts, seen_msg_ids):
+            continue
 
-            if entry.get("type") != "assistant":
-                continue
+        output_tokens = counts[1]
+        result["week_output"] += output_tokens
 
-            timestamp = entry.get("timestamp", "")
-            # Check today first; if true, week is automatically true -- avoids iterating week_prefixes
-            is_today = timestamp.startswith(today_prefix)
-            is_week = is_today or any(timestamp.startswith(p) for p in week_prefixes)
-            if not is_week:
-                continue
+        week_bucket = result["week_by_model_detailed"].setdefault(model, _new_token_bucket())
+        _add_to_bucket(week_bucket, counts)
 
-            msg = entry.get("message", {})
-            if not isinstance(msg, dict):
-                continue
-            if _is_duplicate_turn(msg, seen_msg_ids):
-                continue
+        if is_today:
+            result["today_output"] += output_tokens
+            result["today_by_model"][model] = result["today_by_model"].get(model, 0) + output_tokens
 
-            usage = msg.get("usage", {})
-            counts = _usage_counts(usage)
-            output_tokens = counts[1]
-            # Per request, before aggregating: a prompt-length-tiered model
-            # (Haiku 5.5) gets a separate bucket for its long-prompt requests.
-            model = pricing.billing_model(msg.get("model", "unknown"), _prompt_tokens(counts))
+            today_bucket = result["today_by_model_detailed"].setdefault(model, _new_token_bucket())
+            _add_to_bucket(today_bucket, counts)
 
-            result["week_output"] += output_tokens
-
-            week_bucket = result["week_by_model_detailed"].setdefault(model, _new_token_bucket())
-            _add_to_bucket(week_bucket, counts)
-
-            if is_today:
-                result["today_output"] += output_tokens
-                result["today_by_model"][model] = result["today_by_model"].get(model, 0) + output_tokens
-
-                today_bucket = result["today_by_model_detailed"].setdefault(model, _new_token_bucket())
-                _add_to_bucket(today_bucket, counts)
-
-                result["today_by_project"][project_name] = (
-                    result["today_by_project"].get(project_name, 0) + output_tokens
-                )
+            result["today_by_project"][project_name] = (
+                result["today_by_project"].get(project_name, 0) + output_tokens
+            )
 
 
 def _collect_month_tokens(
@@ -461,35 +473,13 @@ def _parse_month_tokens_file(
     seen_msg_ids: set[str] | None = None,
 ) -> None:
     """Accumulate one file's assistant-turn tokens into *by_model* in-place."""
-    try:
-        f = open(path, encoding="utf-8", errors="replace")
-    except OSError:
-        return
-
-    with f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            if entry.get("type") != "assistant":
-                continue
-            if not str(entry.get("timestamp", "")).startswith(month_prefix):
-                continue
-
-            msg = entry.get("message", {})
-            if not isinstance(msg, dict):
-                continue
-            if _is_duplicate_turn(msg, seen_msg_ids):
-                continue
-            counts = _usage_counts(msg.get("usage", {}))
-            model = pricing.billing_model(msg.get("model", "unknown"), _prompt_tokens(counts))
-            bucket = by_model.setdefault(model, _new_token_bucket())
-            _add_to_bucket(bucket, counts)
+    for date, msg_id, counts, model in _TOKEN_TAIL.records(path):
+        if not date.startswith(month_prefix):
+            continue
+        if _is_duplicate_record(msg_id, counts, seen_msg_ids):
+            continue
+        bucket = by_model.setdefault(model, _new_token_bucket())
+        _add_to_bucket(bucket, counts)
 
 
 # Preserved for test compatibility -- superseded by _collect_tokens_single_pass
@@ -1248,7 +1238,10 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
                 scoped_reset=stats.scoped_reset,
                 scoped_label=stats.scoped_label,
             )
-            prune(samples_path, keep_seconds=HISTORY_KEEP_DAYS * 86400, now=now_ts)
+            # A rewrite of the whole file, so at most about once a day.
+            if prune_due(samples_path, keep_seconds=HISTORY_KEEP_DAYS * 86400,
+                         now=now_ts, slack_seconds=86400):
+                prune(samples_path, keep_seconds=HISTORY_KEEP_DAYS * 86400, now=now_ts)
         except OSError:
             pass
 
@@ -1428,5 +1421,9 @@ def collect_all(config: dict[str, Any]) -> UsageStats:
             stats.codex_weekly_reset = int(cx["weekly_reset"])
         except Exception:
             stats.codex_available = False
+
+    # Drop cached transcripts that neither token scan read this refresh (aged
+    # out of the window, deleted, or the monthly budget was switched off).
+    _TOKEN_TAIL.forget_untouched()
 
     return stats

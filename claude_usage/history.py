@@ -66,6 +66,30 @@ def load_samples(path: str, since_ts: float = 0.0) -> list[dict]:
     return out
 
 
+def prune_due(path: str, keep_seconds: float, now: float, slack_seconds: float) -> bool:
+    """True when the oldest sample is more than *slack_seconds* past the
+    `now - keep_seconds` cutoff, or can't be read.
+
+    Every refresh appends a sample, so one is always just past the cutoff;
+    pruning whenever one is would rewrite the whole file every refresh. The
+    slack batches that into one rewrite per slack period. Samples are
+    appended in time order, so the first line is the oldest."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    oldest = float(json.loads(line).get("ts", 0))
+                except (ValueError, TypeError, AttributeError):
+                    return True
+                return oldest < now - keep_seconds - slack_seconds
+    except OSError:
+        return False
+    return False
+
+
 def prune(path: str, keep_seconds: float, now: float) -> int:
     """Rewrite file dropping samples older than `now - keep_seconds`. Returns kept count."""
     if not os.path.isfile(path):
