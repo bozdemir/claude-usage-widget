@@ -466,6 +466,13 @@ class UsageOverlay(QWidget):
         """Collapse to a thin progress bar or restore the full panel."""
         self._minimized = not self._minimized
         self._apply_size()
+        # A dragged ("custom") position is the anchor for both sizes: re-apply
+        # it, clamped for the size just taken. Otherwise the capsule restored
+        # at startup sat where the full panel had been clamped to fit, a whole
+        # panel height above the spot it was dropped on (issue #38), and the
+        # full panel restored near the bottom edge ran off-screen.
+        if self._position == OSD_POSITION_CUSTOM and self._custom_xy is not None:
+            self._move_to_default_position()
         self._refresh_tooltip()
         # Minimized view has no ticker — stop the animation to save CPU.
         # Restarting requires the bars view mode too (gauge view has no ticker).

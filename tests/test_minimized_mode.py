@@ -8,6 +8,10 @@ in every theme.
 Issue #35: hovering the minimized capsule shows the numbers it hides, as a
 tooltip (the full view already shows them, so it has none).
 
+Issue #38: a capsule dragged next to the clock reopened somewhere else. At
+startup the custom position was clamped for the full-size panel, and only
+then did the controller restore the minimized state.
+
 Uses Qt's offscreen platform so the tests run headless on CI.
 """
 from __future__ import annotations
@@ -139,3 +143,36 @@ def test_tooltip_shows_while_the_osd_is_inactive():
     assert ov.testAttribute(Qt.WA_AlwaysShowToolTips)
     ov.set_always_on_top(not ov.is_always_on_top())
     assert ov.testAttribute(Qt.WA_AlwaysShowToolTips)
+
+
+def _capsule_dropped_at_bottom_right() -> tuple[int, int]:
+    """Where a user drags the capsule: down by the clock, flush with the
+    bottom of the available screen area."""
+    geo = _app.primaryScreen().availableGeometry()
+    probe = _minimized("default")
+    return (geo.x() + geo.width() - probe.width() - 20,
+            geo.y() + geo.height() - probe.height() - 2)
+
+
+def _restarted_minimized(xy: tuple[int, int]) -> UsageOverlay:
+    # The config the controller persisted after the drag, then its startup
+    # order: build the overlay, then restore the minimized state.
+    ov = UsageOverlay({"theme": "default", "osd_position": "custom",
+                       "osd_x": xy[0], "osd_y": xy[1], "osd_minimized": True})
+    ov.toggle_minimized()
+    return ov
+
+
+def test_dragged_capsule_reopens_where_it_was_dropped():
+    xy = _capsule_dropped_at_bottom_right()
+    assert _restarted_minimized(xy).pos().toTuple() == xy
+
+
+def test_full_view_restored_near_the_bottom_stays_on_screen():
+    xy = _capsule_dropped_at_bottom_right()
+    ov = _restarted_minimized(xy)
+    ov.toggle_minimized()  # back to the full panel
+    geo = _app.primaryScreen().availableGeometry()
+    assert ov.geometry().bottom() <= geo.bottom()
+    ov.toggle_minimized()  # and down to the capsule again
+    assert ov.pos().toTuple() == xy
