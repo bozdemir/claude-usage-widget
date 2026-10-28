@@ -3,6 +3,27 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## 0.13.6
+
+### Fixed
+
+- **The widget pinned a CPU core for a second or two every minute.** Each
+  refresh re-read and re-decoded every recent Claude Code transcript, and
+  four separate scans (today/week tokens, prompt-cache tips, the cost ticker
+  and the LIVE badge) each did it again over the same files. On a busy
+  `~/.claude` that is a few hundred thousand JSON lines a minute. On top of
+  that, the 90-day usage history was rewritten in full on every refresh. Now
+  each transcript line is decoded once, when it is appended, and the history
+  file is rewritten about once a day. A refresh after the first takes about
+  a seventh of the CPU it did, and the numbers are exactly the same.
+  Thanks @dmitryuk (#39).
+- **A minimized widget dragged next to the clock reopened somewhere else.**
+  At startup the saved position was fitted for the full-size panel and only
+  then shrunk to the thin strip, so a strip dropped at the bottom of the
+  screen came back a whole panel height higher. It now reopens exactly where
+  you left it, and restoring the full panel near the bottom edge keeps it on
+  screen. Thanks @dmitryuk (#38).
+
 ## 0.13.5
 
 ### Changed
