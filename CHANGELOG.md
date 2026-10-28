@@ -3,6 +3,19 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## 0.13.7
+
+### Changed
+
+- **The scrolling ticker and news strip use a third of the CPU.** They
+  scroll at 25 frames a second, and every frame redrew the whole widget,
+  although only the strips move. That cost 1 to 2 seconds of CPU a minute
+  depending on the theme, more than the refreshes themselves after 0.13.6.
+  Everything that doesn't scroll is now drawn once and reused, and each frame
+  only draws the moving text: 0.3 to 0.4 seconds a minute in every theme. The
+  widget looks exactly the same, pixel for pixel. The minimized widget and
+  the gauge view without news had no animation and are unchanged.
+
 ## 0.13.6
 
 ### Fixed
