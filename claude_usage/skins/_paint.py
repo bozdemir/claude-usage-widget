@@ -6,8 +6,46 @@ Every helper assumes the QPainter has already been set up with antialias:
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+from typing import Callable, Iterator
+
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
+from PySide6.QtGui import (
+    QColor, QFont, QFontMetrics, QFontMetricsF, QPainter, QPen, QStaticText, QTransform,
+)
+
+# A marquee's moving part: ``draw(painter, scroll_offset)``, its text, widths
+# and colours measured once. The overlay paints the static scene into a cached
+# image and replays these each animation frame; see :func:`defer_marquees`.
+MarqueeDraw = Callable[[QPainter, float], None]
+
+_deferred_marquees: list[tuple[str, MarqueeDraw]] | None = None
+
+
+@contextmanager
+def defer_marquees() -> Iterator[list[tuple[str, MarqueeDraw]]]:
+    """Collect marquee drawings instead of painting them.
+
+    Inside the block :func:`emit_marquee` (and so :func:`draw_ticker_marquee`)
+    paints nothing and appends ``(kind, draw)`` to the yielded list, where
+    *kind* says which scroll offset drives it: ``"ticker"`` or ``"news"``.
+    Painting happens on the GUI thread only, so a module-level list is safe.
+    """
+    global _deferred_marquees
+    saved = _deferred_marquees
+    _deferred_marquees = []
+    try:
+        yield _deferred_marquees
+    finally:
+        _deferred_marquees = saved
+
+
+def emit_marquee(p: QPainter, kind: str, draw: MarqueeDraw, offset: float) -> None:
+    """Paint a marquee at *offset*, or record it while deferring."""
+    if _deferred_marquees is not None:
+        _deferred_marquees.append((kind, draw))
+    else:
+        draw(p, offset)
 
 # Expired-token state, shared by the overlay and every skin: Claude rows are
 # painted at STALE_OPACITY (last-known numbers) next to this hint.
@@ -208,30 +246,42 @@ def draw_ticker_marquee(
     fm = QFontMetrics(font)
     strings = [format_fn(it) for it in ordered]
     widths = [fm.horizontalAdvance(s) + sep_gap_px for s in strings]
+    colors = [hex_to_qcolor(color_hex_by_tier[it.tier]) for it in ordered]
     strip_w = sum(widths) or 1
-    height = fm.height()
-    p.save()
-    p.setClipRect(QRectF(x, y_baseline - fm.ascent(), clip_w, height + 2))
-    cur_off = float(offset) % strip_w
-    # Anchor copy 0 at the left edge so the strip is always covered. As
-    # `cur_off` grows, the strip slides leftward; copy 1 (positioned at
-    # x_start + strip_w) seamlessly takes over once copy 0 has wrapped.
-    x_start = x - cur_off
+    clip = QRectF(x, y_baseline - fm.ascent(), clip_w, fm.height() + 2)
     copies = max(2, int(clip_w // max(strip_w, 1)) + 2)
-    for repeat in range(copies):
-        gx = x_start + repeat * strip_w
-        for (txt, width, it) in zip(strings, widths, ordered):
-            if gx + width < x:
+    # Laid out once: the same strings are drawn every animation frame.
+    statics = []
+    for s in strings:
+        static = QStaticText(s)
+        static.setTextFormat(Qt.PlainText)
+        static.prepare(QTransform(), font)
+        statics.append(static)
+    top = y_baseline - QFontMetricsF(font, p.device()).ascent()
+
+    def draw(painter: QPainter, scroll: float) -> None:
+        painter.save()
+        painter.setClipRect(clip)
+        cur_off = float(scroll) % strip_w
+        # Anchor copy 0 at the left edge so the strip is always covered. As
+        # `cur_off` grows, the strip slides leftward; copy 1 (positioned at
+        # x_start + strip_w) seamlessly takes over once copy 0 has wrapped.
+        x_start = x - cur_off
+        painter.setFont(font)
+        for repeat in range(copies):
+            gx = x_start + repeat * strip_w
+            for static, width, color in zip(statics, widths, colors):
+                if gx + width < x:
+                    gx += width
+                    continue
+                if gx > x + clip_w:
+                    break
+                painter.setPen(color)
+                painter.drawStaticText(QPointF(gx, top), static)
                 gx += width
-                continue
-            if gx > x + clip_w:
-                break
-            draw_text(
-                p, gx, y_baseline, txt,
-                hex_to_qcolor(color_hex_by_tier[it.tier]), font,
-            )
-            gx += width
-    p.restore()
+        painter.restore()
+
+    emit_marquee(p, "ticker", draw, offset)
     return strip_w
 
 

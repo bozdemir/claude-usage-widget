@@ -13,6 +13,7 @@ Interactions:
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from typing import Any
 
@@ -20,17 +21,23 @@ from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
+    QFontMetricsF,
+    QImage,
     QMouseEvent,
     QPainter,
     QPaintEvent,
     QPen,
+    QStaticText,
+    QTransform,
     QWheelEvent,
 )
 from PySide6.QtWidgets import QApplication, QWidget
 
 from claude_usage.collector import UsageStats
 from claude_usage.skins import SKIN_MODULES, from_usage_stats as _skin_data_from_stats
-from claude_usage.skins._paint import EXPIRED_NOTICE, STALE_OPACITY, fit_expired_notice
+from claude_usage.skins._paint import (
+    EXPIRED_NOTICE, STALE_OPACITY, defer_marquees, emit_marquee, fit_expired_notice,
+)
 from claude_usage.themes import (
     BAR_STYLE_ASCII,
     BAR_STYLE_BLOCK,
@@ -90,6 +97,10 @@ MINIMIZED_OUTLINE_ALPHA = 0.45
 # affect perceived speed. 30 px/s feels unhurried but still alive.
 TICKER_SCROLL_PX_PER_SEC = 30.0
 TICKER_FRAME_INTERVAL_MS = 40  # ~25 fps — smooth without waking the CPU
+# Animation frames reuse a cached image of everything that doesn't scroll;
+# it is redrawn on any other change, and at least this often so reset
+# countdowns keep ticking while only the marquee moves.
+STATIC_LAYER_MAX_AGE_S = 30.0
 
 # Scroll-wheel scale limits
 SCALE_MIN = 0.6
@@ -141,6 +152,15 @@ def _hex_to_qcolor(hex_str: str, alpha: float = 1.0) -> QColor:
     g = int(h[2:4], 16)
     b = int(h[4:6], 16)
     return QColor(r, g, b, int(alpha * 255))
+
+
+def _static_text(text: str, font: QFont) -> QStaticText:
+    """*text* laid out once for *font*: a marquee draws the same strings every
+    animation frame, and re-shaping them each time was most of its cost."""
+    static = QStaticText(text)
+    static.setTextFormat(Qt.PlainText)
+    static.prepare(QTransform(), font)
+    return static
 
 
 def _format_reset_short(reset_ts: int) -> str:
@@ -200,6 +220,18 @@ class UsageOverlay(QWidget):
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__()
+        # Cached static scene and the marquees replayed over it each frame
+        # (see paintEvent). Set first: update() clears them.
+        self._static_layer: QImage | None = None
+        self._static_layer_ts: float = 0.0
+        self._marquees: list = []
+        self._rendering_static_layer: bool = False
+        # QWidget.render() can't run inside paintEvent, so the layer is built
+        # right after the full repaint that found it missing.
+        self._static_layer_timer = QTimer(self)
+        self._static_layer_timer.setSingleShot(True)
+        self._static_layer_timer.setInterval(0)
+        self._static_layer_timer.timeout.connect(self._render_static_layer)
         cfg = config or {}
         theme_name = str(cfg.get("theme", "default"))
         self._theme = get_theme(theme_name)
@@ -444,10 +476,19 @@ class UsageOverlay(QWidget):
         return self._news_enabled
 
     def _advance_ticker(self) -> None:
-        """One frame of ticker scroll — called by the animation timer."""
+        """One frame of ticker scroll — called by the animation timer.
+
+        Only the marquees moved, so this repaints without dropping the cached
+        static layer (QWidget.update, not the override below)."""
         self._ticker_offset += TICKER_SCROLL_PX_PER_SEC * (TICKER_FRAME_INTERVAL_MS / 1000.0)
         self._news_offset += TICKER_SCROLL_PX_PER_SEC * (TICKER_FRAME_INTERVAL_MS / 1000.0)
-        self.update()
+        QWidget.update(self)
+
+    def update(self, *args) -> None:
+        """Schedule a repaint that redraws the static layer: every caller but
+        the marquee animation has changed something on it."""
+        self._static_layer = None
+        super().update(*args)
 
     def set_opacity(self, value: float) -> None:
         """Set background opacity (0.15 -- 1.0)."""
@@ -795,7 +836,73 @@ class UsageOverlay(QWidget):
     # ----------------------------------------------------------- painting
 
     def paintEvent(self, event: QPaintEvent) -> None:
+        """Paint the OSD; animation frames reuse a cached static layer.
+
+        The cost ticker and news strip scroll at ~25 fps. Repainting the whole
+        OSD for each frame cost ~1 s of GUI-thread CPU a minute, almost all of
+        it redrawing what doesn't move. So once the scene has been painted in
+        full, everything but the marquees is cached as an image, and a frame
+        only blits it and draws the marquees at their current offsets. The
+        marquees are drawn last either way, so a frame shows exactly what a
+        full repaint would. Any other change (update()) drops the cache, and
+        it is rebuilt every STATIC_LAYER_MAX_AGE_S for the countdowns.
+        """
+        if self._rendering_static_layer:
+            # QWidget.render() from _render_static_layer: paint into its image
+            # with the marquees recorded instead of drawn.
+            p = QPainter(self)
+            with defer_marquees() as marquees:
+                self._paint_scene(p)
+            p.end()
+            self._marquees = marquees
+            return
+        dpr = self.devicePixelRatioF()
+        layer = self._static_layer
+        if (layer is None
+                or layer.width() != round(self.width() * dpr)
+                or layer.height() != round(self.height() * dpr)
+                or time.monotonic() - self._static_layer_ts > STATIC_LAYER_MAX_AGE_S):
+            self._static_layer = None
+            p = QPainter(self)
+            self._paint_scene(p)
+            p.end()
+            self._static_layer_timer.start()
+            return
         p = QPainter(self)
+        p.setCompositionMode(QPainter.CompositionMode_Source)
+        p.drawImage(0, 0, layer)
+        p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.TextAntialiasing, True)
+        for kind, draw in self._marquees:
+            draw(p, self._ticker_offset if kind == "ticker" else self._news_offset)
+        p.end()
+
+    def _render_static_layer(self) -> None:
+        """Cache everything but the marquees as an image, and keep the
+        marquees' drawings for paintEvent to replay at the current offsets.
+
+        Rendered through QWidget.render() rather than a QPainter on the image:
+        a widget painter sizes fonts from the screen's exact DPI, an image's
+        from its whole dots-per-metre (96.012 for 96), which shifts glyph
+        antialiasing by a hair. Through render() the pixels match a repaint.
+        """
+        dpr = self.devicePixelRatioF()
+        img = QImage(round(self.width() * dpr), round(self.height() * dpr),
+                     QImage.Format_ARGB32_Premultiplied)
+        img.setDevicePixelRatio(dpr)
+        img.fill(0)
+        self._rendering_static_layer = True
+        try:
+            self.render(img, QPoint(0, 0))
+        finally:
+            self._rendering_static_layer = False
+        self._static_layer = img
+        self._static_layer_ts = time.monotonic()
+
+    def _paint_scene(self, p: QPainter) -> None:
+        """The whole OSD for the current state; marquees go through
+        emit_marquee, so they are deferred while the static layer renders."""
         p.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
 
@@ -1228,23 +1335,24 @@ class UsageOverlay(QWidget):
         tape_x = pad_x
         tape_w = max(0.0, w - 2 * pad_x)
         tape_h = 14 * s
-        p.save()
-        p.setClipRect(QRectF(tape_x, y - tape_h * 0.1, tape_w, tape_h * 1.2))
+        clip = QRectF(tape_x, y - tape_h * 0.1, tape_w, tape_h * 1.2)
 
         # Monospace keeps item widths predictable as values change.
         font = _mono_font(max(7, int(7.5 * s)))
+        p.save()
         p.setFont(font)
         fm = p.fontMetrics()
+        p.restore()
         sep_gap = int(14 * s)
         baseline = y + tape_h - 3 * s
 
         # Cost items only — news is shown separately in the news strip below.
+        # Text, widths and colours are worked out once per static layer; each
+        # animation frame only places them.
         cost_ordered = list(reversed(self._ticker_items))
         strings = [self._format_ticker_item(it) for it in cost_ordered]
         widths = [fm.horizontalAdvance(s_) + sep_gap for s_ in strings]
         strip_width = sum(widths) or 1
-
-        x_start = tape_x + tape_w - (self._ticker_offset % strip_width)
         cost_colors = {
             "hot":    _hex_to_qcolor(self._theme["crit"]),
             "warm":   _hex_to_qcolor(self._theme["warn"]),
@@ -1252,20 +1360,30 @@ class UsageOverlay(QWidget):
             "dim":    _hex_to_qcolor(self._theme["text_dim"]),
         }
         thresholds = _ticker_quartile_thresholds(self._ticker_items)
+        pens = [self._ticker_color_for(item, cost_colors, thresholds) for item in cost_ordered]
+        statics = [_static_text(s_, font) for s_ in strings]
+        top = baseline - QFontMetricsF(font, self).ascent()
         copies = max(2, int(tape_w // strip_width) + 2)
-        for repeat in range(copies):
-            x = x_start + repeat * strip_width
-            for item, text, width in zip(cost_ordered, strings, widths):
-                if x + width < tape_x:
-                    x += width
-                    continue
-                if x > tape_x + tape_w:
-                    break
-                p.setPen(self._ticker_color_for(item, cost_colors, thresholds))
-                p.drawText(QPointF(x, baseline), text)
-                x += width
 
-        p.restore()
+        def draw(painter: QPainter, offset: float) -> None:
+            painter.save()
+            painter.setClipRect(clip)
+            painter.setFont(font)
+            x_start = tape_x + tape_w - (offset % strip_width)
+            for repeat in range(copies):
+                x = x_start + repeat * strip_width
+                for pen, static, width in zip(pens, statics, widths):
+                    if x + width < tape_x:
+                        x += width
+                        continue
+                    if x > tape_x + tape_w:
+                        break
+                    painter.setPen(pen)
+                    painter.drawStaticText(QPointF(x, top), static)
+                    x += width
+            painter.restore()
+
+        emit_marquee(p, "ticker", draw, self._ticker_offset)
 
     def _draw_news_strip(
         self,
@@ -1287,25 +1405,36 @@ class UsageOverlay(QWidget):
         tape_x = pad_x
         tape_w = max(0.0, w - 2 * pad_x)
         tape_h = 13 * s
-        p.save()
-        p.setClipRect(QRectF(tape_x, y - tape_h * 0.1, tape_w, tape_h * 1.2))
+        clip = QRectF(tape_x, y - tape_h * 0.1, tape_w, tape_h * 1.2)
         if font is None:
             font = _mono_font(max(7, int(7.5 * s)))
+        p.save()
         p.setFont(font)
         fm = p.fontMetrics()
+        p.restore()
         baseline = y + tape_h - 3 * s
         text = "📰 " + self._latest_headline + "    "
         text_w = fm.horizontalAdvance(text) or 1
         news_color = _hex_to_qcolor(self._theme.get("text_link", self._theme.get("warn", "#f59e0b")))
-        p.setPen(news_color)
-        x_start = tape_x + tape_w - (self._news_offset % text_w)
         copies = max(2, int(tape_w // text_w) + 2)
-        for i in range(copies):
-            x = x_start + i * text_w
-            if x + text_w < tape_x or x > tape_x + tape_w:
-                continue
-            p.drawText(QPointF(x, baseline), text)
-        p.restore()
+
+        static = _static_text(text, font)
+        top = baseline - QFontMetricsF(font, self).ascent()
+
+        def draw(painter: QPainter, offset: float) -> None:
+            painter.save()
+            painter.setClipRect(clip)
+            painter.setFont(font)
+            painter.setPen(news_color)
+            x_start = tape_x + tape_w - (offset % text_w)
+            for i in range(copies):
+                x = x_start + i * text_w
+                if x + text_w < tape_x or x > tape_x + tape_w:
+                    continue
+                painter.drawStaticText(QPointF(x, top), static)
+            painter.restore()
+
+        emit_marquee(p, "news", draw, self._news_offset)
 
     @staticmethod
     def _format_ticker_item(item: TickerItem) -> str:
