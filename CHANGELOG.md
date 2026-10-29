@@ -3,6 +3,19 @@
 All notable changes to this project are documented here.
 This project follows [semantic versioning](https://semver.org/).
 
+## 0.13.8
+
+### Fixed
+
+- **"token expired · run claude" stayed up for minutes after running
+  `claude`.** While the token is expired, the widget waits longer between
+  polls, up to 5 minutes, as it does after any error. But only Claude Code
+  can renew the token, by rewriting its credentials file when it starts, so
+  after you ran `claude` the widget kept showing the hint until its next
+  delayed poll. Now, while the token is expired, it checks every few seconds
+  whether Claude Code has rewritten the file, and refreshes as soon as it
+  has. It only looks at when the file changed and never opens it.
+
 ## 0.13.7
 
 ### Changed
