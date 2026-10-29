@@ -1019,6 +1019,58 @@ class UsagePopup(QWidget):
 # Application orchestrator
 # ---------------------------------------------------------------------------
 
+class CredentialsWatch(QObject):
+    """Notice Claude Code rewriting its credentials file while the token is
+    expired.
+
+    Only Claude Code refreshes its OAuth token, and only when it runs, by
+    rewriting ``.credentials.json``. Until then every poll gets a 401, so the
+    widget backs its polls off (up to ``refresh_max_seconds``); without this,
+    the OSD kept saying "token expired · run claude" for minutes after Claude
+    Code had started and refreshed. Armed after an expired poll, it stats the
+    file every few seconds and emits :attr:`changed` once the file has been
+    written since that poll began. Read-only: it never opens the file.
+    """
+
+    changed = Signal()
+    INTERVAL_MS = 3000
+
+    def __init__(self, path_fn, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._path_fn = path_fn
+        self._since = 0.0
+        self._timer = QTimer(self)
+        self._timer.setInterval(self.INTERVAL_MS)
+        self._timer.timeout.connect(self._tick)
+        self._armed = False
+
+    def arm(self, since: float) -> None:
+        """Watch for a write after *since* (unix seconds): the start of the
+        poll that came back expired, so a refresh landing mid-poll counts."""
+        self._since = since
+        self._armed = True
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def disarm(self) -> None:
+        self._armed = False
+        self._timer.stop()
+
+    def is_armed(self) -> bool:
+        return self._armed
+
+    def _tick(self) -> None:
+        if not self._armed:
+            return
+        try:
+            mtime = os.stat(self._path_fn()).st_mtime
+        except OSError:
+            return  # Keychain / env-var token: the backed-off polls cover it
+        if mtime > self._since:
+            self.disarm()
+            self.changed.emit()
+
+
 class ClaudeUsageApp(QObject):
     """Wires OSD, popup, timer, refresh thread, webhooks, and notifier."""
 
@@ -1043,6 +1095,11 @@ class ClaudeUsageApp(QObject):
         # "Updated Xs ago" footer.  Never read by anything else.
         import time as _time
         self._last_refresh_ts: float = 0.0
+        # Start of the refresh in flight; an expired result arms the watch
+        # from that moment (see CredentialsWatch).
+        self._refresh_started_ts: float = 0.0
+        self._creds_watch = CredentialsWatch(self._credentials_path, self)
+        self._creds_watch.changed.connect(self._on_credentials_changed)
 
         # UI components — we keep BOTH popup implementations around:
         # the default one (full QLayout + child widgets) handles the five
@@ -1600,6 +1657,7 @@ class ClaudeUsageApp(QObject):
         if self._refreshing or not self._alive:
             return
         self._refreshing = True
+        self._refresh_started_ts = time.time()
 
         def _worker() -> None:
             try:
@@ -1611,6 +1669,15 @@ class ClaudeUsageApp(QObject):
                 self.stats_ready.emit(stats)
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _credentials_path(self) -> str:
+        claude_dir = os.path.expanduser(str(self.config.get("claude_dir") or "~/.claude"))
+        return os.path.join(claude_dir, ".credentials.json")
+
+    def _on_credentials_changed(self) -> None:
+        """Claude Code rewrote its token: poll now, at the base cadence."""
+        self._timer.setInterval(self._base_refresh_ms)
+        self._refresh_async()
 
     @Slot(object)
     def _apply_stats(self, stats: UsageStats) -> None:
@@ -1631,6 +1698,12 @@ class ClaudeUsageApp(QObject):
             next_ms = self._base_refresh_ms
         if next_ms != self._timer.interval():
             self._timer.setInterval(next_ms)
+        # An expired token won't come back on a timer, only when Claude Code
+        # rewrites it: refresh the moment it does, not after the backoff.
+        if getattr(stats, "credentials_expired", False):
+            self._creds_watch.arm(since=self._refresh_started_ts)
+        else:
+            self._creds_watch.disarm()
 
         self.overlay.update_stats(stats)
         self.popup.update_stats(stats)

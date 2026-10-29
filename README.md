@@ -420,7 +420,7 @@ sudo pacman -S libnotify          # Arch
 ### API authentication fails
 - Make sure the Claude Code CLI is installed and you are logged in (the `claude` command should work in a terminal).
 - The OAuth token is loaded in this order: the `CLAUDE_CODE_OAUTH_TOKEN` environment variable, then `~/.claude/.credentials.json`, then (macOS only) the login Keychain.
-- **Dimmed Claude rows with "token expired · run claude":** Claude Code's access token lasts a few hours and only Claude Code refreshes it, the next time it runs. Until then the widget shows the last known numbers, dimmed. Run `claude` once and the next poll is live again. The widget never refreshes or writes the token itself.
+- **Dimmed Claude rows with "token expired · run claude":** Claude Code's access token lasts a few hours and only Claude Code refreshes it, the next time it runs. Until then the widget shows the last known numbers, dimmed. Run `claude` once: the widget notices Claude Code rewriting its token and is live again within a few seconds. The widget never refreshes or writes the token itself.
 - **macOS — blank session/weekly with "No credentials":** Claude Code often stores the token only in the Keychain, and a GUI launch (Finder / Homebrew / a login item) may not have access to it. Launch `claude-usage` once from a Terminal and click **Always Allow** on the Keychain prompt, or export `CLAUDE_CODE_OAUTH_TOKEN`.
 
 ### Codex rows disappeared
